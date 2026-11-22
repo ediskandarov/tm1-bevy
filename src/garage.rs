@@ -69,7 +69,7 @@ impl Garage {
     pub fn voices(&self) -> impl Iterator<Item = Entity> {
         self.voices.iter().flat_map(|(_, voices)| *voices)
     }
-    pub fn sound(&mut self, world: &mut World, index: Option<usize>) {
+    pub fn sound(&mut self, world: &mut World, index: Option<usize>, gain: f32) {
         if self.voices.as_ref().map(|v| v.0) == index {
             return;
         }
@@ -79,9 +79,6 @@ impl Garage {
             }
         }
         if let Some(i) = index {
-            let gain = world
-                .get_resource::<crate::driving::Drive>()
-                .map_or(1., |d| d.settings.effects_gain());
             let (motor, signature, range) = &self.audio[i];
             let mut audio = world.resource_mut::<Assets<AudioSource>>();
             let engine = audio.add(motor.clone());

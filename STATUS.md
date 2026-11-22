@@ -7,7 +7,11 @@ The player completed a manual keyboard playthrough, heard game sounds and reache
 Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Warthog, Mr. Grimm, Pit Viper, Thumper, Spectre and Road Kill
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
-Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The full retail menu and multiplayer are outstanding.
+Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The title offers the single-player contest and the main options. Two-player battle is outstanding.
+
+## Title options
+
+Up and Down select OPTIONS or 1P CONTEST on the title screen. AUDIO CONTROLS changes the paired music and effects levels and plays seven CD tracks in the retail menu order. The selected mix applies to the title music, garage, opponent deal and subsequent battle. CONTEST HISTORY reads HISTORY.TXT and leads into the vehicle showcase on natural completion. STAFF ROLL scrolls CREDITS.TXT over SCRNROAD.TIM. Both paths return to the options menu. A keyboard integration test checks track wraparound, history and staff-roll navigation, and carries the new mix into a battle. The Metal audio-screen capture used a temporary direct entry into the track selector.
 
 ## Vehicle selection
 

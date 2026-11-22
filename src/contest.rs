@@ -2,7 +2,7 @@
 use crate::campaign::{self, Campaign, PasswordModes, Stage};
 use crate::cinema::{Cinema, Clip};
 use anyhow::Result;
-use bevy::prelude::*;
+use bevy::{audio::AudioSinkPlayback, prelude::*};
 use std::time::Duration;
 use tm1_assets::screen::{self, Face, Fonts};
 use tm1_core::drive::{Difficulty, Level, Vehicle};
@@ -12,6 +12,9 @@ struct ContestScreen;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Title,
+    MainOptions(usize),
+    Audio(usize),
+    StaffRoll,
     History,
     Showcase(usize),
     Contest,
@@ -23,6 +26,15 @@ enum Page {
     Wrong(usize),
     BossPreview(std::time::Duration),
 }
+const SOUNDTRACK: [(usize, &str); 7] = [
+    (2, "''TWISTED THEME''"),
+    (3, "''CIRCUS METALLICUS''"),
+    (5, "''ASPHALT ASSAULT''"),
+    (7, "''CYBURB SLIDE''"),
+    (6, "''CYBURB HUNT''"),
+    (4, "''STALK N' ROLL''"),
+    (8, "''DROP DEAD''"),
+];
 pub const INFINITE_WEAPONS: &str = "< =@@";
 pub const MINION_AND_FRIENDS: &str = "<>@=<";
 pub const HELICOPTER: &str = "@@<> ";
@@ -33,6 +45,12 @@ pub struct Contest {
     idle: Duration,
     fonts: Fonts,
     title: Vec<u8>,
+    title_options: bool,
+    history_from_menu: bool,
+    credits: crate::scroll::Scroll,
+    credits_background: Vec<u8>,
+    soundtrack: usize,
+    playing_track: usize,
     garage: crate::garage::Garage,
     field_fraction: u128,
     history: crate::scroll::Scroll,
@@ -115,12 +133,15 @@ impl Contest {
                     _ => self.begin_showcase(),
                 }
             }
-            Page::History | Page::Showcase(_) => {
+            Page::StaffRoll | Page::History | Page::Showcase(_) => {
                 let fields = self.presentation_fields(dt);
                 if fields == 0 && !select {
                     return true;
                 }
                 let done = match self.page {
+                    Page::StaffRoll => (0..fields.max(u32::from(select))).any(|_| {
+                        self.credits.field(select, up, down) != crate::scroll::Outcome::Running
+                    }),
                     Page::Showcase(i) => select || self.showcase_fields(i, fields),
                     Page::History => {
                         let mut skipped = false;
@@ -143,9 +164,16 @@ impl Contest {
                 };
                 if done {
                     self.garage.reset();
-                    self.page = Page::Title;
-                    self.play(world, Some(Clip::Title));
-                    return true;
+                    if self.history_from_menu || self.page == Page::StaffRoll {
+                        self.page = Page::MainOptions(if self.history_from_menu { 1 } else { 2 });
+                        self.history_from_menu = false;
+                        self.released = !select;
+                        self.idle = Duration::ZERO;
+                    } else {
+                        self.page = Page::Title;
+                        self.play(world, Some(Clip::Title));
+                        return true;
+                    }
                 }
             }
             _ => return false,
@@ -170,24 +198,56 @@ impl Contest {
             Page::Showcase(i) => Some(i),
             _ => None,
         };
-        self.garage.sound(world, car);
-        if matches!(self.page, Page::Title | Page::History | Page::Showcase(_))
-            && self.cinema.is_none()
+        self.garage.sound(world, car, self.settings.effects_gain());
+        if matches!(
+            self.page,
+            Page::Title
+                | Page::MainOptions(_)
+                | Page::Audio(_)
+                | Page::StaffRoll
+                | Page::History
+                | Page::Showcase(_)
+        ) && self.cinema.is_none()
         {
-            if self.theme_entity.is_none() {
-                let gain = world
-                    .get_resource::<crate::driving::Drive>()
-                    .map_or(1., |d| d.settings.music_gain());
+            if !matches!(self.page, Page::MainOptions(_) | Page::Audio(_)) {
+                self.soundtrack = 0;
+            }
+            let volume = bevy::audio::Volume::Linear(0.35 * self.settings.music_gain());
+            if self.playing_track != self.soundtrack || self.theme_entity.is_none() {
+                let handle = if self.soundtrack == 0 {
+                    self.theme.clone()
+                } else {
+                    match crate::music::track(
+                        &world.resource::<Campaign>().0,
+                        SOUNDTRACK[self.soundtrack].0,
+                    ) {
+                        Ok(track) => world.resource_mut::<Assets<AudioSource>>().add(track),
+                        Err(err) => {
+                            warn!("Loading soundtrack failed: {err:#}");
+                            self.soundtrack = self.playing_track;
+                            return;
+                        }
+                    }
+                };
+                if let Some(entity) = self.theme_entity.take() {
+                    world.despawn(entity);
+                }
+                self.playing_track = self.soundtrack;
                 self.theme_entity = Some(
                     world
                         .spawn((
                             campaign::StageEntity,
-                            AudioPlayer::new(self.theme.clone()),
-                            PlaybackSettings::LOOP
-                                .with_volume(bevy::audio::Volume::Linear(0.35 * gain)),
+                            AudioPlayer::new(handle),
+                            PlaybackSettings::LOOP.with_volume(volume),
                         ))
                         .id(),
                 );
+            } else if let Some(entity) = self.theme_entity {
+                if let Some(mut sink) = world.get_mut::<AudioSink>(entity) {
+                    sink.set_volume(volume);
+                } else if let Some(mut playback) = world.get_mut::<PlaybackSettings>(entity) {
+                    playback.volume = volume;
+                }
             }
         } else if let Some(entity) = self.theme_entity.take() {
             world.despawn(entity);
@@ -246,7 +306,20 @@ impl Contest {
                 }
                 out
             }
-            Page::Options(_) => self.options.clone(),
+            Page::MainOptions(_) | Page::Options(_) => self.options.clone(),
+            Page::Audio(row) => {
+                return self.controls.audio_frame(
+                    &self.fonts,
+                    row,
+                    self.settings,
+                    Some(SOUNDTRACK[self.soundtrack].1),
+                );
+            }
+            Page::StaffRoll => {
+                let mut out = self.credits_background.clone();
+                self.credits.draw(&mut out, &self.fonts);
+                return out;
+            }
             Page::Controls => {
                 return self.controls.frame(
                     &self.fonts,
@@ -268,7 +341,7 @@ impl Contest {
         };
         let mut line = |y, face, text: &str| self.fonts.centered(&mut frame, face, y, text);
         match self.page {
-            Page::Battle(row) | Page::Options(row) => {
+            Page::MainOptions(row) | Page::Battle(row) | Page::Options(row) => {
                 let difficulty = match self.difficulty {
                     Difficulty::Easy => "EASY",
                     Difficulty::Medium => "MEDIUM",
@@ -278,6 +351,13 @@ impl Contest {
                     [usize::from(self.settings.layout)];
                 let choices: &[(&str, &str)] = if matches!(self.page, Page::Battle(_)) {
                     &[("START", ""), ("OPTIONS", ""), ("EXIT", "")]
+                } else if matches!(self.page, Page::MainOptions(_)) {
+                    &[
+                        ("AUDIO CONTROLS", ""),
+                        ("CONTEST HISTORY", ""),
+                        ("STAFF ROLL", ""),
+                        ("EXIT", ""),
+                    ]
                 } else {
                     &[
                         ("DIFFICULTY:", difficulty),
@@ -302,10 +382,26 @@ impl Contest {
                     self.fonts.at(&mut frame, face, 160, y, value);
                 }
             }
-            Page::Controls => unreachable!(),
+            Page::Audio(_) | Page::StaffRoll | Page::Controls => unreachable!(),
             Page::Title => {
-                line(165, Face::Text, "1P CONTEST");
-                line(193, Face::Text, "PRESS ENTER");
+                line(
+                    155,
+                    if self.title_options {
+                        Face::Choice
+                    } else {
+                        Face::Selected
+                    },
+                    "1P CONTEST",
+                );
+                line(
+                    195,
+                    if self.title_options {
+                        Face::Selected
+                    } else {
+                        Face::Choice
+                    },
+                    "OPTIONS",
+                );
             }
             Page::Contest | Page::Bio | Page::History | Page::Showcase(_) => unreachable!(),
             Page::Password | Page::Wrong(_) => {
@@ -363,7 +459,7 @@ impl Contest {
     }
     fn tick_setup_timeout(&mut self, held: bool, dt: Duration) -> bool {
         let limit = match self.page {
-            Page::Options(_) => 18001,
+            Page::MainOptions(_) | Page::Audio(_) | Page::Options(_) => 18001,
             Page::Battle(_) | Page::Wrong(_) => 1201,
             _ => return false,
         };
@@ -377,6 +473,8 @@ impl Contest {
         }
         self.idle = Duration::ZERO;
         match self.page {
+            Page::MainOptions(_) => self.page = Page::Title,
+            Page::Audio(_) => self.page = Page::MainOptions(0),
             Page::Battle(_) => self.leave_battle(),
             Page::Wrong(_) => self.page = self.after_password(),
             _ => self.page = Page::Battle(0),
@@ -415,7 +513,9 @@ impl Contest {
                 }
             }
             Page::Options(0 | 1) if enter => 0,
-            Page::History | Page::Showcase(_) => return None,
+            Page::StaffRoll | Page::History | Page::Showcase(_) => return None,
+            Page::Title | Page::MainOptions(_) if vertical => 0,
+            Page::Audio(n) if vertical || (horizontal && n < 3) => 0,
             _ if enter => 1,
             Page::Password if keys.any_just_pressed([Digit1, Digit2, Digit3, Digit4, Space]) => 1,
             Page::Password | Page::Controls if horizontal => 0,
@@ -429,11 +529,68 @@ impl Contest {
     fn input(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let key = |k| keys.just_pressed(k);
         match self.page {
-            Page::History | Page::Showcase(_) => {}
+            Page::StaffRoll | Page::History | Page::Showcase(_) => {}
             Page::Title => {
-                if key(KeyCode::Enter) {
+                if key(KeyCode::ArrowUp) || key(KeyCode::ArrowDown) {
+                    self.title_options = !self.title_options;
+                } else if key(KeyCode::Enter) && self.title_options {
+                    self.page = Page::MainOptions(0);
+                } else if key(KeyCode::Enter) {
                     self.page = Page::Contest;
                     self.garage.reset();
+                }
+            }
+            Page::MainOptions(row) => {
+                if key(KeyCode::ArrowUp) {
+                    self.page = Page::MainOptions((row + 3) % 4);
+                } else if key(KeyCode::ArrowDown) {
+                    self.page = Page::MainOptions((row + 1) % 4);
+                } else if key(KeyCode::Escape) || (row == 3 && key(KeyCode::Enter)) {
+                    self.page = Page::Title;
+                } else if key(KeyCode::Enter) {
+                    match row {
+                        0 => self.page = Page::Audio(0),
+                        1 => {
+                            self.history_from_menu = true;
+                            self.history.reset();
+                            self.field_fraction = 0;
+                            self.released = false;
+                            self.page = Page::History;
+                        }
+                        2 => {
+                            self.credits.reset();
+                            self.field_fraction = 0;
+                            self.released = false;
+                            self.page = Page::StaffRoll;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Page::Audio(row) => {
+                if key(KeyCode::ArrowUp) {
+                    self.page = Page::Audio((row + 3) % 4);
+                } else if key(KeyCode::ArrowDown) {
+                    self.page = Page::Audio((row + 1) % 4);
+                } else if key(KeyCode::Escape) || (row == 3 && key(KeyCode::Enter)) {
+                    self.page = Page::MainOptions(0);
+                } else if key(KeyCode::ArrowLeft) || key(KeyCode::ArrowRight) {
+                    let right = key(KeyCode::ArrowRight);
+                    if row < 2 {
+                        crate::pause::navigate(
+                            crate::pause::Page::Audio(row as u8),
+                            if right {
+                                crate::pause::Action::Right
+                            } else {
+                                crate::pause::Action::Left
+                            },
+                            &mut self.settings,
+                        );
+                    } else if row == 2 {
+                        self.soundtrack = (self.soundtrack
+                            + if right { 1 } else { SOUNDTRACK.len() - 1 })
+                            % SOUNDTRACK.len();
+                    }
                 }
             }
             Page::Bio => {
@@ -603,6 +760,12 @@ pub fn show(
         cinema: None,
         idle: Duration::ZERO,
         history: crate::scroll::Scroll::load(disc.read("UATEXT/HISTORY.TXT")?, &fonts)?,
+        title_options: false,
+        history_from_menu: false,
+        soundtrack: 0,
+        playing_track: 0,
+        credits: crate::scroll::Scroll::load(disc.read("UATEXT/CREDITS.TXT")?, &fonts)?,
+        credits_background: screen::background(&disc.read("UASCREEN/SCRNROAD.TIM")?)?,
         history_background: screen::background(&disc.read("UASCREEN/SCRNCALY.TIM")?)?,
         fonts,
         garage: crate::garage::Garage::load(disc)?,
@@ -746,7 +909,7 @@ pub fn update(world: &mut World) {
         let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space]);
         let up = keys.pressed(KeyCode::ArrowUp);
         let down = keys.pressed(KeyCode::ArrowDown);
-        if matches!(menu.page, Page::History | Page::Showcase(_)) || menu.page == Page::Title && !held {
+        if matches!(menu.page, Page::StaffRoll | Page::History | Page::Showcase(_)) || menu.page == Page::Title && !held {
             if menu.update_attract(world, select, up, down) { return; }
         } else if menu.page == Page::Title {
             menu.idle = Duration::ZERO;
@@ -816,7 +979,7 @@ pub fn update(world: &mut World) {
 }
 pub fn start_battle(world: &mut World) -> Result<()> {
     let menu = world.resource::<Contest>();
-    let layout = menu.settings.layout;
+    let settings = menu.settings;
     let mut stage = Stage::load(
         &world.resource::<Campaign>().0,
         menu.level,
@@ -824,7 +987,7 @@ pub fn start_battle(world: &mut World) -> Result<()> {
         campaign::Entry::New(menu.difficulty),
     )?;
     stage.apply_passwords(menu.modes);
-    crate::transition::begin(world, stage, false, true, Some(layout))?;
+    crate::transition::begin(world, stage, false, true, Some(settings))?;
     world.remove_resource::<Contest>();
     Ok(())
 }
@@ -876,6 +1039,56 @@ mod tests {
         }
         press(world, KeyCode::Enter);
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn title_options_scrolls_tracks_and_battle_mix() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [
+            ArrowUp, Enter, Enter, ArrowRight, ArrowDown, ArrowDown, ArrowLeft,
+        ] {
+            press(&mut world, key);
+        }
+        let menu = world.resource::<Contest>();
+        assert!(menu.page == Page::Audio(2));
+        assert_eq!(menu.playing_track, 6);
+        assert_eq!((menu.settings.music, menu.settings.effects), (8, 6));
+        let last_track = menu.theme_entity.unwrap();
+        let before = menu.frame();
+        press(&mut world, ArrowRight);
+        let menu = world.resource::<Contest>();
+        assert_eq!(menu.playing_track, 0);
+        assert_ne!(before, menu.frame());
+        assert!(world.get_entity(last_track).is_err());
+        for key in [ArrowDown, Enter, ArrowDown, Enter] {
+            press(&mut world, key);
+        }
+        assert!(world.resource::<Contest>().page == Page::History);
+        update(&mut world);
+        press(&mut world, Enter);
+        assert!(world.resource::<Contest>().page == Page::MainOptions(1));
+        update(&mut world);
+        for key in [ArrowDown, Enter] {
+            press(&mut world, key);
+        }
+        assert!(world.resource::<Contest>().page == Page::StaffRoll);
+        update(&mut world);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(10));
+        update(&mut world);
+        let menu = world.resource::<Contest>();
+        assert_ne!(menu.frame(), menu.credits_background);
+        press(&mut world, Enter);
+        assert!(world.resource::<Contest>().page == Page::MainOptions(2));
+        update(&mut world);
+        for key in [Escape, ArrowDown, Enter, Enter, Enter] {
+            press(&mut world, key);
+        }
+        let d = world.resource::<crate::driving::Drive>();
+        assert_eq!((d.settings.music, d.settings.effects), (8, 6));
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn battle_setup_applies_keyboard_choices_to_the_encounter() {

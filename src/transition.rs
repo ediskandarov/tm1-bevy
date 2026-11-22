@@ -25,7 +25,7 @@ pub struct Transition {
     fraction: u128,
     released: bool,
     letterbox: bool,
-    layout: Option<u8>,
+    settings: Option<crate::pause::Settings>,
     image: Handle<Image>,
     throw: Handle<AudioSource>,
     gain: f32,
@@ -175,7 +175,7 @@ pub fn begin(
     stage: Stage,
     advanced: bool,
     letterbox: bool,
-    layout_override: Option<u8>,
+    settings_override: Option<crate::pause::Settings>,
 ) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
     let level = stage.drive.player.level();
@@ -220,9 +220,14 @@ pub fn begin(
         + 1;
     let sound = crate::sfx::Sample::load(&disc.read("SND/UACORE.VAB")?, 57, false)?.wave(0.)?;
     let throw = world.resource_mut::<Assets<AudioSource>>().add(sound);
-    let gain = world
-        .get_resource::<crate::driving::Drive>()
-        .map_or(1., |d| d.settings.effects_gain());
+    let gain = settings_override
+        .or_else(|| {
+            world
+                .get_resource::<crate::driving::Drive>()
+                .map(|d| d.settings)
+        })
+        .unwrap_or_default()
+        .effects_gain();
     let mut transition = Transition {
         stage,
         fonts,
@@ -235,7 +240,7 @@ pub fn begin(
         fraction: 0,
         released: false,
         letterbox,
-        layout: layout_override,
+        settings: settings_override,
         image: default(),
         throw,
         gain,
@@ -351,13 +356,15 @@ pub fn update(world: &mut World) {
     }
 }
 fn finish(world: &mut World) {
-    let t = world.remove_resource::<Transition>().unwrap();
-    crate::campaign::replace(world, t.stage);
-    if let Some(layout) = t.layout {
-        let mut d = world.resource_mut::<crate::driving::Drive>();
-        d.settings.layout = layout;
-        d.player.set_pad_layout(layout);
+    let mut t = world.remove_resource::<Transition>().unwrap();
+    if let Some(settings) = t.settings {
+        t.stage.drive.settings = settings;
+        t.stage.drive.player.set_pad_layout(settings.layout);
+        if let Some(mut previous) = world.get_resource_mut::<crate::driving::Drive>() {
+            previous.settings = settings;
+        }
     }
+    crate::campaign::replace(world, t.stage);
 }
 #[cfg(test)]
 pub fn complete(world: &mut World) {

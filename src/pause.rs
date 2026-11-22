@@ -111,6 +111,49 @@ impl Art {
                 .collect::<Result<_>>()?,
         })
     }
+    pub fn audio_frame(
+        &self,
+        fonts: &Fonts,
+        row: usize,
+        settings: Settings,
+        track: Option<&str>,
+    ) -> Vec<u8> {
+        let mut out = self.audio.clone();
+        let face = |i| {
+            if i == row {
+                Face::Selected
+            } else {
+                Face::Choice
+            }
+        };
+        for (i, (label, value)) in [("MUSIC:", settings.music), ("SFX:", settings.effects)]
+            .into_iter()
+            .enumerate()
+        {
+            let y = 120 + 20 * i as i32;
+            let n = usize::from(value);
+            fonts.at(&mut out, face(i), 30, y, label);
+            fonts.at(
+                &mut out,
+                face(i),
+                160,
+                y,
+                &format!("{}{}", "|".repeat(n), "*".repeat(14 - n)),
+            );
+        }
+        if let Some(title) = track {
+            fonts.at(&mut out, face(2), 30, 160, "PLAY TRACK:");
+            fonts.centered_at(&mut out, face(2), 159, 175, title);
+        }
+        fonts.at(
+            &mut out,
+            face(2 + usize::from(track.is_some())),
+            30,
+            200,
+            "EXIT",
+        );
+        out
+    }
     pub fn frame(&self, fonts: &Fonts, level: Level, page: Page, settings: Settings) -> Vec<u8> {
         let face = |selected| {
             if selected {
@@ -120,27 +163,7 @@ impl Art {
             }
         };
         match page {
-            Page::Audio(row) => {
-                let mut out = self.audio.clone();
-                for (i, (y, label)) in [(120, "MUSIC:"), (140, "SFX:"), (200, "EXIT")]
-                    .into_iter()
-                    .enumerate()
-                {
-                    let f = face(i == usize::from(row));
-                    fonts.at(&mut out, f, 30, y, label);
-                    if i < 2 {
-                        let n = usize::from([settings.music, settings.effects][i]);
-                        fonts.at(
-                            &mut out,
-                            f,
-                            160,
-                            y,
-                            &format!("{}{}", "|".repeat(n), "*".repeat(14 - n)),
-                        );
-                    }
-                }
-                out
-            }
+            Page::Audio(row) => self.audio_frame(fonts, usize::from(row), settings, None),
             Page::Controls => {
                 let mut out = self.controls[usize::from(settings.layout)].clone();
                 if settings.layout > 0 {
