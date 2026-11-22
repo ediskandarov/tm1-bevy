@@ -14,6 +14,7 @@ pub struct Tone {
     pub high: u8,
     pub pan: u8,
     pub volume: u8,
+    pub program_volume: u8,
 }
 
 impl Tone {
@@ -137,6 +138,7 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
                 low: t[6],
                 high: t[7],
                 volume: t[2],
+                program_volume: attrs[program * 16 + 1],
                 pan: t[3],
             })
         })

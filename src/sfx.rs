@@ -35,7 +35,10 @@ impl EffectTone {
                     let pitch = sample_pitch(&tone, false) as u16;
                     pcm::LoopingTone::new(tone)?.voice(pitch).0
                 } else {
-                    pcm::StereoPcm::new(&Sample::from_tones(vec![tone], false).mix)
+                    let volume = pcm::VabVolume::from_tone(&tone);
+                    let mut raw = Vec::new();
+                    Sample::mix_tone(&mut raw, &tone, false, 1.);
+                    pcm::StereoPcm::new(&raw, volume)
                 };
                 Ok(Self { clip, priority })
             })
@@ -103,20 +106,22 @@ impl Sample {
     fn from_tones(tones: Vec<tm1_assets::sound::Tone>, engine: bool) -> Self {
         let mut mix = Vec::<[f32; 2]>::new();
         for t in tones {
-            let increment = sample_pitch(&t, engine);
-            let n = (t.pcm.len() * 4096).div_ceil(increment);
-            mix.resize(mix.len().max(n), [0.; 2]);
-            let pan = f32::from(t.pan) / 64.;
-            let gain = f32::from(t.volume) / 127.;
-            let mut envelope = envelope::Envelope::new(t.adsr);
-            for (i, out) in mix[..n].iter_mut().enumerate() {
-                let v =
-                    envelope.apply(interpolation::interpolate(&t.pcm, i * increment)) as f32 * gain;
-                out[0] += v * (2. - pan).min(1.);
-                out[1] += v * pan.min(1.);
-            }
+            let gain = pcm::VabVolume::from_tone(&t).gain(33, 99);
+            Self::mix_tone(&mut mix, &t, engine, gain);
         }
         Self { mix }
+    }
+    fn mix_tone(mix: &mut Vec<[f32; 2]>, t: &tm1_assets::sound::Tone, engine: bool, gain: f32) {
+        let increment = sample_pitch(t, engine);
+        let n = (t.pcm.len() * 4096).div_ceil(increment);
+        mix.resize(mix.len().max(n), [0.; 2]);
+        let pan = f32::from(t.pan) / 64.;
+        let mut envelope = envelope::Envelope::new(t.adsr);
+        for (i, out) in mix[..n].iter_mut().enumerate() {
+            let v = envelope.apply(interpolation::interpolate(&t.pcm, i * increment)) as f32 * gain;
+            out[0] += v * (2. - pan).min(1.);
+            out[1] += v * pan.min(1.);
+        }
     }
     pub fn wave(&self) -> Result<AudioSource> {
         let pcm: Vec<_> = self
@@ -642,7 +647,9 @@ mod tests {
                 let mut voice = effect.clip.decoder();
                 for frame in 0..frames {
                     let expected = reference_loop_frame(&tone, frame * pitch, frame);
-                    for channel in expected {
+                    for channel in
+                        expected.map(|v| v * pcm::VabVolume::from_tone(&tone).gain(33, 99))
+                    {
                         assert_eq!(voice.next(), Some(channel), "program {prog}, frame {frame}");
                     }
                 }
@@ -660,7 +667,8 @@ mod tests {
         // SOUND.c sets note 51, fine 18 on this voice (pitch register 2453).
         let increment = 2453;
         let frames = (tone.pcm.len() * 4096).div_ceil(increment);
-        let gain = f32::from(tone.volume) / 127.;
+        assert_eq!(tone.program_volume, 75);
+        let gain = f32::from(25 * u16::from(tone.volume) / 99) / 33.;
         let pan = (f32::from(tone.pan) / 64.).min(1.);
         // Independent decoder and four-tap interpolation at pitch register 2453.
         let samples = [
@@ -877,8 +885,7 @@ mod tests {
             4..20 => 32767,
             _ => 32759,
         };
-        let mono = ((interpolation::interpolate(&tone.pcm, phase) * level) >> 15) as f32
-            * (f32::from(tone.volume) / 127.);
+        let mono = ((interpolation::interpolate(&tone.pcm, phase) * level) >> 15) as f32;
         let pan = f32::from(tone.pan) / 64.;
         [(2. - pan).min(1.), pan.min(1.)].map(|p| (mono * p).clamp(-32768., 32767.) / 32768.)
     }
@@ -903,9 +910,15 @@ mod tests {
                     let pitch = motor.pitch.register(rev);
                     register.set(pitch);
                     let [left, right] = reference_loop_frame(&tone, phase, frame as usize);
-                    assert_eq!(playback.next(), Some(left));
+                    assert_eq!(
+                        playback.next(),
+                        Some(left * pcm::VabVolume::from_tone(&tone).gain(33, 99))
+                    );
                     register.set(0);
-                    assert_eq!(playback.next(), Some(right));
+                    assert_eq!(
+                        playback.next(),
+                        Some(right * pcm::VabVolume::from_tone(&tone).gain(33, 99))
+                    );
                     phase += usize::from(pitch.min(0x4000));
                     frame += 1;
                 }
@@ -967,11 +980,14 @@ mod tests {
                 for (sample, level) in dry.into_iter().zip(channels) {
                     assert_eq!(
                         drive.next(),
-                        Some(sample * ((level * 99) as f32 / (33. * 99.)))
+                        Some(sample * pcm::VabVolume::from_tone(&tone).gain(level as u8, 99))
                     );
                 }
                 for sample in reference_loop_frame(&tone, i * usize::from(pitch.register(30)), i) {
-                    assert_eq!(screen.next(), Some(sample));
+                    assert_eq!(
+                        screen.next(),
+                        Some(sample * pcm::VabVolume::from_tone(&tone).gain(33, 99))
+                    );
                 }
             }
         }
@@ -1080,7 +1096,8 @@ mod tests {
                         .into_iter()
                         .zip(channels)
                     {
-                        let expected = sample * ((level * 99) as f32 / (33. * 99.));
+                        let expected =
+                            sample * pcm::VabVolume::from_tone(tone).gain(level as u8, 99);
                         assert_eq!(played.next(), Some(expected));
                         audible |= expected != 0.;
                     }
@@ -1119,7 +1136,7 @@ mod tests {
         };
         let mut references: Vec<_> = world.resource::<Sounds>().effects[3]
             .iter()
-            .map(|tone| tone.clip.decoder())
+            .map(|tone| (tone.clip.volume, tone.clip.unscaled_decoder()))
             .collect();
         world.resource_mut::<Drive>().sounds = vec![impact([0, 0])];
         world.run_system_once(update).unwrap();
@@ -1146,15 +1163,12 @@ mod tests {
                 assert_eq!(voices(&mut world), first);
             }
             let mut audible = false;
-            for (reference, played) in references.iter_mut().zip(&mut played) {
+            for ((volume, reference), played) in references.iter_mut().zip(&mut played) {
                 for _ in 0..1024 {
                     for level in channels {
                         let dry = reference.next().unwrap();
                         audible |= dry != 0.;
-                        assert_eq!(
-                            played.next().unwrap(),
-                            dry * ((level * 84) as f32 / (33. * 99.))
-                        );
+                        assert_eq!(played.next().unwrap(), dry * volume.gain(level as u8, 84));
                     }
                 }
             }

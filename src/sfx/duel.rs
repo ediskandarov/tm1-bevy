@@ -367,13 +367,13 @@ mod tests {
                     let mut nonzero = false;
                     for (i, (dry, wet)) in layer
                         .clip
-                        .decoder()
+                        .unscaled_decoder()
                         .zip(clip.decoder())
                         .take(4096)
                         .enumerate()
                     {
                         nonzero |= dry != 0.;
-                        assert_eq!(wet, dry * (gain[i % 2] as f32 / 33.));
+                        assert_eq!(wet, dry * layer.clip.volume.gain(gain[i % 2] as u8, 99));
                     }
                     assert!(nonzero);
                 }
@@ -528,12 +528,12 @@ mod tests {
                 .unwrap();
             for (i, (dry, wet)) in tone
                 .clip
-                .decoder()
+                .unscaled_decoder()
                 .zip(clip.decoder())
                 .take(2048)
                 .enumerate()
             {
-                assert_eq!(wet, dry * ([25., 47.][i % 2] / 33.));
+                assert_eq!(wet, dry * tone.clip.volume.gain([25, 47][i % 2], 99));
             }
         }
         // Program 19 alternates three priority-21 tones with one priority-81 tone.

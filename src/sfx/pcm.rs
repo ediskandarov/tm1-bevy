@@ -11,6 +11,30 @@ use std::{
     time::Duration,
 };
 
+#[derive(Clone, Copy)]
+pub(super) struct VabVolume {
+    pub program: u8,
+    pub tone: u8,
+}
+
+impl VabVolume {
+    pub fn from_tone(tone: &tm1_assets::sound::Tone) -> Self {
+        Self {
+            program: tone.program_volume,
+            tone: tone.volume,
+        }
+    }
+    // SOUND.c soundProcessIds truncates after each scale. soundPlaySound caps the SDK value.
+    pub fn gain(self, channel: u8, percent: u8) -> f32 {
+        f32::from(tm1_core::sound::voice_volume(
+            self.program,
+            self.tone,
+            channel,
+            percent,
+        )) / 33.
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct Levels(Arc<AtomicU32>);
 
@@ -21,8 +45,11 @@ impl Levels {
         levels
     }
     pub fn set(&self, channels: [i32; 2], percent: i32) {
-        let [l, r] = channels.map(|v| (v * percent).clamp(0, 65535) as u32);
-        self.0.store(l | (r << 16), Ordering::Relaxed);
+        let [l, r] = channels.map(|v| v.clamp(0, 255) as u32);
+        self.0.store(
+            l | (r << 8) | ((percent.clamp(0, 255) as u32) << 16),
+            Ordering::Relaxed,
+        );
     }
 }
 
@@ -44,7 +71,7 @@ pub(super) struct LoopingTone {
     pcm: Arc<[i16]>,
     loop_at: usize,
     adsr: [u16; 2],
-    volume: f32,
+    volume: VabVolume,
     pan: [f32; 2],
 }
 impl LoopingTone {
@@ -54,11 +81,12 @@ impl LoopingTone {
             .loop_start
             .ok_or_else(|| anyhow::anyhow!("missing VAB loop"))?;
         let pan = f32::from(tone.pan) / 64.;
+        let volume = VabVolume::from_tone(&tone);
         Ok(Self {
             pcm: tone.pcm.into(),
             loop_at,
             adsr: tone.adsr,
-            volume: f32::from(tone.volume) / 127.,
+            volume,
             pan: [(2. - pan).min(1.), pan.min(1.)],
         })
     }
@@ -67,6 +95,7 @@ impl LoopingTone {
         (
             StereoPcm {
                 data: PcmData::Looping(self.clone(), register.clone()),
+                volume: self.volume,
                 levels: None,
             },
             register,
@@ -81,12 +110,14 @@ enum PcmData {
 #[derive(Asset, TypePath, Clone)]
 pub struct StereoPcm {
     data: PcmData,
+    pub(super) volume: VabVolume,
     levels: Option<Levels>,
 }
 
 impl StereoPcm {
-    pub(super) fn new(stereo: &[[f32; 2]]) -> Self {
+    pub(super) fn new(stereo: &[[f32; 2]], volume: VabVolume) -> Self {
         Self {
+            volume,
             data: PcmData::Stereo {
                 samples: stereo
                     .iter()
@@ -96,6 +127,16 @@ impl StereoPcm {
             },
             levels: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn unscaled_decoder(&self) -> Playback {
+        let mut clip = self.clone();
+        clip.volume = VabVolume {
+            program: 99,
+            tone: 99,
+        };
+        clip.decoder()
     }
 
     pub(super) fn with_levels(&self, levels: Levels) -> Self {
@@ -111,7 +152,8 @@ pub struct Playback {
     cursor: usize,
     phase: usize,
     right: f32,
-    frame_levels: u32,
+    frame_gain: [f32; 2],
+    last_levels: u32,
     envelope: Option<super::envelope::Envelope>,
 }
 
@@ -123,7 +165,8 @@ impl Decodable for StereoPcm {
             cursor: 0,
             phase: 0,
             right: 0.,
-            frame_levels: 0,
+            frame_gain: [0.; 2],
+            last_levels: u32::MAX,
             envelope: match &self.data {
                 PcmData::Looping(motor, _) => Some(super::envelope::Envelope::new(motor.adsr)),
                 PcmData::Stereo { .. } => None,
@@ -139,7 +182,7 @@ impl Iterator for Playback {
             PcmData::Looping(motor, register) => {
                 if self.cursor & 1 == 0 {
                     let mono = super::interpolation::interpolate(&motor.pcm, self.phase);
-                    let v = self.envelope.as_mut().unwrap().apply(mono) as f32 * motor.volume;
+                    let v = self.envelope.as_mut().unwrap().apply(mono) as f32;
                     let channels = motor
                         .pan
                         .map(|pan| (v * pan).clamp(-32768., 32767.) / 32768.);
@@ -154,14 +197,20 @@ impl Iterator for Playback {
                 }
             }
         };
-        if let Some(levels) = &self.clip.levels {
-            // Latch both channels at the start of each stereo frame.
-            if self.cursor % 2 == 0 {
-                self.frame_levels = levels.0.load(Ordering::Relaxed);
+        if self.cursor % 2 == 0 {
+            let levels = self
+                .clip
+                .levels
+                .as_ref()
+                .map_or(33 | (33 << 8) | (99 << 16), |l| l.0.load(Ordering::Relaxed));
+            if levels != self.last_levels {
+                let [left, right, percent, _] = levels.to_le_bytes();
+                self.frame_gain =
+                    [left, right].map(|channel| self.clip.volume.gain(channel, percent));
+                self.last_levels = levels;
             }
-            let gain = (self.frame_levels >> (16 * (self.cursor % 2))) as u16;
-            sample *= f32::from(gain) / (33. * 99.);
         }
+        sample *= self.frame_gain[self.cursor % 2];
         self.cursor = self.cursor.wrapping_add(1);
         Some(sample)
     }
@@ -191,18 +240,27 @@ mod tests {
     use super::*;
     #[test]
     fn independent_voices_latch_channel_updates_at_frame_boundaries() {
-        let clip = StereoPcm::new(&[[8192., 4096.]; 3]);
+        let clip = StereoPcm::new(
+            &[[8192., 4096.]; 3],
+            VabVolume {
+                program: 99,
+                tone: 99,
+            },
+        );
         let levels = Levels::new([16, 47], 99);
         let mut a = clip.with_levels(levels.clone()).decoder();
         let mut b = clip.with_levels(Levels::new([47, 16], 50)).decoder();
         assert_eq!(a.next(), Some(0.25 * (16. / 33.)));
         levels.set([39, 21], 25);
         assert_eq!(a.next(), Some(0.125 * (47. / 33.)));
-        assert_eq!(a.next(), Some(0.25 * (39. * 25. / (33. * 99.))));
-        assert_eq!(a.next(), Some(0.125 * (21. * 25. / (33. * 99.))));
-        assert_eq!(b.next(), Some(0.25 * (47. * 50. / (33. * 99.))));
-        assert_eq!(b.next(), Some(0.125 * (16. * 50. / (33. * 99.))));
-        assert_eq!(a.count(), 2);
+        assert_eq!(a.next(), Some(0.25 * (9. / 33.)));
+        assert_eq!(a.next(), Some(0.125 * (5. / 33.)));
+        assert_eq!(b.next(), Some(0.25 * (23. / 33.)));
+        assert_eq!(b.next(), Some(0.125 * (8. / 33.)));
+        levels.set([50, 33], 109);
+        assert_eq!(a.next(), Some(0.25 * (55. / 33.)));
+        assert_eq!(a.next(), Some(0.125 * (36. / 33.)));
+        assert_eq!(a.next(), None);
         assert_eq!(b.count(), 4);
     }
 }

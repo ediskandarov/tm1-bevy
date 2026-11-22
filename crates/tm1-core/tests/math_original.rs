@@ -114,3 +114,47 @@ fn spu_note_and_fine_pitch_match_retail() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn vab_channel_levels_match_retail_sdk_calls() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let bank = disc.read("SND/UACORE.VAB").unwrap();
+    let system = 0x8016fecc;
+    let sound = 0x801963a8;
+    let tone = 0x80009000;
+    cpu.put(system + 24, &(3357u32 * 3357).to_le_bytes());
+    cpu.put(sound + 20, &1u32.to_le_bytes()); // already loaded instrument
+    cpu.put(sound + 24, &u32::to_le_bytes(tone));
+    cpu.put(tone + 0x40, &2u32.to_le_bytes());
+    cpu.put(tone + 0x54, &1u32.to_le_bytes()); // voice already playing
+    for prog in 0..59 {
+        for t in tm1_assets::sound::program(&bank, prog).unwrap() {
+            cpu.put(sound + 5, &[t.program_volume]);
+            cpu.put(tone + 8, &[t.volume]);
+            for (volume, percent) in [(0, 99), (33, 99), (33, 84), (57, 25), (57, 109), (127, 99)] {
+                cpu.put(system + 4, &u32::from(volume).to_le_bytes());
+                cpu.put(0x8018bf7c, &u32::MAX.to_le_bytes());
+                // Full-right request. JP soundPlayId negates the horizontal offset.
+                cpu.call(0x80106d60, &[0, 0, 160, 8, u32::from(percent), 0]);
+                cpu.call_until(0x80105ebc, &[], 0x80106720);
+                cpu.call_until(0x80104ad8, &[tone], 0x8016c494);
+                let expected = [volume, 2 * volume].map(|v| {
+                    u32::from(tm1_core::sound::voice_volume(
+                        t.program_volume,
+                        t.volume,
+                        v,
+                        percent,
+                    ))
+                });
+                assert_eq!(
+                    [cpu.r[5], cpu.r[6]],
+                    expected,
+                    "program {prog} tone volume {} channel {volume} scale {percent}",
+                    t.volume
+                );
+            }
+        }
+    }
+}

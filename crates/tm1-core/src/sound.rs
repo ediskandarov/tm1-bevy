@@ -1,5 +1,13 @@
 //! Voice selection in the JP SOUND.c mixer.
 
+/// Seven-bit volume passed to SsUtSetVVol by soundProcessIds and soundPlaySound.
+pub fn voice_volume(program: u8, tone: u8, channel: u8, percent: u8) -> u8 {
+    let program = u32::from(channel) * u32::from(program) / 99;
+    let tone = (program * u32::from(tone) / 99) as u8;
+    let scaled = (u32::from(tone) * u32::from(percent) / 99) as u8;
+    scaled.min(127)
+}
+
 /// Pitch register written by the JP SDK for a voice with sample note 60.
 pub fn spu_pitch(note: u8, fine: u8) -> u16 {
     let step = usize::from(note.min(127)) * 16 + usize::from(fine.min(127)) / 8;
