@@ -247,13 +247,13 @@ pub fn duel_pad_held(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
 }
 
 #[derive(Default)]
-pub struct DuelControlsView {
+pub struct ControlsView {
     elapsed: std::time::Duration,
     arrows: [bool; 2],
     ready: bool,
 }
 
-impl DuelControlsView {
+impl ControlsView {
     fn label_visible(&self) -> bool {
         // screenChooseControls waits for two VSyncs per ordinary draw loop.
         let draw = self.elapsed.as_nanos() * 30 / 1_000_000_000;
@@ -264,21 +264,25 @@ impl DuelControlsView {
         &mut self,
         delta: std::time::Duration,
         keys: &ButtonInput<KeyCode>,
-        slot: usize,
+        slot: Option<usize>,
     ) -> ControlInput {
         use KeyCode::*;
         let previous = (self.label_visible(), self.arrows);
         self.elapsed = self.elapsed.saturating_add(delta);
-        let [left, right, select] = if slot == 0 {
-            [KeyA, KeyD, Space]
-        } else {
-            [ArrowLeft, ArrowRight, Comma]
+        let [left, right, select] = match slot {
+            None => [ArrowLeft, ArrowRight, Space],
+            Some(0) => [KeyA, KeyD, Space],
+            Some(_) => [ArrowLeft, ArrowRight, Comma],
         };
         let waiting = !self.ready;
         let action = if keys.just_pressed(Escape) {
             Some(Action::Resume)
         } else if waiting {
-            if !duel_pad_held(keys, slot) && !keys.pressed(Enter) {
+            let held = match slot {
+                Some(slot) => duel_pad_held(keys, slot) || keys.pressed(Enter),
+                None => campaign_pad_held(keys, None),
+            };
+            if !held {
                 self.ready = true;
                 self.arrows = [false; 2];
             }
@@ -298,14 +302,17 @@ impl DuelControlsView {
         };
         ControlInput {
             action,
-            redraw: previous != (self.label_visible(), self.arrows),
+            redraw: previous.1 != self.arrows
+                || (slot.is_some() && previous.0 != self.label_visible()),
             reset_idle: waiting || action.is_some(),
         }
     }
 
-    pub fn frame(&self, art: &Art, fonts: &Fonts, layout: u8, slot: usize) -> Vec<u8> {
+    pub fn frame(&self, art: &Art, fonts: &Fonts, layout: u8, slot: Option<usize>) -> Vec<u8> {
         let mut frame = art.controls_frame(fonts, layout, self.arrows);
-        if self.label_visible() {
+        if let Some(slot) = slot
+            && self.label_visible()
+        {
             fonts.centered_at(
                 &mut frame,
                 Face::Choice,

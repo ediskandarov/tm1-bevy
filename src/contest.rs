@@ -49,6 +49,9 @@ pub const INFINITE_WEAPONS: &str = "< =@@";
 pub const MINION_AND_FRIENDS: &str = "<>@=<";
 pub const HELICOPTER: &str = "@@<> ";
 const GOD_MODE: &str = "=<> @";
+#[derive(Resource)]
+struct SecondPlayerLayout(u8);
+
 #[derive(Resource, Clone, Copy, PartialEq, Eq)]
 struct PlayerCars([Option<usize>; 2]);
 
@@ -78,7 +81,7 @@ pub struct Contest {
     hidden_pick: Option<usize>,
     player_cars: PlayerCars,
     duel_stage: usize,
-    pub(crate) duel_layouts: [u8; 2],
+    second_layout: u8,
     battlegrounds: Vec<Vec<u8>>,
     duel_art: Vec<u8>,
     history_from_menu: bool,
@@ -98,7 +101,7 @@ pub struct Contest {
     button_sounds: Vec<Handle<AudioSource>>,
     password_from_options: bool,
     cursor_fields: u32,
-    controls_view: crate::pause::DuelControlsView,
+    controls_view: crate::pause::ControlsView,
     entry: Vec<u8>,
     image: Handle<Image>,
     theme: Handle<crate::music::CdTrack>,
@@ -115,6 +118,10 @@ pub struct Contest {
 #[derive(Default, Resource)]
 struct AttractCycle(u8);
 impl Contest {
+    pub(crate) fn duel_layouts(&self) -> [u8; 2] {
+        [self.settings.layout, self.second_layout]
+    }
+
     fn begin_showcase(&mut self) {
         self.garage.reset();
         self.field_fraction = 0;
@@ -392,11 +399,11 @@ impl Contest {
                 return out;
             }
             Page::Controls => {
-                return self.controls.frame(
+                return self.controls_view.frame(
+                    &self.controls,
                     &self.fonts,
+                    self.settings.layout,
                     None,
-                    crate::pause::Page::Controls,
-                    self.settings,
                 );
             }
             Page::DuelJoin(_) => return self.garage.join_frame(&self.fonts),
@@ -415,8 +422,8 @@ impl Contest {
                 return self.controls_view.frame(
                     &self.controls,
                     &self.fonts,
-                    self.duel_layouts[slot],
-                    slot,
+                    self.duel_layouts()[slot],
+                    Some(slot),
                 );
             }
             Page::DuelStage => {
@@ -702,7 +709,7 @@ impl Contest {
             Page::Contest if keys.pressed(ArrowLeft) && keys.pressed(ArrowRight) => return None,
             _ if enter => 1,
             Page::Password if keys.any_just_pressed([Digit1, Digit2, Digit3, Digit4, Space]) => 1,
-            Page::Password | Page::Controls if horizontal => 0,
+            Page::Password if horizontal => 0,
             Page::Battle(_) | Page::Wrong(_) if vertical => 0,
             Page::Options(n) if vertical || (n < 2 && horizontal) => 0,
             Page::Contest if self.garage.row != 2 && horizontal => 0,
@@ -1008,15 +1015,7 @@ impl Contest {
                     }
                 }
             }
-            Page::Controls => {
-                if key(KeyCode::Enter) || key(KeyCode::Escape) {
-                    self.page = Page::Options(1);
-                } else if key(KeyCode::ArrowLeft) {
-                    self.settings.layout = self.settings.layout.saturating_sub(1);
-                } else if key(KeyCode::ArrowRight) {
-                    self.settings.layout = (self.settings.layout + 1).min(3);
-                }
-            }
+            Page::Controls => {}
             Page::Password => {
                 if key(KeyCode::Escape) {
                     self.page = self.after_password();
@@ -1095,6 +1094,20 @@ pub fn show(
     difficulty: Difficulty,
     first_clip: Option<Clip>,
 ) -> Result<()> {
+    let (settings, second_layout) = if let Some(duel) = world.get_resource::<crate::duel::Duel>() {
+        let mut settings = duel.settings;
+        settings.layout = duel.layouts[0];
+        (settings, duel.layouts[1])
+    } else {
+        let settings = world
+            .get_resource::<crate::driving::Drive>()
+            .map(|drive| drive.settings)
+            .unwrap_or_default();
+        let second = world
+            .get_resource::<SecondPlayerLayout>()
+            .map_or(1, |saved| saved.0);
+        (settings, second)
+    };
     let player_cars = *world.get_resource_or_init::<PlayerCars>();
     let disc = &world.resource::<Campaign>().0;
     let theme = crate::music::CdTrack::load(disc, 2)?;
@@ -1108,7 +1121,7 @@ pub fn show(
         hidden_pick: None,
         player_cars,
         duel_stage: 0,
-        duel_layouts: [1; 2],
+        second_layout,
         battlegrounds: (1..=6)
             .map(|i| screen::background(&disc.read(&format!("UASCREEN/SCRNE3{i}.TIM"))?))
             .collect::<Result<_>>()?,
@@ -1129,15 +1142,7 @@ pub fn show(
             .collect::<Result<_>>()?,
         options: screen::background(&disc.read("UASCREEN/SCRNF.TIM")?)?,
         controls: crate::pause::Art::load(disc)?,
-        settings: world
-            .get_resource::<crate::duel::Duel>()
-            .map(|d| d.settings)
-            .or_else(|| {
-                world
-                    .get_resource::<crate::driving::Drive>()
-                    .map(|d| d.settings)
-            })
-            .unwrap_or_default(),
+        settings,
         button_sounds: Vec::new(),
         password_from_options: false,
         cursor_fields: 0,
@@ -1280,11 +1285,12 @@ pub fn update(world: &mut World) {
             menu.idle = Duration::ZERO;
         }
         let keys = if scripted { &no_input } else { world.resource::<ButtonInput<KeyCode>>() };
-        let controls = if let Page::DuelControls(slot) = menu.page {
-            Some(menu.controls_view.advance(menu_delta(world), keys, slot))
-        } else {
-            None
+        let duel_slot = match menu.page {
+            Page::DuelControls(slot) => Some(slot),
+            _ => None,
         };
+        let controls = (menu.page == Page::Controls || duel_slot.is_some())
+            .then(|| menu.controls_view.advance(menu_delta(world), keys, duel_slot));
         let joining = matches!(menu.page, Page::DuelJoin(_));
         let join_held = joining && (crate::pause::duel_pad_held(keys, 0) || crate::pause::duel_pad_held(keys, 1));
         let join_wait = join_held || matches!(menu.page, Page::DuelJoin(Some(_)));
@@ -1322,15 +1328,19 @@ pub fn update(world: &mut World) {
             return;
         }
         let previous = menu.page;
-        let (start_battle, voice) = if let (Page::DuelControls(slot), Some(input)) = (previous, controls) {
-            let old = menu.duel_layouts[slot];
+        let (start_battle, voice) = if let Some(input) = controls {
+            let old = menu.duel_layouts()[duel_slot.unwrap_or(0)];
             let mut settings = menu.settings;
             settings.layout = old;
             let sound = input.action.and_then(|action| {
                 if crate::pause::navigate(crate::pause::Page::Controls, action, &mut settings).is_none() {
-                    menu.page = Page::DuelOptions(0);
+                    menu.page = if duel_slot.is_some() { Page::DuelOptions(0) } else { Page::Options(1) };
                 }
-                menu.duel_layouts[slot] = settings.layout;
+                if duel_slot == Some(1) {
+                    menu.second_layout = settings.layout;
+                } else {
+                    menu.settings.layout = settings.layout;
+                }
                 crate::pause::navigation_sound(crate::pause::Page::Controls, action, old != settings.layout)
             });
             (false, sound.map(|select| menu.button_sounds[usize::from(select)].clone()))
@@ -1343,7 +1353,7 @@ pub fn update(world: &mut World) {
         if menu.player_cars != *world.resource::<PlayerCars>() {
             world.insert_resource(menu.player_cars);
         }
-        if previous != menu.page && matches!(menu.page, Page::DuelControls(_)) {
+        if previous != menu.page && matches!(menu.page, Page::DuelControls(_) | Page::Controls) {
             menu.controls_view = Default::default();
         }
         if let Some(voice) = voice {
@@ -1398,6 +1408,7 @@ pub fn start_battle(world: &mut World) -> Result<()> {
         );
     }
     let settings = menu.settings;
+    let second_layout = menu.second_layout;
     let mut stage = Stage::from_world(
         world,
         menu.level,
@@ -1406,6 +1417,7 @@ pub fn start_battle(world: &mut World) -> Result<()> {
     )?;
     stage.apply_passwords(menu.modes);
     crate::transition::begin(world, stage, false, true, Some(settings))?;
+    world.insert_resource(SecondPlayerLayout(second_layout));
     world.remove_resource::<Contest>();
     Ok(())
 }
@@ -1451,7 +1463,7 @@ mod tests {
         world.insert_resource(ButtonInput::<KeyCode>::default());
         if world
             .get_resource::<Contest>()
-            .is_some_and(|menu| matches!(menu.page, Page::DuelJoin(Some(_))))
+            .is_some_and(|menu| matches!(menu.page, Page::DuelJoin(Some(_)) | Page::Controls))
         {
             update(world);
         }
@@ -1921,7 +1933,8 @@ mod tests {
         press(&mut world, Escape);
         let menu = world.resource::<Contest>();
         assert!(menu.page == Page::DuelOptions(0));
-        assert_eq!(menu.duel_layouts, [0, 2]);
+        assert_eq!(menu.duel_layouts(), [0, 2]);
+        assert_eq!(menu.settings.layout, 0);
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -2104,6 +2117,8 @@ mod tests {
         assert!(world.contains_resource::<duel::Duel>());
         step(&mut world, &[]);
         assert!(!world.contains_resource::<duel::Duel>());
+        assert_eq!(world.resource::<Contest>().duel_layouts(), [1, 2]);
+        assert_eq!(world.resource::<Contest>().settings.layout, 1);
         assert!(world.resource::<Contest>().cinema.as_ref().unwrap().clip == Clip::Title);
     }
     fn password(world: &mut World, keys: &[KeyCode]) {
@@ -2177,6 +2192,58 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn solo_controls_draw_the_held_arrow_and_wait_for_full_release() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [Enter, Enter, ArrowDown, Enter, ArrowDown] {
+            press(&mut world, key);
+        }
+        let step = |world: &mut World, pressed: &[KeyCode]| {
+            let mut keys = ButtonInput::default();
+            for &key in pressed {
+                keys.press(key);
+            }
+            world.insert_resource(keys);
+            update(world);
+        };
+        let check = |world: &World, layout, highlighted| {
+            let menu = world.resource::<Contest>();
+            assert_eq!(menu.page, Page::Controls);
+            assert_eq!(menu.settings.layout, layout);
+            let mut expected = menu.controls.frame(
+                &menu.fonts,
+                None,
+                crate::pause::Page::Controls,
+                menu.settings,
+            );
+            if highlighted {
+                menu.fonts
+                    .at(&mut expected, Face::ArrowActive, 285, 63, ">");
+            }
+            let displayed = &world
+                .resource::<Assets<Image>>()
+                .get(&menu.image)
+                .unwrap()
+                .data;
+            assert!(displayed.as_deref() == Some(expected.as_slice()));
+        };
+        step(&mut world, &[Enter]);
+        step(&mut world, &[Enter, ArrowRight]);
+        check(&world, 1, false);
+        step(&mut world, &[]);
+        step(&mut world, &[ArrowRight]);
+        check(&world, 2, true);
+        step(&mut world, &[KeyW, Enter]);
+        check(&world, 2, true);
+        step(&mut world, &[]);
+        check(&world, 2, false);
+        step(&mut world, &[Space, ArrowRight]);
+        assert_eq!(world.resource::<Contest>().page, Page::Options(1));
+        assert_eq!(world.resource::<Contest>().settings.layout, 2);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn battle_setup_applies_keyboard_choices_to_the_encounter() {
         use KeyCode::*;
         let mut world = menu_world();
@@ -2203,6 +2270,8 @@ mod tests {
         assert_eq!(drive.player.difficulty(), Difficulty::Easy);
         assert_eq!(drive.settings.layout, 2);
         assert_eq!(drive.player.state()[0xc8 + 22], 2);
+        open(&mut world).unwrap();
+        assert_eq!(world.resource::<Contest>().duel_layouts(), [2, 1]);
     }
 
     #[test]

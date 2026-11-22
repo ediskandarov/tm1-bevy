@@ -42,12 +42,12 @@ pub struct Duel {
     score_time_left: Duration,
     pub(crate) pause: Option<crate::pause::Page>,
     control_slot: usize,
-    controls_view: crate::pause::DuelControlsView,
+    controls_view: crate::pause::ControlsView,
     abort_wait: crate::pause::AbortWait,
     options_idle: Duration,
     pause_input: crate::pause::PauseInput,
     just_resumed: bool,
-    layouts: [u8; 2],
+    pub(crate) layouts: [u8; 2],
     pub(crate) sounds: Vec<crate::driving::BattleRequest>,
 }
 
@@ -200,7 +200,7 @@ pub fn start(
         .unwrap_or_default();
     let layouts = world
         .get_resource::<crate::contest::Contest>()
-        .map(|menu| menu.duel_layouts)
+        .map(crate::contest::Contest::duel_layouts)
         .or_else(|| world.get_resource::<Duel>().map(|duel| duel.layouts))
         .unwrap_or([1; 2]);
     for (car, layout) in cars.iter_mut().zip(layouts) {
@@ -336,7 +336,7 @@ pub fn pause_menu(
     if let Some(page) = duel.pause.filter(|_| duel.pause == before) {
         let (action, idle_reset) = if page == Page::Controls {
             let slot = duel.control_slot;
-            let input = duel.controls_view.advance(time.delta(), &keys, slot);
+            let input = duel.controls_view.advance(time.delta(), &keys, Some(slot));
             controls_changed = input.redraw;
             let resume = if slot == 0 { KeyP } else { NumpadEnter };
             (
@@ -410,7 +410,7 @@ pub fn pause_menu(
                     &arena.pause_art,
                     &arena.fonts,
                     duel.settings.layout,
-                    duel.control_slot,
+                    Some(duel.control_slot),
                 )
             } else {
                 arena
