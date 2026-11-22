@@ -11,6 +11,7 @@ extern u32 gFrameCount;
 
 // The Rust owner borrows the event vector for this serialized simulation step.
 static void* step_audio;
+void tm1_bind_step_audio(void* audio) { step_audio = audio; }
 extern void tm1_record_effect(void*, int, int, int, int);
 extern void tm1_record_guns(void*, int, int, int, int, int);
 extern void tm1_record_turbo(void*, int);
@@ -1007,7 +1008,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
     CarMotion* m = is_player ? &player->motion : &ai->motion;
     CarCollision* col = is_player ? &player->collision : &ai->collision;
     if (is_player == 2) {
-        tm1_age_effects();
+        tm1_tick_carry_notice();
         arena_move_missiles();
         tm1_update_hit_lights();
         tm1_display_hit_sheet();
@@ -1019,7 +1020,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
         arena_move_fragments();
         arena_capture_fragments();
         arena_animate_flames();
-        arena_animate_ground_fire();
+        arena_animate_effects();
         tm1_capture_car_lights();
     } else {
         if (is_player && player->stats.unk38) {
@@ -1046,7 +1047,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
 void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, u8 is_player,
     const s16* tables, u32* seed, s16 fields, u32 frame, void* audio)
 {
-    step_audio = audio;
+    tm1_bind_step_audio(audio);
     PlayerCar player;
     AICar ai;
     memcpy(&player, player_state, sizeof(player));
@@ -1084,7 +1085,7 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     memcpy(player_state, &player, sizeof(player));
     memcpy(ai_state, &ai, sizeof(ai));
     *seed = random_state;
-    step_audio = NULL;
+    tm1_bind_step_audio(NULL);
     tm1_use_scene(NULL);
     arena_player = NULL;
     arena_opponent = NULL;
@@ -1130,7 +1131,7 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
     s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio)
 {
-    step_audio = audio;
+    tm1_bind_step_audio(audio);
     memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     gun_requests = requests;
@@ -1189,7 +1190,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
     tm1_store_battle(battle);
-    step_audio = NULL;
+    tm1_bind_step_audio(NULL);
     gun_requests = NULL;
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));
@@ -1207,7 +1208,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio)
 {
-    step_audio = audio;
+    tm1_bind_step_audio(audio);
     memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     memset(turbo, 0, 2);
@@ -1246,7 +1247,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
     memcpy(second, &cars[1], sizeof(PlayerCar));
-    step_audio = NULL;
+    tm1_bind_step_audio(NULL);
     gun_requests = NULL;
     tm1_use_scene(NULL);
     arena_player = NULL;

@@ -97,7 +97,6 @@ typedef struct CollisionScene {
     int num_pickups, pickup_timer;
     Cs missile_cs[10];
     s32 effects[80][5];
-    size_t next_effect;
     s32 primary_fire[80][4];
     size_t primary_fire_count;
 } CollisionScene;
@@ -710,7 +709,6 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bullets, 0, sizeof s->bullets);
     s->drawn_bullet_count = 0;
     memset(s->effects, 0, sizeof s->effects);
-    s->next_effect = 0;
     s->primary_fire_count = 0;
     s->has_temporary_hole = false;
     s->pothole_fields = 0;
@@ -1469,48 +1467,44 @@ void arena_special_effect(VECTOR3* pos, s32 owner)
     arena_record_effect(pos, effect);
 }
 
+// EXPLODE.c find_free_explosion scans the shared pyro array in slot order.
+static int free_explosion(void)
+{
+    for (int i = 0; i < 80; i++)
+        if (!current->effects[i][4] && !current->bursts[i].life)
+            return i;
+    return -1;
+}
+
 void arena_effect(VECTOR3* pos, s32 kind)
 {
     if (!current)
         return;
     arena_record_effect(pos, kind);
-    s32* e = current->effects[current->next_effect++ % 80];
-    e[0] = pos->vx;
-    e[1] = pos->vy;
-    e[2] = pos->vz;
-    e[3] = kind;
+    int life;
     switch (kind) {
-    case 1: e[4] = 4; break;
-    case 55: case 56: e[4] = 32; break;
-    case 2: e[4] = 7; break;
-    case 8:
-    case 34: e[4] = 88; break;
-    case 44: case 45: case 46: case 47: case 48: case 49: case 50: e[4] = 2; break;
-    case 38: case 39: case 40: case 41: case 42: case 43: e[4] = 3; break;
-    case 35: e[4] = 104; break;
-    case 31: e[4] = 24; break;
-    case 32: e[4] = 16; break;
-    case 28:
-    case 37: e[4] = 32; break;
-    case 29:
-    case 30: e[4] = 16; break;
-    default: e[4] = 2; break;
+    case 1: life = 4; break;
+    case 55: case 56: case 28: case 37: life = 32; break;
+    case 8: case 34: life = 88; break;
+    case 44: case 45: case 46: case 47: case 48: case 49: case 50:
+    case 53: life = 2; break;
+    case 38: case 39: case 40: case 41: case 42: case 43: life = 3; break;
+    case 35: life = 104; break;
+    case 31: life = 24; break;
+    case 32: case 29: case 30: life = 16; break;
+    default: return; // Sound-only requests have no pyro entry.
     }
+    int slot = free_explosion();
+    if (slot < 0)
+        return;
+    s32 row[] = {pos->vx, pos->vy, pos->vz, kind, life};
+    memcpy(current->effects[slot], row, sizeof(row));
 }
-void tm1_age_effects(void)
+
+void tm1_tick_carry_notice(void)
 {
     if (current->carry_notice_frames > 0)
         current->carry_notice_frames--;
-    for (int i = 0; i < 80; i++) {
-        s32* e = current->effects[i];
-        if (e[4] <= 0 || e[3] == 35)
-            continue;
-        if (e[3] == 8 || e[3] == 34)
-            e[2] += 10;
-        else if (e[3] == 32)
-            e[2] += 6;
-        e[4]--;
-    }
 }
 static size_t copy_ground_fire(const CollisionScene* scene, int secondary, s32 (*out)[4])
 {
@@ -1529,12 +1523,17 @@ static size_t copy_ground_fire(const CollisionScene* scene, int secondary, s32 (
     return n;
 }
 
-void arena_animate_ground_fire(void)
+void arena_animate_effects(void)
 {
     for (int i = 0; i < 80; i++) {
         s32* e = current->effects[i];
-        if (e[3] == 35 && e[4] > 0)
-            e[4]--;
+        if (e[4] == 0)
+            continue;
+        if (e[3] == 8 || e[3] == 34)
+            e[2] += 10;
+        else if (e[3] == 32)
+            e[2] += 6;
+        e[4]--;
     }
     current->primary_fire_count = copy_ground_fire(current, 0, current->primary_fire);
 }
@@ -1813,18 +1812,16 @@ int arena_launch_flame(Cs* cs, int forward)
 static void flame_burst(VECTOR3 pos)
 {
     int frame = 1 + (arena_rand() & 3);
-    for (int i = 0; i < 80; i++) {
-        if (current->bursts[i].life)
-            continue;
-        current->bursts[i].pos = pos;
-        current->bursts[i].life = 2;
-        current->bursts[i].frame = frame;
-        VECTOR3* vel = &current->bursts[i].vel;
-        vel->vx = (arena_rand() & 7) - 3;
-        vel->vy = (arena_rand() & 7) - 3;
-        vel->vz = (arena_rand() & 15) > 5 ? 0 : (arena_rand() & 15) - 5;
-        break;
-    }
+    int i = free_explosion();
+    if (i < 0)
+        return;
+    current->bursts[i].pos = pos;
+    current->bursts[i].life = 2;
+    current->bursts[i].frame = frame;
+    VECTOR3* vel = &current->bursts[i].vel;
+    vel->vx = (arena_rand() & 7) - 3;
+    vel->vy = (arena_rand() & 7) - 3;
+    vel->vz = (arena_rand() & 15) > 5 ? 0 : (arena_rand() & 15) - 5;
 }
 
 void arena_move_flames(void)

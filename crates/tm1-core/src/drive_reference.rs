@@ -403,7 +403,7 @@ fn hud_opponent_matches_disc() {
 fn carrying_capacity_matches_disc() {
     unsafe extern "C" {
         fn carGetPickup(car: *mut u8, player: u8, tag: i32, slot: i32);
-        fn tm1_age_effects();
+        fn tm1_tick_carry_notice();
     }
     let mut r = Reference::new();
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
@@ -455,7 +455,7 @@ fn carrying_capacity_matches_disc() {
             r.cpu.call_until(0x80142b2c, &[], 0x80142b9c);
             unsafe {
                 tm1_use_scene(r.scene.native.as_ptr());
-                tm1_age_effects();
+                tm1_tick_carry_notice();
                 tm1_use_scene(std::ptr::null_mut());
             }
         }
@@ -472,7 +472,7 @@ fn carrying_capacity_matches_disc() {
 fn pickup_sounds_match_disc() {
     unsafe extern "C" {
         fn carGetPickup(car: *mut u8, player: u8, tag: i32, slot: i32);
-        fn tm1_age_effects();
+        fn tm1_bind_step_audio(audio: *mut std::ffi::c_void);
     }
     let mut r = Reference::new();
     r.cpu.put(0x801419c8, &[8, 0, 224, 3, 0, 0, 0, 0]); // pickup mesh switch
@@ -511,22 +511,29 @@ fn pickup_sounds_match_disc() {
                             }
                             let rec = (table + 6 * cpu.r[4]) as usize & 0x1fffff;
                             assert_eq!(&cpu.ram[rec..rec + 4], &[0, 0, 36, 0]);
-                            expected.push([origin[0], origin[1], origin[2], tag as i32, 2]);
+                            expected.push([origin[0], origin[1], origin[2], tag as i32]);
                         }
                     },
                 );
+                r.scene.audio.clear();
                 unsafe {
                     tm1_use_scene(r.scene.native.as_ptr());
-                    tm1_age_effects();
+                    tm1_bind_step_audio(std::ptr::from_mut(&mut r.scene.audio).cast());
                     carGetPickup(car.as_mut_ptr(), player, tag as i32, 1);
+                    tm1_bind_step_audio(std::ptr::null_mut());
                     tm1_use_scene(std::ptr::null_mut());
                 }
-                let mut effects = [[0; 5]; 122];
-                let count = r.scene.effects(&mut effects);
-                let sounds: Vec<_> = effects[..count]
+                let sounds: Vec<_> = r
+                    .scene
+                    .audio
                     .iter()
-                    .copied()
-                    .filter(|e| e[3..] == [tag as i32, 2])
+                    .filter_map(|event| match *event {
+                        BattleEvent::Effect {
+                            kind,
+                            position: [x, y, z],
+                        } => Some([x, y, z, kind]),
+                        _ => None,
+                    })
                     .collect();
                 assert_eq!(sounds, expected, "player {player} tag {tag} total {total}");
             }
@@ -980,19 +987,33 @@ fn special_bullet_effects_original() {
                 original.push((effect, [0, 4, 8].map(|d| cpu.word(cpu.r[4] + d) as i32)));
             });
             r.scene.phase(&mut r.player, &mut r.police, 2, 3);
-            let mut effects = [[0; 5]; 122];
-            let count = r.scene.effects(&mut effects);
-            let native: Vec<_> = effects[..count]
+            let native: Vec<_> = r
+                .scene
+                .audio
                 .iter()
-                .filter(|e| {
-                    matches!(
-                        (e[3], e[4]),
-                        (1, 4) | (54, 2) | (28 | 37 | 55, 32) | (35, 103) | (8, 88)
-                    )
+                .filter_map(|event| match *event {
+                    BattleEvent::Effect { kind, position }
+                        if matches!(kind, 1 | 54 | 28 | 37 | 55 | 35 | 8) =>
+                    {
+                        Some((kind, position))
+                    }
+                    _ => None,
                 })
-                .map(|e| (e[3], [e[0], e[1], e[2]]))
                 .collect();
             assert_eq!(native, original, "kind {kind}, tick {tick}");
+            let mut effects = [[0; 5]; 122];
+            let count = r.scene.effects(&mut effects);
+            for &(effect, [x, y, z]) in &original {
+                let (ttl, rise) = match effect {
+                    1 => (3, 0),
+                    28 | 37 | 55 => (31, 0),
+                    35 => (103, 0),
+                    8 => (87, 10),
+                    54 => continue,
+                    _ => unreachable!(),
+                };
+                assert!(effects[..count].contains(&[x, y, z + rise, effect, ttl]));
+            }
             seen.extend(original.iter().map(|e| e.0));
             if !seen.is_empty() {
                 break;
@@ -2325,7 +2346,12 @@ fn bullet_draw_packets_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn flamethrowers_original() {
-    for (rear, distance) in [(false, 320), (true, -240), (false, 1000)] {
+    for (rear, distance, saturated) in [
+        (false, 320, false),
+        (true, -240, false),
+        (false, 1000, false),
+        (false, 320, true),
+    ] {
         let mut r = Reference::build(Vehicle::Thumper, true);
         for addr in [0x80107c6c, 0x80107f84, 0x80108034] {
             r.cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
@@ -2344,6 +2370,27 @@ fn flamethrowers_original() {
         r.scene.phase(&mut r.player, &mut r.police, 1, 3);
         r.compare();
         assert_eq!(r.player.weapon().1, if rear { 1 } else { 15 });
+        if saturated {
+            unsafe extern "C" {
+                fn arena_effect(p: *const i32, kind: i32);
+            }
+            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            for slot in 0..84 {
+                let pos = [-1000 - slot, 100, 200];
+                for (k, n) in pos.into_iter().enumerate() {
+                    put(&mut r.cpu, VIEW_OUTPUT + 4 * k as u32, n as u32);
+                }
+                let flash = slot % 19 == 1;
+                r.cpu
+                    .call(if flash { 0x801370d0 } else { 0x80136e18 }, &[VIEW_OUTPUT]);
+                unsafe {
+                    tm1_use_scene(r.scene.native.as_ptr());
+                    arena_effect(pos.as_ptr(), if flash { 53 } else { 35 });
+                    tm1_use_scene(std::ptr::null_mut());
+                }
+            }
+            assert_eq!(r.cpu.call(0x8013624c, &[]), u32::MAX);
+        }
         let hp = r.police.health().0;
         let mut bursts = 0;
         for _ in 0..26 {
@@ -2354,10 +2401,28 @@ fn flamethrowers_original() {
             let mut particles = [[0; 4]; 80];
             let count = r.scene.flame_particles(&mut particles);
             let mut original = Vec::new();
+            let mut original_static = Vec::new();
             for slot in 0..80 {
                 let p = 0x8019a088 + slot * 64;
                 let age = r.cpu.word(p + 0x18) as i32;
                 if age >= 0 {
+                    let x = r.cpu.word(p) as i32;
+                    if saturated && x <= -1000 {
+                        let flash = (-1000 - x) % 19 == 1;
+                        let life = if flash {
+                            2
+                        } else {
+                            (r.cpu.word(p + 0x2c) as i16 as i32 + 1) * 8
+                        };
+                        original_static.push([
+                            x,
+                            100,
+                            200,
+                            if flash { 53 } else { 35 },
+                            life - age,
+                        ]);
+                        continue;
+                    }
                     let frame = (r.cpu.word(p + 0x24) - 0x8019c638) / 8;
                     original.push([
                         r.cpu.word(p) as i32,
@@ -2368,9 +2433,22 @@ fn flamethrowers_original() {
                 }
             }
             assert_eq!(original, particles[..count]);
+            if saturated {
+                let mut effects = [[0; 5]; 122];
+                let n = r.scene.effects(&mut effects);
+                assert!(
+                    original_static
+                        .iter()
+                        .eq(effects[..n].iter().filter(|e| matches!(e[3], 35 | 53)))
+                );
+            }
             bursts += count;
         }
-        assert_eq!(bursts, if rear { 66 } else { 290 });
+        if saturated {
+            assert!(bursts > 0 && bursts < 290);
+        } else {
+            assert_eq!(bursts, if rear { 66 } else { 290 });
+        }
         assert_eq!(r.police.health().0 < hp, distance.abs() < 400);
     }
 }
@@ -4014,13 +4092,18 @@ fn compare_rooftop_switches(
             let count = r.scene.effects(&mut effects);
             let steam = effects[..count]
                 .iter()
-                .find(|e| e[3] == 31 && e[4] == 24)
+                .find(|e| e[3] == 31 && e[4] == 23)
                 .unwrap();
-            for (kind, life) in [(8, 88), (32, 16), (33, 2)] {
+            assert!(r.scene.audio.contains(&BattleEvent::Effect {
+                kind: 33,
+                position: [steam[0], steam[1], steam[2]]
+            }));
+            for (kind, life, rise) in [(8, 87, 10), (32, 15, 6)] {
                 assert!(
                     effects[..count]
                         .iter()
-                        .any(|e| e[..3] == steam[..3] && e[3..] == [kind, life])
+                        .any(|e| e[..3] == [steam[0], steam[1], steam[2] + rise]
+                            && e[3..] == [kind, life])
                 );
             }
         }
@@ -4095,7 +4178,7 @@ fn smoke_puff_and_steam_match_retail() {
         fn do_smoke(pos: *const i32);
         fn do_puff(pos: *const i32);
         fn arena_effect(pos: *const i32, kind: i32);
-        fn tm1_age_effects();
+        fn arena_animate_effects();
     }
     let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
@@ -4130,7 +4213,7 @@ fn smoke_puff_and_steam_match_retail() {
         }
         unsafe {
             tm1_use_scene(r.scene.native.as_ptr());
-            tm1_age_effects();
+            arena_animate_effects();
             tm1_use_scene(std::ptr::null_mut());
         }
         cpu.call(0x801360bc, &[]);
@@ -4287,6 +4370,11 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn rooftop_pyramid_bullet_matches_retail_clouds() {
+    verify_pyramid_clouds(0);
+    verify_pyramid_clouds(80);
+}
+
+fn verify_pyramid_clouds(prefill: usize) {
     let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Rooftops);
     let (slot, record) = (0..50)
         .filter_map(|i| target_record(&r.scene, i).map(|v| (i, v)))
@@ -4306,18 +4394,21 @@ fn rooftop_pyramid_bullet_matches_retail_clouds() {
             put(&mut r.cpu, at + i as u32 * 4, v as u32);
         }
     }
+    r.cpu.call(0x80137268, &[]);
+    for _ in 0..prefill {
+        r.cpu.call(0x80136e18, &[0x800be020]);
+    }
     r.cpu.call(0x8010c930, &[1, 0x800be000, 0x800be020, 100]);
     {
         let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe extern "C" {
-            fn arena_effect(pos: *const i32, kind: i32);
+            fn arena_effect(p: *const i32, kind: i32);
             fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
         }
         unsafe {
             tm1_use_scene(r.scene.native.as_ptr());
-            // Put the next impact across the end of the 80-entry visual pool.
-            for _ in 0..79 {
-                arena_effect(pos.as_ptr(), 0);
+            for _ in 0..prefill {
+                arena_effect(pos.as_ptr(), 35);
             }
             create_bullet(1, dir.as_ptr(), pos.as_ptr(), 100);
             tm1_use_scene(std::ptr::null_mut());
@@ -4364,10 +4455,25 @@ fn rooftop_pyramid_bullet_matches_retail_clouds() {
         })
         .collect();
     assert_eq!(emitted, clouds);
-    let mut visible = native;
-    visible.sort();
-    clouds.sort();
-    assert_eq!(visible, clouds);
+    if prefill == 80 {
+        assert!(native.is_empty());
+        assert_eq!(effects[..count].iter().filter(|e| e[3] == 35).count(), 80);
+        for slot in 0..80 {
+            let p = 0x8019a088 + slot * 64;
+            assert_eq!(r.cpu.word(p + 24), 0);
+            assert_eq!(r.cpu.word(p + 0x20), 80);
+        }
+    } else {
+        for p in &mut clouds {
+            if p[3] == 34 {
+                p[2] += 10;
+            }
+        }
+        let mut visible = native;
+        visible.sort();
+        clouds.sort();
+        assert_eq!(visible, clouds);
+    }
     assert_eq!(r.player.seed, r.cpu.random_state);
 }
 

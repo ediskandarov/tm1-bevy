@@ -81,7 +81,7 @@ void arena_animate_flames(void);
 void arena_move_tasers(void);
 void arena_schedule_battle(AICar *,s16,s16,s16);
 void arena_move_missiles(void);
-void tm1_age_effects(void);
+void tm1_tick_carry_notice(void);
 void arena_effect(VECTOR3 *,s32);
 void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos);
 void arena_record_effect(const VECTOR3* pos, int kind);
@@ -94,7 +94,7 @@ void arena_regenerate_pickups(void);
 
 void arena_move_fragments(void);
 void arena_capture_fragments(void);
-void arena_animate_ground_fire(void);
+void arena_animate_effects(void);
 
 void arena_ai_weapon_profile(AICar* car);
 
