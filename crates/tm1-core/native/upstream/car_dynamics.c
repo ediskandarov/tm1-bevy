@@ -164,6 +164,40 @@ void InitMonsterTruck(CarStats* stats)
     stats->monster = 1;
 }
 
+void InitLowRider(CarStats* stats)
+{
+    stats->unk9C = 5;
+    stats->unkC4 = 5;
+    stats->unk88 = 0x78;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x55;
+    stats->unk98 = stats->unk88 * 3 / 4;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x14;
+    stats->unkE4 = 8;
+    stats->unk6C = 0xE;
+    stats->unk70 = 0x12;
+    stats->unk74 = 0x34;
+    stats->unk7C = 0x50;
+    stats->unk80 = 0x3B;
+    stats->unk84 = -0x4B;
+    stats->unk110 = -0x1B;
+    stats->unk112 = 0x3C;
+    stats->unk114 = 8;
+    stats->dropPower = 0;
+    stats->unk11A = 3;
+    stats->unk11C = 0x1E;
+    stats->unk10C = 0x320;
+    stats->unk108 = 2;
+    stats->unk04 = 2;
+    stats->unk44 = 0x6E;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x28;
+    stats->unk1E = 0x6E;
+    stats->unk5C = 6;
+    stats->unk24 = 0x320;
+}
+
 void InitLamborghini(CarStats* stats)
 {
     stats->unk9C = 0xD;

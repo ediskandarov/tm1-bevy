@@ -38,6 +38,9 @@ typedef struct {
 DropWeap *arena_drops(void);
 ArenaTaser *arena_tasers(void);
 void arena_move_drops(void);
+int arena_launch_flame(Cs*, int);
+void arena_move_flames(void);
+void arena_animate_flames(void);
 void arena_move_tasers(void);
 void arena_summon_police(AICar *,s16);
 void arena_move_missiles(void);

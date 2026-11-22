@@ -37,7 +37,10 @@ fn main() -> Result<()> {
         flag = args.next();
     }
     let realtime = flag.as_deref() == Some(std::ffi::OsStr::new("--realtime-screenshot"));
-    let demo = realtime || flag.as_deref() == Some(std::ffi::OsStr::new("--demo-screenshot"));
+    let special_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-special-screenshot"));
+    let demo = realtime
+        || special_demo
+        || flag.as_deref() == Some(std::ffi::OsStr::new("--demo-screenshot"));
     let screenshot = match flag {
         None => None,
         Some(flag) if flag == "--screenshot" || demo => Some(std::path::PathBuf::from(
@@ -46,6 +49,7 @@ fn main() -> Result<()> {
         Some(flag) => anyhow::bail!("unknown argument: {flag:?}"),
     };
     let mut capture = smoke::Capture::new(screenshot, demo, realtime);
+    capture.special_demo = special_demo;
     if demo
         && !realtime
         && let Some(frame) = args.next()
@@ -79,7 +83,13 @@ fn main() -> Result<()> {
         opponent_mesh[0].root_id,
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
-    let arena = render::Arena::new(scene, player_mesh, opponent_mesh, textures)?;
+    let arena = render::Arena::new(
+        scene,
+        player_mesh,
+        opponent_mesh,
+        dmd.explosion_frames()?,
+        textures,
+    )?;
     eprintln!(
         "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview."
     );

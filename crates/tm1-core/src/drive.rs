@@ -24,9 +24,10 @@ pub enum Vehicle {
     CrimsonFury = 60,
     MrGrimm = 80,
     PitViper = 90,
+    Thumper = 100,
 }
 impl Vehicle {
-    pub const ROSTER: [Self; 8] = [
+    pub const ROSTER: [Self; 9] = [
         Self::SweetTooth,
         Self::YellowJacket,
         Self::Darkside,
@@ -35,6 +36,7 @@ impl Vehicle {
         Self::CrimsonFury,
         Self::MrGrimm,
         Self::PitViper,
+        Self::Thumper,
     ];
     pub fn slug(self) -> &'static str {
         match self {
@@ -46,6 +48,7 @@ impl Vehicle {
             Self::CrimsonFury => "crimson-fury",
             Self::MrGrimm => "mr-grimm",
             Self::PitViper => "pit-viper",
+            Self::Thumper => "thumper",
         }
     }
     pub fn name(self) -> &'static str {
@@ -58,6 +61,7 @@ impl Vehicle {
             Self::CrimsonFury => "Crimson Fury",
             Self::MrGrimm => "Mr. Grimm",
             Self::PitViper => "Pit Viper",
+            Self::Thumper => "Thumper",
         }
     }
 }
@@ -337,6 +341,12 @@ impl CollisionScene {
             tm1_world_point(self.0.as_ptr(), point.as_mut_ptr(), result.as_mut_ptr());
         }
         result
+    }
+    pub fn flame_particles(&self, particles: &mut [[i32; 4]; 80]) -> usize {
+        unsafe extern "C" {
+            fn tm1_flame_particles(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;
+        }
+        unsafe { tm1_flame_particles(self.0.as_ptr(), particles.as_mut_ptr()) }
     }
     pub fn taser_arcs(&self, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
         unsafe extern "C" {

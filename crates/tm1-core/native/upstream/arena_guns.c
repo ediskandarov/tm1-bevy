@@ -392,7 +392,10 @@ static ProjectileSpecial playerProjectileSpecial(s32 kind)
 }
 s32 arena_player_special_cost(s32 kind)
 {
-    return (kind == UA_POLICE_CAR || kind == UA_MONSTER_TRUCK) ? 6 : playerProjectileSpecial(kind).cost;
+    if (kind == UA_LOW_RIDER)
+        return 5;
+    return (kind == UA_POLICE_CAR || kind == UA_MONSTER_TRUCK) ? 6
+                                                               : playerProjectileSpecial(kind).cost;
 }
 static void firePlayerProjectileSpecial(PlayerCar* car)
 {
@@ -580,7 +583,15 @@ void arena_update_weapons(Car* car, u8 player)
         return;
     switch (pad->cur) {
     case WEAPON_SPECIAL:
-        if (player && p->uaIndex == UA_MONSTER_TRUCK) {
+        if (player && p->uaIndex == UA_LOW_RIDER) {
+            if (pad->ammo[WEAPON_SPECIAL] >= 5) {
+                arena_launch_flame(GetPlayerCs3D(0), 1);
+                pad->ammo[WEAPON_SPECIAL] -= 5;
+                arena_effect(&p->motion.pos, 10);
+            }
+            pad->fireDelay = 20;
+            p->flags[9] = 1;
+        } else if (player && p->uaIndex == UA_MONSTER_TRUCK) {
             pad->fireDelay = 20;
             p->flags[9] = 1;
         } else if (player && p->uaIndex != UA_POLICE_CAR)
@@ -594,6 +605,15 @@ void arena_update_weapons(Car* car, u8 player)
         arena_launch_missile(
             stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player);
         break;
+    case WEAPON_FLAMETHROWER: {
+        Cs* cs = player ? GetPlayerCs3D(0) : GetAICs3D(0);
+        arena_effect(&cs->pos, 11);
+        if (arena_launch_flame(cs, 0)) {
+            pad->fireDelay = 20;
+            pad->ammo[WEAPON_FLAMETHROWER]--;
+        }
+        break;
+    }
     case WEAPON_OIL:
     case WEAPON_CATAPULT:
     case WEAPON_BOMB:

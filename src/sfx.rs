@@ -26,12 +26,16 @@ impl Sounds {
             YellowJacket => (0, 43),
             Darkside => (2, 40),
             Hammerhead => (3, 45),
+            Thumper => (8, 49),
             Outlaw => (7, 39),
             CrimsonFury => (4, 42),
             MrGrimm => (11, 47),
             PitViper => (9, 46),
         };
-        for (id, prog) in [engine, 12, 13, 29, 19, special].into_iter().enumerate() {
+        for (id, prog) in [engine, 12, 13, 29, 19, special, 21]
+            .into_iter()
+            .enumerate()
+        {
             let tones = program(&bank, prog)?;
             let mut mix = Vec::<[f32; 2]>::new();
             for t in tones {

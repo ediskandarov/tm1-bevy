@@ -113,7 +113,12 @@ pub fn advance(
         }
         let started = capture.demo.then(std::time::Instant::now);
         let state = &mut *drive;
-        let input = if capture.demo {
+        let input = if capture.special_demo {
+            Input {
+                missile: true,
+                ..Default::default()
+            }
+        } else if capture.demo {
             Input {
                 accelerate: true,
                 fire_guns: true,
@@ -135,6 +140,7 @@ pub fn advance(
         for &[x, y, z, kind, life] in &effects[..count] {
             let id = match (kind, life) {
                 (0, 2) => 1,
+                (11, 2) => 6,
                 (10, 2) => 5,
                 (1, 2) => 2,
                 (2, 7) => 3,

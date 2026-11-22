@@ -14,6 +14,12 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
+#[derive(Clone, Copy, Debug)]
+pub struct SpriteFrame {
+    pub texture: TextureKey,
+    pub uv: [[u8; 2]; 4],
+    pub width: u8,
+}
 /// One branch of a looping HIER animation, with its initial DMD clock.
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationFrame {
@@ -118,6 +124,68 @@ impl<'a> Dmd<'a> {
     }
     pub fn extract_kind(&self, kind: u16) -> Result<Scene> {
         self.extract(kind, None)
+    }
+    /// Read the 16 Aburst frames used by explodeStoreExplosionAnimation.
+    pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
+        let mut pending: Vec<_> = self
+            .roots
+            .iter()
+            .filter(|r| r.1 == 0)
+            .map(|r| r.0)
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        while let Some(ptr) = pending.pop() {
+            if !seen.insert(ptr) {
+                continue;
+            }
+            let p = self.offset(ptr)?;
+            let (count_at, children_at) = match self.data[p] {
+                1 => (20, 24),
+                4 => (18, 20),
+                0 if u16le(self.data, p + 2)? == 654 => {
+                    ensure!(
+                        u32le(self.data, p + 16)? == 16,
+                        "invalid explosion frame count"
+                    );
+                    let mut poly = self.offset(u32le(self.data, p + 12)?)?;
+                    let mut frames = Vec::with_capacity(16);
+                    for _ in 0..16 {
+                        let header = bytes(self.data, poly, 16)?;
+                        let len = usize::from(header[2]) * 4;
+                        let record = bytes(self.data, poly, len)?;
+                        let flags = u32le(record, 12)?;
+                        let uv = bytes(record, 16 + 4 * ((flags >> 28) & 7) as usize, 16)?;
+                        let width = uv[12].wrapping_sub(uv[8]);
+                        let height = uv[13].wrapping_sub(uv[5]);
+                        let (u, v) = (uv[0], uv[1]);
+                        frames.push(SpriteFrame {
+                            texture: TextureKey {
+                                page: (u16le(uv, 6)? & 31) | 32,
+                                clut: u16le(uv, 2)?,
+                                window: 0,
+                            },
+                            width,
+                            uv: [
+                                [u, v],
+                                [u.wrapping_add(width), v],
+                                [u, v.wrapping_add(height)],
+                                [u.wrapping_add(width), v.wrapping_add(height)],
+                            ],
+                        });
+                        poly += len;
+                    }
+                    return frames
+                        .try_into()
+                        .map_err(|_| anyhow::anyhow!("invalid explosion frames"));
+                }
+                _ => continue,
+            };
+            let count = bytes(self.data, p + count_at, 1)?[0] as usize;
+            for i in 0..count {
+                pending.push(u32le(self.data, p + children_at + 4 * i)?);
+            }
+        }
+        bail!("missing explosion animation")
     }
     /// Read the three body-switch branches selected by UA's damage update.
     pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {

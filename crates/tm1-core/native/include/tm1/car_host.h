@@ -11,6 +11,7 @@ void InitIceCreamTruck(CarStats *);
 void InitSemiTruck(CarStats *);
 void InitMonsterTruck(CarStats*);
 void tm1_check_player_smash(PlayerCar*, AICar*);
+void InitLowRider(CarStats*);
 void InitLamborghini(CarStats *);
 void InitHarley(CarStats *);
 void InitDuneBuggy(CarStats *);

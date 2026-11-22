@@ -10,7 +10,7 @@ use bevy::{
 };
 use std::collections::BTreeMap;
 use tm1_assets::{
-    scene::{Scene, TextureKey},
+    scene::{Scene, SpriteFrame, TextureKey},
     texture::Vram,
 };
 
@@ -32,6 +32,7 @@ const COLUMNS: usize = 8;
 #[derive(Resource)]
 pub struct Arena {
     scene: Scene,
+    explosion_frames: [SpriteFrame; 16],
     vehicle_start: usize,
     body_ranges: [[std::ops::Range<usize>; 3]; 2],
     opponent_start: usize,
@@ -54,6 +55,7 @@ impl Arena {
         mut scene: Scene,
         vehicle: [Scene; 3],
         opponent: [Scene; 3],
+        explosion_frames: [SpriteFrame; 16],
         vram: Vram,
     ) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
@@ -70,6 +72,10 @@ impl Arena {
         for p in &scene.polygons {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
+        }
+        for frame in explosion_frames {
+            let next = tiles.len();
+            tiles.entry((Some(frame.texture), true)).or_insert(next);
         }
         let width = COLUMNS * TILE;
         let height = tiles.len().div_ceil(COLUMNS) * TILE;
@@ -104,6 +110,7 @@ impl Arena {
             vehicle_start,
             opponent_start,
             body_ranges,
+            explosion_frames,
             overview: false,
             pixels,
             atlas_size: [width, height],
@@ -456,6 +463,24 @@ pub fn update(
                     + up * if i_vertex < 2 { h } else { -h };
             }
             batch.push(point, arena.uv(slot, v.uv.into()), v.color);
+        }
+    }
+    let mut flames = [[0; 4]; 80];
+    let count = drive.contacts.flame_particles(&mut flames);
+    for &[x, y, z, index] in &flames[..count] {
+        let center = world([x as f32, y as f32, z as f32]);
+        let frame = arena.explosion_frames[index as usize];
+        let radius = f32::from(frame.width) * 6. / 8.;
+        let slot = arena.tiles[&(Some(frame.texture), true)];
+        for &i in indices(4) {
+            let offset = right * if i & 1 == 0 { -radius } else { radius }
+                + up * if i < 2 { radius } else { -radius };
+            let [u, v] = frame.uv[i];
+            additive.push(
+                center + offset,
+                arena.uv(slot, Vec2::new(u.into(), v.into())),
+                [1.; 4],
+            );
         }
     }
     let white = arena.uv(0, Vec2::ZERO);

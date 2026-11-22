@@ -23,6 +23,9 @@ impl Reference {
         Self::with_vehicle(Vehicle::YellowJacket)
     }
     fn with_vehicle(vehicle: Vehicle) -> Self {
+        Self::build(vehicle, false)
+    }
+    fn build(vehicle: Vehicle, retail_particles: bool) -> Self {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc.read("UADMD/XARENA1.DMD").unwrap();
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
@@ -74,10 +77,13 @@ impl Reference {
         cpu.call(0x80103a4c, &[0x800c3000]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
-            0x80146754, 0x80110d90, 0x801369b0, 0x80135f90, 0x8013721c, 0x8010461c, 0x8010767c,
-            0x80107524, 0x80107bc0, 0x80142810,
+            0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
+            0x80107bc0, 0x80142810,
         ] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        if !retail_particles {
+            cpu.put(0x80135f90, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         Self {
             cpu,
@@ -284,7 +290,7 @@ fn police_update_original() {
 fn player_special_launch_original() {
     for vehicle in Vehicle::ROSTER
         .into_iter()
-        .filter(|&v| !matches!(v, Vehicle::Outlaw | Vehicle::Hammerhead))
+        .filter(|&v| !matches!(v, Vehicle::Outlaw | Vehicle::Hammerhead | Vehicle::Thumper))
     {
         let mut r = Reference::with_vehicle(vehicle);
         for at in [0x80107f84, 0x80108034] {
@@ -368,6 +374,59 @@ fn outlaw_taser_original() {
                 }
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn flamethrowers_original() {
+    for (rear, distance) in [(false, 320), (true, -240), (false, 1000)] {
+        let mut r = Reference::build(Vehicle::Thumper, true);
+        for addr in [0x80107c6c, 0x80107f84, 0x80108034] {
+            r.cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        r.cpu.call(0x80137268, &[]);
+        vec3(&mut r.player.state, 0x388, [2700, 2200, 1000]);
+        vec3(&mut r.police.state, 0x444, [2700, 2200 + distance, 1000]);
+        r.player.state[0xd2] = 1;
+        if rear {
+            r.player.state[0x460..0x464].copy_from_slice(&7i32.to_le_bytes());
+            r.player.state[0x472..0x474].copy_from_slice(&2i16.to_le_bytes());
+        }
+        r.sync();
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        assert_eq!(r.player.weapon().1, if rear { 1 } else { 15 });
+        let hp = r.police.health().0;
+        let mut bursts = 0;
+        for _ in 0..26 {
+            r.cpu.call(0x801351b0, &[]);
+            r.cpu.call(0x801360bc, &[]);
+            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            r.compare();
+            let mut particles = [[0; 4]; 80];
+            let count = r.scene.flame_particles(&mut particles);
+            let mut original = Vec::new();
+            for slot in 0..80 {
+                let p = 0x8019a088 + slot * 64;
+                let age = r.cpu.word(p + 0x18) as i32;
+                if age >= 0 {
+                    let frame = (r.cpu.word(p + 0x24) - 0x8019c638) / 8;
+                    original.push([
+                        r.cpu.word(p) as i32,
+                        r.cpu.word(p + 4) as i32,
+                        r.cpu.word(p + 8) as i32,
+                        frame as i32 + age,
+                    ]);
+                }
+            }
+            assert_eq!(original, particles[..count]);
+            bursts += count;
+        }
+        assert_eq!(bursts, if rear { 66 } else { 290 });
+        assert_eq!(r.police.health().0 < hp, distance.abs() < 400);
     }
 }
 

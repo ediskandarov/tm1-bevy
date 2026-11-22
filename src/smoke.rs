@@ -11,6 +11,7 @@ pub struct Capture {
     requested: Option<u32>,
     attempts: u8,
     pub demo: bool,
+    pub special_demo: bool,
     pub demo_frame: u32,
     pub realtime: bool,
     pub elapsed: std::time::Duration,
@@ -21,6 +22,7 @@ impl Capture {
         Self {
             path,
             demo,
+            special_demo: false,
             demo_frame: 120,
             realtime,
             elapsed: Default::default(),

@@ -204,6 +204,9 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     case UA_MONSTER_TRUCK:
         InitMonsterTruck(&car.stats);
         break;
+    case UA_LOW_RIDER:
+        InitLowRider(&car.stats);
+        break;
     case UA_POLICE_CAR:
         InitPoliceCar(&car.stats);
         break;
@@ -421,9 +424,11 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
         tm1_age_effects();
         arena_move_missiles();
         arena_move_drops();
+        arena_move_flames();
         arena_move_tasers();
         arena_move_bullets();
         arena_move_fragments();
+        arena_animate_flames();
     } else {
         if (is_player && player.stats.unk38) {
             CheckHitDetection(is_player ? (Car*)&player : (Car*)&ai, is_player);

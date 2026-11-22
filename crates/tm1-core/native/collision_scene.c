@@ -17,6 +17,14 @@ typedef struct CollisionScene {
     DropWeap drops[12];
     ArenaTaser tasers[3];
     struct {
+        Cs* owner;
+        int forward, age, life;
+    } flames[5];
+    struct {
+        VECTOR3 pos, vel;
+        int frame, life;
+    } bursts[80];
+    struct {
         VECTOR3 pos, vel;
         int life, frame, variant;
     } fragments[20];
@@ -253,6 +261,8 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(&s->temporary_hole, 0, sizeof(PotHole));
     memset(s->fragments, 0, sizeof s->fragments);
     memset(s->drops, 0, sizeof s->drops);
+    memset(s->flames, 0, sizeof s->flames);
+    memset(s->bursts, 0, sizeof s->bursts);
     memset(s->tasers, 0, sizeof s->tasers);
     s->battle_wait = 0;
     s->pickup_timer = 0;
@@ -641,6 +651,98 @@ void tm1_world_point(CollisionScene* s, VECTOR3* point, s32* result)
     result[1] = hit.depth;
     result[2] = hit.tag0;
     result[3] = hit.tag1;
+}
+// INTERACT.c fireFlameThrower and displayFlamethrowers, attached front/rear emitters.
+int arena_launch_flame(Cs* cs, int forward)
+{
+    for (int i = 0; i < 5; i++) {
+        if (current->flames[i].life)
+            continue;
+        current->flames[i].owner = cs;
+        current->flames[i].forward = forward;
+        current->flames[i].life = forward ? 25 : 12;
+        current->flames[i].age = 0;
+        if (forward)
+            arena_effect(&cs->pos, 11);
+        return 1;
+    }
+    return 0;
+}
+
+static void flame_burst(VECTOR3 pos)
+{
+    int frame = 1 + (arena_rand() & 3);
+    for (int i = 0; i < 80; i++) {
+        if (current->bursts[i].life)
+            continue;
+        current->bursts[i].pos = pos;
+        current->bursts[i].life = 2;
+        current->bursts[i].frame = frame;
+        VECTOR3* vel = &current->bursts[i].vel;
+        vel->vx = (arena_rand() & 7) - 3;
+        vel->vy = (arena_rand() & 7) - 3;
+        vel->vz = (arena_rand() & 15) > 5 ? 0 : (arena_rand() & 15) - 5;
+        break;
+    }
+}
+
+void arena_move_flames(void)
+{
+    for (int i = 0; i < 5; i++) {
+        if (!current->flames[i].life)
+            continue;
+        Cs* cs = current->flames[i].owner;
+        int forward = current->flames[i].forward;
+        VECTOR3 offset = { 0, forward ? 32 : -25, 0 }, d;
+        mathMulTransVec(&cs->mat, &offset, &d);
+        VECTOR3 p = { cs->pos.vx + 4 * d.vx, cs->pos.vy + 4 * d.vy, cs->pos.vz + d.vz };
+        int count = current->flames[i].age++;
+        int limit = forward ? 20 : 12;
+        current->flames[i].life--;
+        int hit = 0;
+        for (int j = 0; j < count && j < limit; j++) {
+            p.vx += d.vx;
+            p.vy += d.vy;
+            p.vz += d.vz + 1;
+            if (p.vz < 8 && cs->pos.vz > 0)
+                p.vz = 7;
+            flame_burst(p);
+            if ((j & 2) && !hit) {
+                hit = CAR_HD(&p, cs->unkC0, 17);
+                if (hit > 0)
+                    bulDispatchDamage(hit, 0, 0, 1, &d, 0);
+            }
+        }
+    }
+}
+
+// EXPLODE.c animate_explosions runs before the particles are drawn.
+void arena_animate_flames(void)
+{
+    for (int i = 0; i < 80; i++) {
+        if (!current->bursts[i].life)
+            continue;
+        VECTOR3* p = &current->bursts[i].pos;
+        VECTOR3 v = current->bursts[i].vel;
+        p->vx += v.vx;
+        p->vy += v.vy;
+        p->vz += v.vz;
+        current->bursts[i].life--;
+        current->bursts[i].frame++;
+    }
+}
+
+size_t tm1_flame_particles(CollisionScene* s, s32 (*out)[4])
+{
+    size_t n = 0;
+    for (int i = 0; i < 80; i++) {
+        if (!s->bursts[i].life)
+            continue;
+        VECTOR3 p = s->bursts[i].pos;
+        s32 row[4] = { p.vx, p.vy, p.vz, s->bursts[i].frame };
+        memcpy(out[n++], row, sizeof(row));
+    }
+    return n;
 }
 size_t tm1_taser_arcs(CollisionScene* s, VECTOR3 (*out)[16])
 {

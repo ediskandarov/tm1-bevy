@@ -18,7 +18,7 @@ provide a controlled timing probe and fixed-width math layouts, not a complete
 PS1 SDK or BIOS. The positive-domain square-root replacement is in Rust.
 
 The driving files use functions from the same pinned source. `car_dynamics.c`
-includes the CAR_INIT stat initializers for the ice cream truck, taxi, semi, monster truck, Lamborghini, Harley and dune buggy. Their projectile special parameters come from INTERACT.c. It also contains CAR, CAR_INIT, SMOOTH and UA pad functions. The expression
+includes the CAR_INIT stat initializers for the ice cream truck, taxi, semi, monster truck, Lamborghini, Harley, low rider and dune buggy. Their projectile special parameters come from INTERACT.c. It also contains CAR, CAR_INIT, SMOOTH and UA pad functions. The expression
 `t & (t | (s32)sk)` reduces to `t`, avoiding a host pointer truncation.
 `arena_ground.c` uses BRIDGES, POTHOLES, TRIGPTS, CARUPD, CAR and SMOOTH.
 Its tire-height routine excludes the rooftop-only branch. `ai_driving.c` uses
@@ -39,3 +39,5 @@ sources with arena-specific names are adapted subsets. The untouched MATH.c
 and TIMER.c hashes above identify the two byte-for-byte imports.
 
 Hammerhead uses CAR.c InitMonsterSmash and CARUPD.c CheckMonsterSmash. The host resolves its target against the active opponent and submits the crush effects through the arena effect queue.
+
+Front and rear flamethrowers follow INTERACT.c fireFlameThrower and displayFlamethrowers. Particle velocity, animation and lifetime follow EXPLODE.c do_flamethrower_burst and animate_explosions. GRUTILS.c grutilsParse3DSprite supplies the frame UV layout.
