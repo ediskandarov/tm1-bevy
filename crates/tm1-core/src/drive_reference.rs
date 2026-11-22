@@ -2070,6 +2070,78 @@ fn outlaw_taser_original() {
     }
 }
 
+fn identity_projection(cpu: &mut Cpu) -> ([i32; 2], [i32; 2]) {
+    let matrix = cpu.call(0x8010af70, &[0]);
+    cpu.put(matrix, &[0; 32]);
+    for offset in [0, 8, 16] {
+        cpu.put(matrix + offset, &4096i16.to_le_bytes());
+    }
+    let translation = cpu.call(0x8010af54, &[0]);
+    cpu.put(translation, &[0; 12]);
+    cpu.call(0x8010aed4, &[0, VIEW_OUTPUT, VIEW_OUTPUT + 4]);
+    let center = [0, 4].map(|k| cpu.word(VIEW_OUTPUT + k) as i32);
+    let focal = [0x80109e3c, 0x80109e74].map(|f| cpu.call(f, &[0]) as i32);
+    (center, focal)
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn fragment_draw_packets_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let art = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .fragment_frames()
+        .unwrap();
+    let mut r = Reference::new();
+    let cpu = &mut r.cpu;
+    let (center, focal) = identity_projection(cpu);
+    let f = 0x80199db8;
+    let packet = RENDER_SCRATCH + 0x100;
+    put(cpu, RENDER_SCRATCH, 0x80010000);
+    put(cpu, RENDER_SCRATCH + 12, packet + 160);
+    put(cpu, f + 28, 40);
+    for (group, frames) in art.iter().enumerate() {
+        put(cpu, f + 32, 0x8019c5b8 + group as u32 * 32);
+        for (phase, sprite) in frames.iter().enumerate() {
+            cpu.put(f + 24, &[phase as u8]);
+            for pos in [
+                [-26, 17, 240],
+                [0, 0, -33],
+                [0, 0, -32],
+                [0, 0, 7],
+                [0, 0, 32000],
+                [0, 0, 32001],
+                [900, 0, 8],
+            ] {
+                for (axis, value) in pos.into_iter().enumerate() {
+                    put(cpu, f + axis as u32 * 4, value as u32);
+                }
+                put(cpu, RENDER_SCRATCH + 8, packet);
+                cpu.call(0x80137e7c, &[RENDER_SCRATCH, 0]);
+                let emitted = cpu.word(RENDER_SCRATCH + 8) != packet;
+                let corners = project_fragment(pos, focal, center);
+                assert_eq!(emitted, corners.is_some(), "{pos:?}");
+                let Some(corners) = corners else {
+                    continue;
+                };
+                assert_eq!(cpu.word(packet + 4) >> 24, 0x2d);
+                for (i, [x, y]) in corners.into_iter().enumerate() {
+                    let xy = cpu.word(packet + 8 + i as u32 * 8);
+                    assert_eq!(
+                        [xy as i16 as i32, (xy >> 16) as i16 as i32],
+                        [center[0] + x, center[1] + y]
+                    );
+                    let uv = cpu.word(packet + 12 + i as u32 * 8);
+                    assert_eq!([uv as u8, (uv >> 8) as u8], sprite.uv[i]);
+                }
+                assert_eq!((cpu.word(packet + 12) >> 16) as u16, sprite.texture.clut);
+                assert_eq!((cpu.word(packet + 20) >> 16) as u16, sprite.texture.page);
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn bullet_draw_packets_original() {
@@ -2082,16 +2154,7 @@ fn bullet_draw_packets_original() {
         .unwrap();
     let mut r = Reference::new();
     let cpu = &mut r.cpu;
-    let matrix = cpu.call(0x8010af70, &[0]);
-    cpu.put(matrix, &[0; 32]);
-    for offset in [0, 8, 16] {
-        cpu.put(matrix + offset, &4096i16.to_le_bytes());
-    }
-    let translation = cpu.call(0x8010af54, &[0]);
-    cpu.put(translation, &[0; 12]);
-    cpu.call(0x8010aed4, &[0, VIEW_OUTPUT, VIEW_OUTPUT + 4]);
-    let center = [0, 4].map(|k| cpu.word(VIEW_OUTPUT + k) as i32);
-    let focal = [0x80109e3c, 0x80109e74].map(|f| cpu.call(f, &[0]) as i32);
+    let (center, focal) = identity_projection(cpu);
     let ot = 0x80010000;
     let packet = RENDER_SCRATCH + 0x100;
     put(cpu, RENDER_SCRATCH, ot);
@@ -3374,8 +3437,31 @@ fn compare_battle_controls(
         r.cpu.call(0x801351b0, &[]);
         r.cpu.call(0x801333d0, &[RENDER_SCRATCH, 0]);
         r.cpu.call(0x8010e3d8, &[]);
+        let read_fragments = |cpu: &Cpu| {
+            (0..20)
+                .filter_map(|i| {
+                    let f = 0x80199db8 + 36 * i;
+                    (cpu.word(f + 28) as i32 > 0).then(|| {
+                        let variant = match cpu.word(f + 32) {
+                            0x8019c5b8 => 0,
+                            0x8019c5d8 => 1,
+                            p => panic!("unexpected fragment animation {p:x}"),
+                        };
+                        [
+                            cpu.word(f) as i32,
+                            cpu.word(f + 4) as i32,
+                            cpu.word(f + 8) as i32,
+                            variant,
+                            cpu.word(f + 24) as i32,
+                        ]
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+
         // animate_explosions advances active fragments once.
         r.cpu.call(0x801360bc, &[]);
+        let primary_fragments = read_fragments(&r.cpu);
         let mut gun_requests = [None; 9];
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
             gun_requests[0] = observe_guns(&mut r.cpu, 0x8014ecd4, &[TAXI_CS, PLAYER], vehicle);
@@ -3435,21 +3521,6 @@ fn compare_battle_controls(
                     &record[..2]
                 );
             }
-            let mut effects = [[0; 5]; 122];
-            let count = r.scene.effects(&mut effects);
-            let native_fragments = effects[..count]
-                .iter()
-                .filter(|e| e[3] == 7)
-                .map(|e| [e[0], e[1], e[2]]);
-            let retail_fragments = (0..20).filter_map(|i| {
-                let fragment = 0x80199db8 + 36 * i;
-                ((r.cpu.word(fragment + 28) as i32) > 0)
-                    .then(|| [0, 4, 8].map(|offset| r.cpu.word(fragment + offset) as i32))
-            });
-            assert!(
-                native_fragments.eq(retail_fragments),
-                "fragment positions at tick {tick}"
-            );
             for (addr, state) in std::iter::once((PLAYER, &r.player.state[..])).chain(
                 lineup
                     .iter()
@@ -3465,6 +3536,15 @@ fn compare_battle_controls(
                 }
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
+        let mut fragments = [[0; 5]; 20];
+        for (secondary, expected) in [(false, primary_fragments), (true, read_fragments(&r.cpu))] {
+            let count = r.scene.fragment_poses(secondary, &mut fragments);
+            assert_eq!(
+                fragments[..count],
+                expected,
+                "fragment sprites at tick {tick} secondary {secondary}"
+            );
         }
         for (slot, expected) in actor_sounds.into_iter().enumerate() {
             assert_eq!(

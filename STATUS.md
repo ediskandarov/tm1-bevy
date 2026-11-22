@@ -15,6 +15,10 @@ The main view draws bullets before their movement step. The rear-view mirror and
 
 A disc-backed test executes the original bullet renderer for ten projectile types over eight successive lifetime values. It compares the emitted PlayStation primitive coordinates, vertex colors, UVs, texture page and palette with the port. The special-launch replay also checks both camera snapshots against the live JP bullet record. The Metal capture at `local/warehouse-grimm-shot.png` shows the skull ahead of the motorcycle on update seven.
 
+## Vehicle debris
+
+Fragments use the two four-frame texture sequences selected by EXPLODE.c. The main camera sees fragments immediately after their physics update. The mirror and second duel view also see any debris created during the subsequent vehicle updates. Encounter replays compare position, animation selection and frame for both views. A separate JP rendering test checks the raw textured quad, its corners, UVs, texture page and palette across both sequences, including the original depth and screen cutoffs. The Arena replay with Yellow Jacket shows debris at the barrier on update 134 (`--demo-screenshot local/arena-car-fragments.png 134`).
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.

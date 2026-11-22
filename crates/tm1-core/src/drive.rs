@@ -1281,6 +1281,30 @@ extern "C" fn tm1_record_hover(log: &mut Vec<BattleEvent>, flags: i32, x: i32, y
     }
 }
 
+/// Screen offsets for EXPLODE.c explodeDisplayFragments, measured from the viewport center.
+pub fn project_fragment(
+    camera: [i32; 3],
+    focal: [i32; 2],
+    center: [i32; 2],
+) -> Option<[[i32; 2]; 4]> {
+    if !(-32..=32000).contains(&camera[2]) {
+        return None;
+    }
+    let depth = camera[2].max(8);
+    let x = camera[0].wrapping_mul(focal[0]) / depth;
+    let y = camera[1].wrapping_mul(focal[1]) / depth;
+    if !(-99..1000).contains(&(x + center[0])) || !(-99..1000).contains(&(y + center[1])) {
+        return None;
+    }
+    let radius = 10 * focal[0] / depth;
+    Some([
+        [x - radius, y - radius],
+        [x + radius, y - radius],
+        [x - radius, y + radius],
+        [x + radius, y + radius],
+    ])
+}
+
 pub struct CollisionScene {
     native: std::ptr::NonNull<std::ffi::c_void>,
     opponent_count: usize,
@@ -1851,6 +1875,22 @@ impl Opponent {
 }
 
 impl CollisionScene {
+    pub fn fragment_poses(&self, second_view: bool, out: &mut [[i32; 5]; 20]) -> usize {
+        unsafe extern "C" {
+            fn tm1_fragment_poses(
+                scene: *mut std::ffi::c_void,
+                second_view: i32,
+                out: *mut [i32; 5],
+            ) -> usize;
+        }
+        unsafe {
+            tm1_fragment_poses(
+                self.native.as_ptr(),
+                i32::from(second_view),
+                out.as_mut_ptr(),
+            )
+        }
+    }
     pub fn drawn_drops(&self, out: &mut [[i32; 4]; 12]) -> usize {
         unsafe extern "C" {
             fn tm1_drawn_drops(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;

@@ -35,6 +35,11 @@ fn supported_disc_arena_and_audio() {
             _ => [true; 4],
         };
         assert_eq!(available, expected, "{name}");
+        let debris = level.fragment_frames().unwrap();
+        assert!(
+            debris.iter().flatten().all(|frame| frame.width > 0),
+            "{name}"
+        );
         assert!(level.flame_frames().unwrap().iter().all(|f| f.width > 0));
         assert!(
             level

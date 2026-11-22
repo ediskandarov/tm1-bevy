@@ -93,6 +93,7 @@ void arena_special_effect(VECTOR3* pos, s32 owner);
 void arena_regenerate_pickups(void);
 
 void arena_move_fragments(void);
+void arena_capture_fragments(void);
 
 void arena_ai_weapon_profile(AICar* car);
 

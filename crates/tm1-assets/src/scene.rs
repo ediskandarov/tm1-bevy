@@ -249,6 +249,12 @@ impl<'a> Dmd<'a> {
         }
         Ok(groups)
     }
+    pub fn fragment_frames(&self) -> Result<[[SpriteFrame; 4]; 2]> {
+        Ok([
+            self.sprite_frames(670, false)?,
+            self.sprite_frames(671, false)?,
+        ])
+    }
     pub fn drop_sprites(&self) -> Result<[SpriteFrame; 4]> {
         let sprite = |kind| self.sprite_frames::<1>(kind, false).map(|[frame]| frame);
         Ok([sprite(210)?, sprite(212)?, sprite(213)?, sprite(214)?])

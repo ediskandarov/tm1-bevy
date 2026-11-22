@@ -1009,6 +1009,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
         arena_capture_bullets();
         arena_move_bullets();
         arena_move_fragments();
+        arena_capture_fragments();
         arena_animate_flames();
         tm1_capture_car_lights();
     } else {

@@ -86,6 +86,8 @@ typedef struct CollisionScene {
         VECTOR3 pos, vel;
         int life, frame, variant;
     } fragments[20];
+    s32 drawn_fragments[20][5];
+    size_t drawn_fragment_count;
     PotHole temporary_hole;
     int pothole_fields;
     bool has_temporary_hole;
@@ -711,6 +713,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->pothole_fields = 0;
     memset(&s->temporary_hole, 0, sizeof(PotHole));
     memset(s->fragments, 0, sizeof s->fragments);
+    s->drawn_fragment_count = 0;
     tm1_new_life(s);
     s->music = s->initial_music;
     memset(s->bursts, 0, sizeof s->bursts);
@@ -1546,6 +1549,32 @@ void arena_move_fragments(void)
             }
         }
 }
+static size_t copy_fragment_poses(const CollisionScene* scene, s32 (*out)[5])
+{
+    size_t n = 0;
+    for (int i = 0; i < 20; i++) {
+        if (scene->fragments[i].life > 0) {
+            VECTOR3 pos = scene->fragments[i].pos;
+            s32 pose[] = {pos.vx, pos.vy, pos.vz, scene->fragments[i].variant & 1, scene->fragments[i].frame};
+            memcpy(out[n++], pose, sizeof(pose));
+        }
+    }
+    return n;
+}
+
+void arena_capture_fragments(void)
+{
+    current->drawn_fragment_count = copy_fragment_poses(current, current->drawn_fragments);
+}
+
+size_t tm1_fragment_poses(const CollisionScene* scene, int second_view, s32 (*out)[5])
+{
+    if (second_view)
+        return copy_fragment_poses(scene, out);
+    memcpy(out, scene->drawn_fragments, scene->drawn_fragment_count * sizeof(*out));
+    return scene->drawn_fragment_count;
+}
+
 size_t tm1_drawn_drops(CollisionScene* s, s32 (*out)[4])
 {
     size_t n = 0;

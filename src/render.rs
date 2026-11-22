@@ -60,6 +60,7 @@ pub struct Arena {
     merc_models: [Vec<Scene>; 2],
     pedestrians: Vec<Vec<Scene>>,
     bullet_frames: [Option<[SpriteFrame; 4]>; 4],
+    fragment_frames: [[SpriteFrame; 4]; 2],
     drop_sprites: [SpriteFrame; 4],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
@@ -105,6 +106,7 @@ impl Arena {
         burn_frames: [SpriteFrame; 8],
         smoke_frames: [[SpriteFrame; 16]; 2],
         bullet_frames: [Option<[SpriteFrame; 4]>; 4],
+        fragment_frames: [[SpriteFrame; 4]; 2],
         drop_sprites: [SpriteFrame; 4],
         contrail_frames: [SpriteFrame; 8],
         icons: tm1_assets::scene::DashboardIcons,
@@ -150,7 +152,12 @@ impl Arena {
             .chain(bullet_frames.iter().flatten().flatten())
             .chain(&arrows)
             .map(|f| (f, true))
-            .chain(drop_sprites.iter().map(|f| (f, false)))
+            .chain(
+                drop_sprites
+                    .iter()
+                    .chain(fragment_frames.iter().flatten())
+                    .map(|f| (f, false)),
+            )
             .chain(icons.frames())
         {
             let next = tiles.len();
@@ -205,6 +212,7 @@ impl Arena {
             burn_frames,
             smoke_frames,
             bullet_frames,
+            fragment_frames,
             drop_sprites,
             contrail_frames,
             overview: false,
@@ -1444,6 +1452,27 @@ fn draw_view(
         (204, [160, 120])
     };
     let pixel_scale = focal / lens as f32;
+    let mut fragments = [[0; 5]; 20];
+    let fragment_count = contacts.fragment_poses(view.secondary, &mut fragments);
+    for &[x, y, z, variant, phase] in &fragments[..fragment_count] {
+        let camera = camera_point([x, y, z]);
+        let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
+        let Some(corners) = tm1_core::drive::project_fragment(coords, [lens; 2], center) else {
+            continue;
+        };
+        let sprite = &arena.fragment_frames[variant as usize][phase as usize];
+        let tile = arena.tiles[&(Some(sprite.texture), false)];
+        let draw_depth = (coords[2].max(8) as f32).max(near + 0.01);
+        for &i in indices(4) {
+            let [u, v] = corners[i];
+            let offset = right * u as f32 - up * v as f32;
+            solids.push(
+                eye + forward * draw_depth + offset * (draw_depth * pixel_scale / focal),
+                arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
+                [1.; 4],
+            );
+        }
+    }
     for arc in &arcs[..arc_count] {
         let points = arc.map(camera_point);
         for (j, segment) in points.windows(2).enumerate() {
@@ -1533,34 +1562,6 @@ fn draw_view(
                 }
             }
         }
-    }
-    for &[x, y, z, kind, ttl] in &effects[..effect_count] {
-        let delta = world([x as f32, y as f32, z as f32]) - eye;
-        let depth = delta.dot(forward);
-        if depth < near {
-            continue;
-        }
-        let center = Vec2::new(delta.dot(right), delta.dot(up)) * (focal / depth);
-        let (size, tint) = match kind {
-            2 => (12. + (7 - ttl) as f32 * 6., [1., 0.24, 0.04, 0.82]),
-            7 => (3., [0.7, 0.5, 0.3, 1.]),
-            5 => (3., [0.35, 0.65, 1., 1.]),
-            6 => continue,
-            1 | 3 | 8 | 26..=56 | 401..=406 | 410..=414 | 430 => continue,
-            _ => (7., [1., 0.78, 0.21, 0.96]),
-        };
-        let radius = (size * focal / depth).clamp(1., 80.);
-        quad(
-            &mut transparent,
-            [
-                center - Vec2::X * radius,
-                center + Vec2::Y * radius,
-                center - Vec2::Y * radius,
-                center + Vec2::X * radius,
-            ],
-            [depth; 4],
-            [tint; 2],
-        );
     }
     additive.write(meshes, &view.additive);
     solids.write(meshes, &view.solids);
