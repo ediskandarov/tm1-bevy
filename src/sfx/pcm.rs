@@ -72,7 +72,6 @@ pub(super) struct LoopingTone {
     loop_at: usize,
     adsr: [u16; 2],
     volume: VabVolume,
-    pan: [f32; 2],
 }
 impl LoopingTone {
     pub fn new(mut tone: tm1_assets::sound::Tone) -> anyhow::Result<Self> {
@@ -80,14 +79,12 @@ impl LoopingTone {
         let loop_at = tone
             .loop_start
             .ok_or_else(|| anyhow::anyhow!("missing VAB loop"))?;
-        let pan = f32::from(tone.pan) / 64.;
         let volume = VabVolume::from_tone(&tone);
         Ok(Self {
             pcm: tone.pcm.into(),
             loop_at,
             adsr: tone.adsr,
             volume,
-            pan: [(2. - pan).min(1.), pan.min(1.)],
         })
     }
     pub fn voice(&self, pitch: u16) -> (StereoPcm, PitchRegister) {
@@ -151,7 +148,7 @@ pub struct Playback {
     clip: StereoPcm,
     cursor: usize,
     phase: usize,
-    right: f32,
+    mono: f32,
     frame_gain: [f32; 2],
     last_levels: u32,
     envelope: Option<super::envelope::Envelope>,
@@ -164,7 +161,7 @@ impl Decodable for StereoPcm {
             clip: self.clone(),
             cursor: 0,
             phase: 0,
-            right: 0.,
+            mono: 0.,
             frame_gain: [0.; 2],
             last_levels: u32::MAX,
             envelope: match &self.data {
@@ -183,18 +180,13 @@ impl Iterator for Playback {
                 if self.cursor & 1 == 0 {
                     let mono = super::interpolation::interpolate(&motor.pcm, self.phase);
                     let v = self.envelope.as_mut().unwrap().apply(mono) as f32;
-                    let channels = motor
-                        .pan
-                        .map(|pan| (v * pan).clamp(-32768., 32767.) / 32768.);
-                    self.right = channels[1];
+                    self.mono = v.clamp(-32768., 32767.) / 32768.;
                     self.phase += usize::from(register.get());
                     if self.phase >= motor.pcm.len() * 4096 {
                         self.phase -= (motor.pcm.len() - motor.loop_at) * 4096;
                     }
-                    channels[0]
-                } else {
-                    self.right
                 }
+                self.mono
             }
         };
         if self.cursor % 2 == 0 {

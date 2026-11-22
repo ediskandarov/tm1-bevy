@@ -117,13 +117,15 @@ fn spu_note_and_fine_pitch_match_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn vab_channel_levels_match_retail_sdk_calls() {
+fn vab_channel_levels_match_retail_spu_writes() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
     let bank = disc.read("SND/UACORE.VAB").unwrap();
     let system = 0x8016fecc;
     let sound = 0x801963a8;
     let tone = 0x80009000;
+    let spu = 0x8000a000u32; // Capture SDK register writes in fixture RAM.
+    cpu.put(0x8018b430, &spu.to_le_bytes());
     cpu.put(system + 24, &(3357u32 * 3357).to_le_bytes());
     cpu.put(sound + 20, &1u32.to_le_bytes()); // already loaded instrument
     cpu.put(sound + 24, &u32::to_le_bytes(tone));
@@ -132,14 +134,20 @@ fn vab_channel_levels_match_retail_sdk_calls() {
     for prog in 0..59 {
         for t in tm1_assets::sound::program(&bank, prog).unwrap() {
             cpu.put(sound + 5, &[t.program_volume]);
-            cpu.put(tone + 8, &[t.volume]);
+            cpu.put(tone + 8, &[t.volume, t.pan]);
+            let slot = prog as u32 % 24;
+            cpu.put(tone + 4, &[slot as u8]);
             for (volume, percent) in [(0, 99), (33, 99), (33, 84), (57, 25), (57, 109), (127, 99)] {
                 cpu.put(system + 4, &u32::from(volume).to_le_bytes());
                 cpu.put(0x8018bf7c, &u32::MAX.to_le_bytes());
                 // Full-right request. JP soundPlayId negates the horizontal offset.
                 cpu.call(0x80106d60, &[0, 0, 160, 8, u32::from(percent), 0]);
                 cpu.call_until(0x80105ebc, &[], 0x80106720);
-                cpu.call_until(0x80104ad8, &[tone], 0x8016c494);
+                let sdk_volumes = 0x801a9278 + slot * 16;
+                let dirty = 0x801a93f8 + slot;
+                cpu.put(sdk_volumes, &0xfedcabcdu32.to_le_bytes());
+                cpu.put(dirty, &[0x10]);
+                cpu.call(0x80104ad8, &[tone]);
                 let expected = [volume, 2 * volume].map(|v| {
                     u32::from(tm1_core::sound::voice_volume(
                         t.program_volume,
@@ -149,11 +157,16 @@ fn vab_channel_levels_match_retail_sdk_calls() {
                     ))
                 });
                 assert_eq!(
-                    [cpu.r[5], cpu.r[6]],
-                    expected,
+                    cpu.word(sdk_volumes),
+                    (expected[0] * 129) | ((expected[1] * 129) << 16),
                     "program {prog} tone volume {} channel {volume} scale {percent}",
                     t.volume
                 );
+                assert_eq!(cpu.ram[(dirty & 0x1fffff) as usize], 0x13);
+                cpu.put(spu + slot * 16, &u32::MAX.to_le_bytes());
+                cpu.call_until(0x8016a368, &[], 0x8016a480); // flush the 24 voice slots
+                assert_eq!(cpu.word(spu + slot * 16), cpu.word(sdk_volumes));
+                assert_eq!(cpu.ram[(dirty & 0x1fffff) as usize], 0);
             }
         }
     }

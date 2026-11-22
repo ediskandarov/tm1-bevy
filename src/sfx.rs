@@ -115,12 +115,11 @@ impl Sample {
         let increment = sample_pitch(t, engine);
         let n = (t.pcm.len() * 4096).div_ceil(increment);
         mix.resize(mix.len().max(n), [0.; 2]);
-        let pan = f32::from(t.pan) / 64.;
         let mut envelope = envelope::Envelope::new(t.adsr);
         for (i, out) in mix[..n].iter_mut().enumerate() {
             let v = envelope.apply(interpolation::interpolate(&t.pcm, i * increment)) as f32 * gain;
-            out[0] += v * (2. - pan).min(1.);
-            out[1] += v * pan.min(1.);
+            out[0] += v;
+            out[1] += v;
         }
     }
     pub fn wave(&self) -> Result<AudioSource> {
@@ -634,6 +633,18 @@ mod tests {
         use bevy::audio::Decodable;
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let bank = disc.read("SND/UACORE.VAB").unwrap();
+        // Both tones have extreme VAB pan settings. The game's final voice
+        // volume write centers both the baked clip and the live looping voice.
+        let hover = program(&bank, 38).unwrap();
+        assert_eq!(
+            hover.iter().map(|tone| tone.pan).collect::<Vec<_>>(),
+            [0, 127]
+        );
+        for tone in hover {
+            let sample = Sample::from_tones(vec![tone], false);
+            assert!(sample.mix.iter().any(|pair| pair[0] != 0.));
+            assert!(sample.mix.iter().all(|pair| pair[0] == pair[1]));
+        }
         for prog in [12, TURBO_PROGRAM, 38] {
             let clips = EffectTone::load(&bank, prog, true).unwrap();
             for (mut tone, effect) in program(&bank, prog).unwrap().into_iter().zip(clips) {
@@ -669,7 +680,6 @@ mod tests {
         let frames = (tone.pcm.len() * 4096).div_ceil(increment);
         assert_eq!(tone.program_volume, 75);
         let gain = f32::from(25 * u16::from(tone.volume) / 99) / 33.;
-        let pan = (f32::from(tone.pan) / 64.).min(1.);
         // Independent decoder and four-tap interpolation at pitch register 2453.
         let samples = [
             (0, 0),
@@ -690,10 +700,7 @@ mod tests {
         let sample = Sample::from_tones(vec![tone], false);
         assert_eq!(sample.mix.len(), frames);
         for (frame, value) in samples {
-            assert_eq!(
-                sample.mix[frame][1],
-                ((value * 32759) >> 15) as f32 * gain * pan
-            );
+            assert_eq!(sample.mix[frame][1], ((value * 32759) >> 15) as f32 * gain);
         }
     }
 
@@ -886,8 +893,7 @@ mod tests {
             _ => 32759,
         };
         let mono = ((interpolation::interpolate(&tone.pcm, phase) * level) >> 15) as f32;
-        let pan = f32::from(tone.pan) / 64.;
-        [(2. - pan).min(1.), pan.min(1.)].map(|p| (mono * p).clamp(-32768., 32767.) / 32768.)
+        [mono.clamp(-32768., 32767.) / 32768.; 2]
     }
 
     #[test]
