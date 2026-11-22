@@ -63,6 +63,8 @@ Split-screen battles decode each VAB tone separately and allocate up to 24 comba
 
 Keyboard restart and a new life reopen the campaign CDDA decoder at the beginning of the selected track. Pause and focus changes preserve the playback position. A native Arena diagnostic triggered the restart counter on frame 70. The music cursor moved from 550 ms to zero and reached 215 ms on frame 100.
 
+The VAB decoder shifts the two signed ADPCM feedback terms separately and clamps the reconstructed sample before feeding it back into the next prediction. Disc-backed PCM hashes cover 127,736 samples from programs 0, 13 and 44 across all five filter settings. The reference hashes came from an independent decoder using the feedback arithmetic in [DuckStation’s SPU](https://github.com/stenzek/duckstation/blob/master/src/core/spu.cpp).
+
 The mixer uses the JP SDK pitch register for each VAB tone. Effects retain their fine-tuning byte, while each engine layer derives its own note and fine pitch from its center, key range and current rev. ADPCM attack lengths and loop markers use the same integer phase increment. A disc-backed test compares all 16,384 note and fine combinations with `_spu_note2pitch` in the JP executable. A second test follows a detuned tone from program 44 through its decoded PCM output. Waveform interpolation and volume envelopes remain separate fidelity work.
 
 Engine playback rounds the requested VAB sample rate to the nearest 25 Hz. This bounds the sample-rate error to 12.5 Hz and keeps Rodio’s integer resampler within range at standard device rates. A disc-backed test checks every engine tone, including Minion’s, at all 100 rev settings and five output rates from 44.1 to 192 kHz.

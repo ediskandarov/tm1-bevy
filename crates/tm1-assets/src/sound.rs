@@ -61,7 +61,8 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
                 for &byte in &block[2..] {
                     for nibble in [byte & 15, byte >> 4] {
                         let residual = ((i32::from(nibble) << 28) >> 16) >> shift;
-                        let v = (residual + ((a * c + b * d + 32) >> 6)).clamp(-32768, 32767);
+                        // The SPU shifts each history term before adding it to the residual.
+                        let v = (residual + ((a * c) >> 6) + ((b * d) >> 6)).clamp(-32768, 32767);
                         pcm.push(v as i16);
                         b = a;
                         a = v;

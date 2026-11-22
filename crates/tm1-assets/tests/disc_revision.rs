@@ -184,3 +184,38 @@ fn ending_assets() {
         assert!(!db.extract_kind(kind).unwrap().polygons.is_empty());
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn vab_predictors_match_pcm_reference() {
+    use sha2::{Digest, Sha256};
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let bank = disc.read("SND/UACORE.VAB").unwrap();
+    // Independent signed-integer decoder, low nibble first; hash little-endian PCM.
+    for (id, frames, digest) in [
+        (
+            0,
+            44800,
+            "60ebb79e4efa1a04b4b2055b1fd08eebbb36788479a06f1a8479c708f3c845cf",
+        ),
+        (
+            13,
+            31080,
+            "e5c1e6b0d56f02d21d6e8ff7c791fee1165979a98122b838c5af4a082edddb0f",
+        ),
+        (
+            44,
+            51856,
+            "e045f83d502498c3a7bed2a74367beb565faced7ac59725a7650035433ed36a1",
+        ),
+    ] {
+        let tones = tm1_assets::sound::program(&bank, id).unwrap();
+        let pcm = &tones[0].pcm;
+        assert_eq!(pcm.len(), frames);
+        let mut hash = Sha256::new();
+        for sample in pcm {
+            hash.update(sample.to_le_bytes());
+        }
+        assert_eq!(format!("{:x}", hash.finalize()), digest, "program {id}");
+    }
+}
