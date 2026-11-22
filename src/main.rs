@@ -1,6 +1,7 @@
 //! Arena driving frontend.
 mod additive;
 mod campaign;
+mod cinema;
 mod contest;
 mod driving;
 mod ending;
@@ -183,7 +184,13 @@ fn main() -> Result<()> {
         }
         app.add_systems(Startup, (render::setup, music::start, sfx::start));
     } else {
-        contest::show(app.world_mut(), vehicle, level, difficulty)?;
+        contest::show(
+            app.world_mut(),
+            vehicle,
+            level,
+            difficulty,
+            Some(cinema::Clip::Presents),
+        )?;
     }
     app.add_plugins(additive::AdditivePlugin);
     if demo {

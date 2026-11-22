@@ -192,6 +192,7 @@ pub fn advance(world: &mut World) {
             let signature = sounds.lost_game_signature();
             world.spawn((StageEntity, LostGame, engine));
             world.spawn((
+                StageEntity,
                 signature,
                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
             ));

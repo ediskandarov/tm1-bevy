@@ -9,9 +9,15 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The full retail menu and multiplayer are outstanding.
 
+## Opening sequence and cinema
+
+A normal launch displays the three original JP startup TIMs and plays the Sony logo and title movies in order. The shell reads each STR as a bounded range of raw sectors on track 1. FFmpeg decodes MDEC frames at 320 × 240 and interleaved XA sound for Bevy. Video frames stream through a pipe, and the decoder is reaped on skip, completion or shutdown. The original `MOVIE.c` lookahead leaves the last numbered frame undisplayed. Sound and image pause while the window is unfocused.
+
+The first title idle timeout (1,201 fields) opens the demonstration movie, which returns through the title movie. Subsequent history and vehicle attract modes are still pending. A disc-backed integration test covers startup order, logo skip timing, title frame changes, the theme handoff and the idle demo. To inspect the title movie in a deterministic Metal run, use `--menu --demo-screenshot local/title-cinema.png 378`.
+
 ## Defeat and Minion introduction
 
-Losing the last life interrupts the level music, plays the engine rev and Sweet Tooth signature, shows the original “YOU LOSE!” lettering over the battle and returns to the title. A new contest starts in Arena with three lives. The retail title transition also plays `UAMOVIES/TMTTL15S.STR`; the port currently goes directly to the title image. A disc-backed test traverses the defeat, title and fresh contest in one Bevy world.
+Losing the last life interrupts the level music, plays the engine rev and Sweet Tooth signature, shows the original “YOU LOSE!” lettering over the battle and returns to the title. A new contest starts in Arena with three lives. The return transition plays `UAMOVIES/TMTTL15S.STR` before the title theme starts. A disc-backed test traverses the defeat, title and fresh contest in one Bevy world.
 
 The Rooftops boss introduction uses the five original lines, font and screen coordinates from `screenBossCar`. Held input must be released before its five-second timer starts. The intermediate lost-life overlay follows the 30-field red ramp and 60-field hold in `screenLostALife`. The Bevy overlay uses alpha blending over the live render target. To capture the boss message on Metal, use `--level rooftops --demo-boss-screenshot local/boss-rooftops.png 36`.
 

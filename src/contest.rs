@@ -1,7 +1,9 @@
 //! Keyboard contest selection and five-slot JP stage passwords.
 use crate::campaign::{self, Campaign, PasswordModes, Stage};
+use crate::cinema::{Cinema, Clip};
 use anyhow::Result;
 use bevy::prelude::*;
+use std::time::Duration;
 use tm1_assets::screen::{self, Face, Fonts};
 use tm1_core::drive::{Difficulty, Level, Vehicle};
 
@@ -21,6 +23,8 @@ pub const HELICOPTER: &str = "@@<> ";
 const GOD_MODE: &str = "=<> @";
 #[derive(Resource)]
 pub struct Contest {
+    cinema: Option<Cinema>,
+    idle: Duration,
     fonts: Fonts,
     title: Vec<u8>,
     cars: Vec<u8>,
@@ -39,7 +43,7 @@ pub struct Contest {
 }
 impl Contest {
     fn sync_theme(&mut self, world: &mut World) {
-        if self.page == Page::Title {
+        if self.page == Page::Title && self.cinema.is_none() {
             if self.theme_entity.is_none() {
                 let gain = world
                     .get_resource::<crate::driving::Drive>()
@@ -58,6 +62,47 @@ impl Contest {
         } else if let Some(entity) = self.theme_entity.take() {
             world.despawn(entity);
         }
+    }
+    fn play(&mut self, world: &mut World, mut clip: Option<Clip>) {
+        if let Some(voice) = self.cinema.take().and_then(|movie| movie.voice) {
+            world.despawn(voice);
+        }
+        self.idle = Duration::ZERO;
+        self.released = false;
+        while let Some(which) = clip {
+            match Cinema::load(&world.resource::<Campaign>().0, which) {
+                Ok((mut movie, pixels, audio)) => {
+                    if let Some(audio) = audio {
+                        let sound = world.resource_mut::<Assets<AudioSource>>().add(audio);
+                        movie.voice = Some(
+                            world
+                                .spawn((
+                                    campaign::StageEntity,
+                                    AudioPlayer::new(sound),
+                                    PlaybackSettings::ONCE,
+                                ))
+                                .id(),
+                        );
+                    }
+                    world
+                        .resource_mut::<Assets<Image>>()
+                        .get_mut(&self.image)
+                        .unwrap()
+                        .data = Some(pixels);
+                    self.cinema = Some(movie);
+                    self.sync_theme(world);
+                    return;
+                }
+                Err(err) => warn!("Disc cinema unavailable: {err:#}"),
+            }
+            clip = which.next();
+        }
+        world
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&self.image)
+            .unwrap()
+            .data = Some(self.frame());
+        self.sync_theme(world);
     }
     fn frame(&self) -> Vec<u8> {
         let mut frame = match self.page {
@@ -211,17 +256,26 @@ impl Contest {
 }
 pub fn open(world: &mut World) -> Result<()> {
     let player = &world.resource::<crate::driving::Drive>().player;
-    show(world, player.vehicle(), Level::Arena, player.difficulty())
+    show(
+        world,
+        player.vehicle(),
+        Level::Arena,
+        player.difficulty(),
+        Some(Clip::Title),
+    )
 }
 pub fn show(
     world: &mut World,
     vehicle: Vehicle,
     level: Level,
     difficulty: Difficulty,
+    first_clip: Option<Clip>,
 ) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
     let theme = crate::music::track(disc, 2)?;
     let mut menu = Contest {
+        cinema: None,
+        idle: Duration::ZERO,
         fonts: Fonts::load(disc)?,
         cars: screen::background(&disc.read("UASCREEN/SCRND.TIM")?)?,
         title: screen::background(&disc.read("UASCREEN/SCRNC.TIM")?)?,
@@ -241,7 +295,7 @@ pub fn show(
     campaign::clear_stage(world);
     menu.image = crate::ending::spawn_screen(world, ContestScreen, menu.frame());
     menu.theme = world.resource_mut::<Assets<AudioSource>>().add(theme);
-    menu.sync_theme(world);
+    menu.play(world, first_clip);
     world.insert_resource(menu);
     Ok(())
 }
@@ -257,15 +311,65 @@ pub fn update(world: &mut World) {
     {
         sprite.custom_size = Some(Vec2::new(h * 4. / 3., h));
     }
+    if let Some(movie) = world.resource::<Contest>().cinema.as_ref() {
+        if let Some(sink) = movie.voice.and_then(|e| world.get::<AudioSink>(e)) {
+            use bevy::audio::AudioSinkPlayback;
+            if focused {
+                sink.play();
+            } else {
+                sink.pause();
+            }
+        }
+    }
     if !focused {
         return;
     }
     let mut start = None;
     world.resource_scope(|world, mut menu: Mut<Contest>| {
         let keys = world.resource::<ButtonInput<KeyCode>>();
+        if menu.cinema.is_some() {
+            let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space])
+                || world
+                    .query::<&Gamepad>()
+                    .iter(world)
+                    .any(|p| p.any_pressed([GamepadButton::South, GamepadButton::Start]));
+            let dt = if world
+                .get_resource::<crate::smoke::Capture>()
+                .is_some_and(|c| c.demo && !c.realtime)
+            {
+                Duration::from_millis(50)
+            } else {
+                world.resource::<Time<Real>>().delta()
+            };
+            let handle = menu.image.clone();
+            let mut images = world.resource_mut::<Assets<Image>>();
+            let movie = menu.cinema.as_mut().unwrap();
+            let done = movie
+                .advance(dt, select, &mut images, &handle)
+                .unwrap_or_else(|err| {
+                    warn!("Disc cinema ended early: {err:#}");
+                    true
+                });
+            if done {
+                let next = movie.clip.next();
+                menu.play(world, next);
+            }
+            return;
+        }
         if !menu.released {
             menu.released = keys.get_pressed().next().is_none();
             return;
+        }
+        if menu.page == Page::Title {
+            if keys.get_pressed().next().is_some() {
+                menu.idle = Duration::ZERO;
+            } else {
+                menu.idle += world.resource::<Time<Real>>().delta();
+            }
+            if menu.idle.as_nanos() * 60 >= 1201 * 1_000_000_000 {
+                menu.play(world, Some(Clip::Attract));
+                return;
+            }
         }
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
@@ -334,6 +438,7 @@ mod tests {
             Vehicle::YellowJacket,
             Level::Arena,
             Difficulty::Medium,
+            None,
         )
         .unwrap();
         update(&mut world);
@@ -354,6 +459,68 @@ mod tests {
         }
         press(world, KeyCode::Enter);
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
+    fn opening_movies_attract_and_title_theme() {
+        let mut world = menu_world();
+        world
+            .resource_scope(|world, mut menu: Mut<Contest>| menu.play(world, Some(Clip::Presents)));
+        let tick = |world: &mut World, ms| {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(ms));
+            update(world);
+        };
+        let clip = |world: &World| world.resource::<Contest>().cinema.as_ref().map(|m| m.clip);
+        for (card, ms) in [
+            (Clip::Presents, 2017),
+            (Clip::Production, 2334),
+            (Clip::Developer, 2334),
+        ] {
+            assert!(clip(&world) == Some(card));
+            tick(&mut world, 0);
+            tick(&mut world, ms);
+        }
+        assert!(clip(&world) == Some(Clip::Logo));
+        tick(&mut world, 0);
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        tick(&mut world, 1000);
+        assert!(clip(&world) == Some(Clip::Logo));
+        tick(&mut world, 1000);
+        assert!(clip(&world) == Some(Clip::Title));
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        let handle = world.resource::<Contest>().image.clone();
+        let original = world
+            .resource::<Assets<Image>>()
+            .get(&handle)
+            .unwrap()
+            .data
+            .clone();
+        tick(&mut world, 0);
+        tick(&mut world, 2000);
+        assert_ne!(
+            original.as_deref(),
+            world
+                .resource::<Assets<Image>>()
+                .get(&handle)
+                .unwrap()
+                .data
+                .as_deref()
+        );
+        tick(&mut world, 2500);
+        assert!(clip(&world).is_none());
+        assert!(world.resource::<Contest>().theme_entity.is_some());
+        tick(&mut world, 0);
+        tick(&mut world, 20017);
+        assert!(clip(&world) == Some(Clip::Attract));
+        assert!(world.resource::<Contest>().theme_entity.is_none());
+        tick(&mut world, 0);
+        press(&mut world, KeyCode::Enter);
+        assert!(clip(&world) == Some(Clip::Title));
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn special_passwords_and_boss_preview() {
@@ -415,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the supported TM1_CUE"]
+    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
     fn last_life_returns_to_title_and_allows_a_fresh_contest() {
         let mut world = menu_world();
         press(&mut world, KeyCode::Enter);
@@ -426,6 +593,13 @@ mod tests {
         campaign::advance(&mut world);
         assert!(matches!(world.resource::<Contest>().page, Page::Title));
         assert_eq!(world.resource::<Contest>().level, Level::Arena);
+        assert!(matches!(
+            world.resource::<Contest>().cinema.as_ref().map(|m| m.clip),
+            Some(Clip::Title)
+        ));
+        update(&mut world);
+        press(&mut world, KeyCode::Enter);
+        assert!(world.resource::<Contest>().cinema.is_none());
         update(&mut world);
         press(&mut world, KeyCode::Enter);
         press(&mut world, KeyCode::Enter);

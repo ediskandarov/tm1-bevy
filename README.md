@@ -20,6 +20,8 @@ cargo run --locked --offline -- "$TM1_CUE" --level cyburbia --car outlaw
 cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 ```
 
+The opening sequence plays the three JP presentation cards, Sony logo and title movie from the disc. STR video and XA sound playback requires `ffmpeg` on the application’s PATH. The game skips an unavailable movie and continues to the menu. Enter skips the title movie or the Sony logo after its first two seconds.
+
 With only the CUE argument, press Enter at the title, use Left or Right to select your vehicle, then Enter to start. D cycles through Medium, Hard and Easy before starting. Finishing Rooftops on Hard continues into Arena 5 after the credits with the remaining lives and inventory. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Space inserts a blank slot. Use 21422 to play Arena 5. The special passwords below can be entered before starting the contest.
 
 | Password keys | Result |
