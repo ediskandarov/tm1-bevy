@@ -9,7 +9,9 @@ pub struct Capture {
     path: Option<PathBuf>,
     frames: u32,
     requested: Option<u32>,
+    attempts: u8,
     pub demo: bool,
+    pub demo_frame: u32,
     pub realtime: bool,
     pub elapsed: std::time::Duration,
     pub steps: u64,
@@ -19,11 +21,13 @@ impl Capture {
         Self {
             path,
             demo,
+            demo_frame: 120,
             realtime,
             elapsed: Default::default(),
             steps: 0,
             frames: 0,
             requested: None,
+            attempts: 0,
         }
     }
 }
@@ -45,11 +49,12 @@ pub fn capture(
     let ready = if capture.realtime {
         capture.elapsed.as_secs() >= 15
     } else {
-        capture.frames == 120
+        capture.frames >= capture.demo_frame
     };
     if ready && capture.requested.is_none() {
         capture.requested = Some(capture.frames);
-        if capture.demo {
+        capture.attempts += 1;
+        if capture.demo && capture.attempts == 1 {
             eprintln!(
                 "Active audio sinks: {}, connected gamepads: {}",
                 sinks.iter().count(),
@@ -85,13 +90,34 @@ pub fn capture(
             }
         }
         commands.spawn(Screenshot::primary_window()).observe(
-            move |event: On<ScreenshotCaptured>, mut exit: MessageWriter<AppExit>| {
+            move |event: On<ScreenshotCaptured>,
+                  mut capture: ResMut<Capture>,
+                  mut exit: MessageWriter<AppExit>| {
+                if event
+                    .image
+                    .data
+                    .as_ref()
+                    .is_some_and(|bytes| bytes.iter().all(|&b| b == 0))
+                    && capture.attempts < 3
+                {
+                    warn!(
+                        "Empty window readback on attempt {}, requesting another frame",
+                        capture.attempts
+                    );
+                    capture.requested = None;
+                    return;
+                }
                 let result = event
                     .image
                     .clone()
                     .try_into_dynamic()
                     .map_err(|error| format!("{error:?}"))
-                    .and_then(|image| image.save(&path).map_err(|error| error.to_string()));
+                    .and_then(|image| {
+                        if image.as_bytes().iter().all(|&b| b == 0) {
+                            return Err("Metal returned an empty frame".into());
+                        }
+                        image.save(&path).map_err(|error| error.to_string())
+                    });
                 match result {
                     Ok(()) => {
                         eprintln!("Saved GPU screenshot: {}", path.display());

@@ -8,9 +8,9 @@ the original hypotheses remain here for later evaluation.
 
 Keeping the C dynamics and using Rust for the host preserved the sampled retail updates. The differential fixtures caught concrete integration errors in ammo pickup, per-step shadow state, and RNG consumption by flash effects. Full layout comparison covers bytes whose source names are still unknown. It also requires the same initial state and the same caller sequence.
 
-The separate taxi entity reuses source vertices, triangle topology, colors, UV atlas, camera pose and the original orientation. Its geometry is uploaded once; its Bevy Transform changes as the car moves. The frame comparison exposed lost occlusion across cameras. A common depth pass is needed before adopting this path for intersecting traffic and scenery. The experiment has not tested a browser backend.
+The taxi and police entities reuse source vertices, topology, colors, atlas UVs and vehicle poses. Opaque vehicle geometry is uploaded once. An initial experiment drawing the taxi with a separate camera lost occlusion against walls, police and particles. The gameplay renderer now draws these elements with one perspective camera and depth buffer. Translucent triangles still use distance sorting among themselves. The experiment has not tested a browser backend.
 
-See [acceptance runs and open hardware checks](STATUS.md) for the original reference, observed Metal timings and audio differences.
+See [acceptance runs and validation limits](STATUS.md) for the original reference, observed Metal timings and audio differences.
 
 ## Source observations
 

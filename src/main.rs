@@ -1,4 +1,5 @@
 //! Arena driving frontend.
+mod additive;
 mod driving;
 mod gpu_timing;
 mod music;
@@ -17,8 +18,7 @@ fn main() -> Result<()> {
         "usage: tm1-bevy <path-to-disc.cue> [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
-    let object_mesh = flag.as_deref() == Some(std::ffi::OsStr::new("--object-mesh"));
-    if object_mesh {
+    if flag.as_deref() == Some(std::ffi::OsStr::new("--object-mesh")) {
         flag = args.next();
     }
     let realtime = flag.as_deref() == Some(std::ffi::OsStr::new("--realtime-screenshot"));
@@ -30,6 +30,17 @@ fn main() -> Result<()> {
         )),
         Some(flag) => anyhow::bail!("unknown argument: {flag:?}"),
     };
+    let mut capture = smoke::Capture::new(screenshot, demo, realtime);
+    if demo
+        && !realtime
+        && let Some(frame) = args.next()
+    {
+        capture.demo_frame = frame
+            .to_str()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n| n > 0)
+            .ok_or_else(|| anyhow::anyhow!("expected a positive demo frame number"))?;
+    }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
     let data = disc.read("UADMD/XARENA1.DMD")?;
@@ -38,7 +49,6 @@ fn main() -> Result<()> {
     ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
     let mut scene = dmd.extract_kind(1)?;
     let floor = dmd.extract_kind(3)?;
-    let floor_start = scene.polygons.len();
     scene.polygons.extend(floor.polygons);
     for issue in &scene.omitted_nodes {
         eprintln!("Preview omission: {issue}");
@@ -54,19 +64,12 @@ fn main() -> Result<()> {
         opponent_mesh.root_id,
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
-    let arena = render::Arena::new(
-        scene,
-        floor_start,
-        taxi_mesh,
-        opponent_mesh,
-        textures,
-        object_mesh,
-    )?;
+    let arena = render::Arena::new(scene, taxi_mesh, opponent_mesh, textures)?;
     eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, M mesh comparison, P pause, R restart, Tab overview."
+        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview."
     );
     let mut app = App::new();
-    app.insert_resource(smoke::Capture::new(screenshot, demo, realtime))
+    app.insert_resource(capture)
         .insert_resource(arena)
         .insert_resource(sfx::Sounds::load(&disc)?)
         .insert_resource(music::Music::arena(&disc)?)
@@ -80,13 +83,15 @@ fn main() -> Result<()> {
             }),
             ..default()
         }));
+    app.add_plugins(additive::AdditivePlugin);
     if demo {
         app.add_plugins((
             bevy::render::diagnostic::RenderDiagnosticsPlugin,
             gpu_timing::GpuTiming,
         ));
     }
-    app.add_systems(Startup, (render::setup, music::start, sfx::start))
+    let exit = app
+        .add_systems(Startup, (render::setup, music::start, sfx::start))
         .add_systems(
             Update,
             (
@@ -106,5 +111,6 @@ fn main() -> Result<()> {
             ),
         )
         .run();
+    ensure!(exit.is_success(), "arena exited with {exit:?}");
     Ok(())
 }

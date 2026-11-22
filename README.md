@@ -78,10 +78,10 @@ cargo run -- /absolute/path/to/disc.cue
 Drive with W/S, steer with A/D, hold Shift for a hard turn and press T for turbo.
 P pauses, R resets both cars, Tab toggles the overview, and Escape exits.
 Space fires the machine gun, E cycles inventory and F fires the selected weapon.
-M toggles a separate perspective-rendered taxi entity.
+The arena and both cars use a shared perspective depth buffer.
 On a gamepad the face buttons west/east control acceleration/reverse, north
 activates turbo and south modifies the D-pad turns. Start pauses and Select restarts.
-Right shoulder fires the gun, left shoulder fires the selected weapon and the left analog trigger cycles inventory. Physical controller acceptance is pending.
+Right shoulder fires the gun, left shoulder fires the selected weapon and the left analog trigger cycles inventory. The first arena was playtested on keyboard. Physical controller testing is deferred.
 
 The driving comparison runs in release mode against verified player-owned bytes.
 

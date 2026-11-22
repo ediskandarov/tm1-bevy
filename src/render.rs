@@ -1,5 +1,4 @@
-//! Prototype primitive presentation: CPU projection and painter ordering, GPU rasterization.
-//! This is not yet a replacement for the original geomProc or ordering table.
+//! Arena presentation with a shared perspective depth buffer.
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
@@ -18,9 +17,12 @@ use tm1_assets::{
 use bevy::camera::visibility::RenderLayers;
 
 #[derive(Component)]
-pub struct TaxiMesh;
+pub enum VehicleMesh {
+    Taxi,
+    Police,
+}
 #[derive(Component)]
-pub struct ObjectCamera;
+pub struct WorldCamera;
 
 const TILE: usize = 256;
 const COLUMNS: usize = 8;
@@ -28,15 +30,16 @@ const COLUMNS: usize = 8;
 #[derive(Resource)]
 pub struct Arena {
     scene: Scene,
-    floor_start: usize,
     vehicle_start: usize,
     opponent_start: usize,
     overview: bool,
-    object_mesh: bool,
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
     mesh: Handle<Mesh>,
+    additive: Handle<Mesh>,
+    solids: Handle<Mesh>,
+    transparent: Handle<Mesh>,
     center: Vec3,
     radius: f32,
     yaw: f32,
@@ -44,14 +47,7 @@ pub struct Arena {
     zoom: f32,
 }
 impl Arena {
-    pub fn new(
-        mut scene: Scene,
-        floor_start: usize,
-        vehicle: Scene,
-        opponent: Scene,
-        vram: Vram,
-        object_mesh: bool,
-    ) -> Result<Self> {
+    pub fn new(mut scene: Scene, vehicle: Scene, opponent: Scene, vram: Vram) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
         scene.polygons.extend(vehicle.polygons);
         let opponent_start = scene.polygons.len();
@@ -92,15 +88,16 @@ impl Arena {
         ensure!(radius.is_finite() && radius > 0., "invalid arena bounds");
         Ok(Self {
             scene,
-            floor_start,
             vehicle_start,
             opponent_start,
             overview: false,
-            object_mesh,
             pixels,
             atlas_size: [width, height],
             tiles,
             mesh: Handle::default(),
+            additive: default(),
+            solids: default(),
+            transparent: default(),
             center,
             radius,
             yaw: 0.5,
@@ -119,6 +116,7 @@ pub fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut additive_materials: ResMut<Assets<crate::additive::Additive>>,
 ) {
     let mut image = Image::new(
         Extent3d {
@@ -133,54 +131,71 @@ pub fn setup(
     );
     image.sampler = ImageSampler::nearest();
     let texture = images.add(image);
-    let mut positions = Vec::new();
-    let mut uvs = Vec::new();
-    let mut colors = Vec::new();
-    for polygon in &arena.scene.polygons[arena.vehicle_start..arena.opponent_start] {
-        if polygon.billboard.is_some() {
-            continue;
-        }
-        let slot = arena.tiles[&(polygon.texture, polygon.semi_transparent)];
-        let indices: &[usize] = if polygon.vertices.len() == 4 {
-            &[0, 1, 2, 2, 1, 3]
-        } else {
-            &[0, 1, 2]
-        };
-        for &i in indices {
-            let v = &polygon.vertices[i];
-            positions.push(world(v.position).to_array());
-            uvs.push([
-                ((slot % COLUMNS * TILE) as f32 + v.uv[0] + 0.5) / arena.atlas_size[0] as f32,
-                ((slot / COLUMNS * TILE) as f32 + v.uv[1] + 0.5) / arena.atlas_size[1] as f32,
-            ]);
-            colors.push(v.color);
-        }
-    }
-    let local_mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    arena.additive = meshes.add(Batch::default().mesh());
     commands.spawn((
-        TaxiMesh,
-        Mesh2d(meshes.add(local_mesh)),
-        MeshMaterial2d(materials.add(ColorMaterial {
-            texture: Some(texture.clone()),
-            alpha_mode: AlphaMode2d::Mask(0.5),
-            ..default()
+        Mesh2d(arena.additive.clone()),
+        MeshMaterial2d(additive_materials.add(crate::additive::Additive {
+            atlas: texture.clone(),
         })),
         RenderLayers::layer(1),
         NoFrustumCulling,
     ));
+    let masked = materials.add(ColorMaterial {
+        texture: Some(texture.clone()),
+        alpha_mode: AlphaMode2d::Mask(0.5),
+        ..default()
+    });
+    let blend = materials.add(ColorMaterial {
+        texture: Some(texture),
+        alpha_mode: AlphaMode2d::Blend,
+        ..default()
+    });
+    for (vehicle, range) in [
+        (VehicleMesh::Taxi, arena.vehicle_start..arena.opponent_start),
+        (
+            VehicleMesh::Police,
+            arena.opponent_start..arena.scene.polygons.len(),
+        ),
+    ] {
+        let mut batch = Batch::default();
+        for polygon in &arena.scene.polygons[range] {
+            if polygon.billboard.is_some() || polygon.semi_transparent {
+                continue;
+            }
+            let slot = arena.tiles[&(polygon.texture, false)];
+            for &i in indices(polygon.vertices.len()) {
+                let v = &polygon.vertices[i];
+                batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
+            }
+        }
+        commands.spawn((
+            vehicle,
+            Mesh2d(meshes.add(batch.mesh())),
+            MeshMaterial2d(masked.clone()),
+            RenderLayers::layer(1),
+            NoFrustumCulling,
+        ));
+    }
+    for (transparent, material) in [(false, masked), (true, blend.clone())] {
+        let mesh = meshes.add(Batch::default().mesh());
+        if transparent {
+            arena.transparent = mesh.clone();
+        } else {
+            arena.solids = mesh.clone();
+        }
+        commands.spawn((
+            Mesh2d(mesh),
+            MeshMaterial2d(material),
+            RenderLayers::layer(1),
+            NoFrustumCulling,
+        ));
+    }
     commands.spawn((
-        ObjectCamera,
+        WorldCamera,
         Camera2d,
         Camera {
-            order: 1,
-            is_active: arena.object_mesh,
-            clear_color: ClearColorConfig::None,
+            order: 0,
+
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {
@@ -191,24 +206,20 @@ pub fn setup(
         }),
         RenderLayers::layer(1),
     ));
-    let mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, Vec::<[f32; 3]>::new())
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, Vec::<[f32; 2]>::new())
-    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, Vec::<[f32; 4]>::new());
-    arena.mesh = meshes.add(mesh);
+    arena.mesh = meshes.add(Batch::default().mesh());
     commands.spawn((
         Mesh2d(arena.mesh.clone()),
-        MeshMaterial2d(materials.add(ColorMaterial {
-            texture: Some(texture),
-            alpha_mode: AlphaMode2d::Blend,
-            ..default()
-        })),
+        MeshMaterial2d(blend),
         NoFrustumCulling,
     ));
-    commands.spawn(Camera2d);
+    commands.spawn((
+        Camera2d,
+        Camera {
+            order: 1,
+            clear_color: ClearColorConfig::None,
+            ..default()
+        },
+    ));
     commands.spawn((
         HudLabel,
         Text2d::new(""),
@@ -265,9 +276,6 @@ pub fn controls(
     if keys.just_pressed(KeyCode::Tab) {
         arena.overview = !arena.overview;
     }
-    if keys.just_pressed(KeyCode::KeyM) {
-        arena.object_mesh = !arena.object_mesh;
-    }
     let dt = time.delta_secs().min(0.1);
     if keys.pressed(KeyCode::ArrowLeft) {
         arena.yaw -= dt;
@@ -297,8 +305,8 @@ pub fn update(
     drive: Res<crate::driving::Drive>,
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
-    mut taxi_entity: Single<&mut Transform, (With<TaxiMesh>, Without<ObjectCamera>)>,
-    mut camera: Single<(&mut Transform, &mut Camera), With<ObjectCamera>>,
+    mut vehicles: Query<(&VehicleMesh, &mut Transform), Without<WorldCamera>>,
+    mut camera: Single<&mut Transform, With<WorldCamera>>,
     window: Single<&Window>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -340,16 +348,19 @@ pub fn update(
             origin + Vec3::Y * 40.,
         )
     };
-    camera.1.is_active = arena.object_mesh;
-    if arena.object_mesh {
-        *camera.0 = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    **camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    for (vehicle, mut entity) in &mut vehicles {
+        let (origin, matrix) = match vehicle {
+            VehicleMesh::Taxi => (origin, matrix),
+            VehicleMesh::Police => (opponent_origin, opponent_matrix),
+        };
         let basis = |p: [f32; 3]| {
             world(std::array::from_fn(|i| {
                 (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
             }))
         };
-        taxi_entity.translation = origin;
-        taxi_entity.rotation = Quat::from_mat3(&Mat3::from_cols(
+        entity.translation = origin;
+        entity.rotation = Quat::from_mat3(&Mat3::from_cols(
             basis([1., 0., 0.]),
             basis([0., 0., 1.]),
             basis([0., -1., 0.]),
@@ -362,106 +373,53 @@ pub fn update(
     let focal = window.height() * 0.85;
     let near = arena.radius * 0.005;
     let hidden = drive.contacts.hidden_pickups();
-    let mut order: Vec<_> = arena
-        .scene
-        .polygons
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| {
-            !arena.object_mesh
-                || arena.scene.polygons[*i].billboard.is_some()
-                || !(arena.vehicle_start..arena.opponent_start).contains(i)
-        })
-        .filter(|(_, p)| p.pickup.is_none_or(|id| hidden & (1u64 << id) == 0))
-        .map(|(i, p)| {
-            let depth = p
-                .vertices
-                .iter()
-                .map(|v| (transform(i, v.position) - eye).dot(forward))
-                .sum::<f32>()
-                / p.vertices.len() as f32;
-            (i, depth)
-        })
-        .collect();
-    // DB.c assigns the floor CS the fixed ordering-table slot 0xffe.
-    let floor = arena.floor_start..arena.vehicle_start;
-    order.sort_by(|a, b| {
-        floor
-            .contains(&b.0)
-            .cmp(&floor.contains(&a.0))
-            .then_with(|| b.1.total_cmp(&a.1))
-    });
-    let mut positions = Vec::new();
-    let mut uvs = Vec::new();
-    let mut colors = Vec::new();
-    for (i, _) in order {
-        let p = &arena.scene.polygons[i];
+    let mut screen_batch = Batch::default();
+    let mut solids = Batch::default();
+    let mut transparent = Batch::default();
+    let mut additive = Batch::default();
+    for (i, p) in arena.scene.polygons.iter().enumerate() {
+        if i >= arena.vehicle_start && p.billboard.is_none() && !p.semi_transparent {
+            continue;
+        }
+        if p.pickup.is_some_and(|id| hidden & (1u64 << id) != 0) {
+            continue;
+        }
         let slot = arena.tiles[&(p.texture, p.semi_transparent)];
-        let indices: &[usize] = if p.vertices.len() == 4 {
-            &[0, 1, 2, 2, 1, 3]
-        } else {
-            &[0, 1, 2]
-        };
-        for triangle in indices.chunks_exact(3) {
-            let vertex = |index: usize| {
-                let v = &p.vertices[index];
-                let delta = transform(i, v.position) - eye;
-                let mut view = Vec3::new(delta.dot(right), delta.dot(up), delta.dot(forward));
-                if let Some([w, h]) = p.billboard {
-                    view.x += if index & 1 == 0 { -w } else { w };
-                    view.y += if index < 2 { h } else { -h };
-                }
-                ClipVertex {
-                    view,
-                    uv: Vec2::from(v.uv),
-                    color: Vec4::from(v.color),
-                }
-            };
-            let corners = [
-                vertex(triangle[0]),
-                vertex(triangle[1]),
-                vertex(triangle[2]),
-            ];
-            let mut clipped = [corners[0]; 4];
-            let mut count = 0;
-            let mut previous = corners[2];
-            for current in corners {
-                if (current.view.z >= near) != (previous.view.z >= near) {
-                    let t = (near - previous.view.z) / (current.view.z - previous.view.z);
-                    clipped[count] = previous.lerp(current, t);
-                    count += 1;
-                }
-                if current.view.z >= near {
-                    clipped[count] = current;
-                    count += 1;
-                }
-                previous = current;
-            }
-            for j in 2..count {
-                for v in [clipped[0], clipped[j - 1], clipped[j]] {
-                    let projected = v.view.truncate() * (focal / v.view.z);
-                    positions.push([projected.x, projected.y, 0.]);
-                    uvs.push([
-                        ((slot % COLUMNS * TILE) as f32 + v.uv.x + 0.5)
-                            / arena.atlas_size[0] as f32,
-                        ((slot / COLUMNS * TILE) as f32 + v.uv.y + 0.5)
-                            / arena.atlas_size[1] as f32,
-                    ]);
-                    colors.push(v.color.to_array());
-                }
+        if i >= arena.vehicle_start && !p.double_sided && p.billboard.is_none() {
+            // geomProc rejects negative screen-space NCLIP in the normal view.
+            // The screen Y flip makes a clockwise world-space face visible.
+            let [a, b, c] = [0, 1, 2].map(|j| transform(i, p.vertices[j].position));
+            if (b - a).cross(c - a).dot(eye - a) > 0. {
+                continue;
             }
         }
+        let indices = indices(p.vertices.len());
+        let batch = if p.semi_transparent && p.texture.is_some_and(|k| (k.page >> 5) & 3 == 1) {
+            &mut additive
+        } else if p.semi_transparent {
+            &mut transparent
+        } else {
+            &mut solids
+        };
+        for &i_vertex in indices {
+            let v = &p.vertices[i_vertex];
+            let mut point = transform(i, v.position);
+            if let Some([w, h]) = p.billboard {
+                point += right * if i_vertex & 1 == 0 { -w } else { w }
+                    + up * if i_vertex < 2 { h } else { -h };
+            }
+            batch.push(point, arena.uv(slot, v.uv.into()), v.color);
+        }
     }
-    // The untextured atlas tile is solid white. Tracers and HUD bars share
-    // the arena batch and are independent of simulation stepping.
-    let mut quad = |points: [Vec2; 4], tint: [f32; 4]| {
-        for i in [0, 1, 2, 2, 1, 3] {
-            positions.push([points[i].x, points[i].y, 0.]);
-            uvs.push([
-                0.5 / arena.atlas_size[0] as f32,
-                0.5 / arena.atlas_size[1] as f32,
-            ]);
-            colors.push(tint);
+    let white = arena.uv(0, Vec2::ZERO);
+    let mut quad = |points: [Vec2; 4], depths: [f32; 4], tint: [f32; 4]| {
+        for &i in indices(4) {
+            let xy = points[i] * (depths[i] / focal);
+            transparent.push(
+                eye + forward * depths[i] + right * xy.x + up * xy.y,
+                white,
+                tint,
+            );
         }
     };
     let mut segments = [[[0; 3]; 2]; 40];
@@ -484,6 +442,7 @@ pub fn update(
         let normal = (b - a).normalize_or_zero().perp();
         quad(
             [a - normal, a + normal, b - normal, b + normal],
+            [v[0].z, v[0].z, v[1].z, v[1].z],
             [1., 0.82, 0.22, 1.],
         );
     }
@@ -514,6 +473,7 @@ pub fn update(
                 center - Vec2::Y * radius,
                 center + Vec2::X * radius,
             ],
+            [depth; 4],
             tint,
         );
     }
@@ -521,15 +481,15 @@ pub fn update(
     let x = -window.width() / 2. + 22. * scale;
     let y = -window.height() / 2. + 24. * scale;
     let mut bar = |y: f32, w: f32, h: f32, tint| {
-        quad(
-            [
-                Vec2::new(x, y),
-                Vec2::new(x + w, y),
-                Vec2::new(x, y + h),
-                Vec2::new(x + w, y + h),
-            ],
-            tint,
-        );
+        let points = [
+            Vec2::new(x, y),
+            Vec2::new(x + w, y),
+            Vec2::new(x, y + h),
+            Vec2::new(x + w, y + h),
+        ];
+        for &i in indices(4) {
+            screen_batch.push(points[i].extend(0.), white, tint);
+        }
     };
     let (hp, max_hp) = drive.taxi.health();
     let (op, op_max) = drive.opponent.health();
@@ -542,28 +502,81 @@ pub fn update(
         bar(y, 150. * scale, 8. * scale, [0.05, 0.05, 0.05, 0.85]);
         bar(y, 150. * scale * value.clamp(0., 1.), 8. * scale, tint);
     }
-    if let Some(mut mesh) = meshes.get_mut(&arena.mesh) {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    screen_batch.write(&mut meshes, &arena.mesh);
+    additive.write(&mut meshes, &arena.additive);
+    solids.write(&mut meshes, &arena.solids);
+    // Sort all translucent surfaces together, including smoke and tracers.
+    let mut triangles: Vec<_> = transparent
+        .positions
+        .chunks_exact(3)
+        .enumerate()
+        .map(|(i, triangle)| {
+            let depth = triangle
+                .iter()
+                .map(|p| Vec3::from_array(*p).dot(forward))
+                .sum::<f32>();
+            (i * 3, depth)
+        })
+        .collect();
+    triangles.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut sorted = Batch::default();
+    for (first, _) in triangles {
+        let range = first..first + 3;
+        sorted
+            .positions
+            .extend_from_slice(&transparent.positions[range.clone()]);
+        sorted
+            .uvs
+            .extend_from_slice(&transparent.uvs[range.clone()]);
+        sorted.colors.extend_from_slice(&transparent.colors[range]);
     }
+    sorted.write(&mut meshes, &arena.transparent);
     if let Some(start) = started {
         crate::smoke::sample("CPU geometry preparation", &mut timings, start);
     }
 }
 
-#[derive(Clone, Copy)]
-struct ClipVertex {
-    view: Vec3,
-    uv: Vec2,
-    color: Vec4,
+impl Arena {
+    fn uv(&self, slot: usize, uv: Vec2) -> [f32; 2] {
+        [
+            ((slot % COLUMNS * TILE) as f32 + uv.x + 0.5) / self.atlas_size[0] as f32,
+            ((slot / COLUMNS * TILE) as f32 + uv.y + 0.5) / self.atlas_size[1] as f32,
+        ]
+    }
 }
-impl ClipVertex {
-    fn lerp(self, other: Self, t: f32) -> Self {
-        Self {
-            view: self.view.lerp(other.view, t),
-            uv: self.uv.lerp(other.uv, t),
-            color: self.color.lerp(other.color, t),
+fn indices(n: usize) -> &'static [usize] {
+    if n == 4 {
+        &[0, 1, 2, 2, 1, 3]
+    } else {
+        &[0, 1, 2]
+    }
+}
+#[derive(Default)]
+struct Batch {
+    positions: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    colors: Vec<[f32; 4]>,
+}
+impl Batch {
+    fn push(&mut self, pos: Vec3, uv: [f32; 2], color: [f32; 4]) {
+        self.positions.push(pos.to_array());
+        self.uvs.push(uv);
+        self.colors.push(color);
+    }
+    fn mesh(self) -> Mesh {
+        Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
+    }
+    fn write(self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
+        if let Some(mut mesh) = meshes.get_mut(handle) {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         }
     }
 }

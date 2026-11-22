@@ -79,7 +79,7 @@ migration to regular Bevy rendering.
 
 ### R6. Input and time control
 
-- Support keyboard input and at least one tested gamepad.
+- Support keyboard input for the first arena. Physical gamepad testing is deferred by player decision.
 - Map input to original PS1 buttons and sample it at simulation steps.
 - Focus loss and pausing must not cause uncontrolled step accumulation or
   stuck button states.
@@ -94,7 +94,7 @@ migration to regular Bevy rendering.
 | Physics | Original and port traces for acceleration, braking, turning, jumping, wall impact, vehicle collision, and weapon impact |
 | Timing | Comparison across several simulation step-duration sequences; simulation independence from presentation frequency |
 | State | Positions, velocities, orientations, health, weapons, RNG, and relevant timers; references normalized to object IDs |
-| Operation | Restart, pause, focus loss, and reconnection of the tested controller |
+| Operation | Keyboard play through the victory screen, restart, pause and focus loss |
 | Performance | Simulation time, CPU/GPU rendering time, and memory measurements on an identified Mac; no sustained simulation clock lag |
 
 Record step counts, seeds, input recordings, original/emulator settings, and
