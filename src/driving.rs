@@ -94,6 +94,7 @@ pub fn advance(
         match drive.player.level() {
             tm1_core::drive::Level::Arena => "Arena",
             tm1_core::drive::Level::Warehouse => "Warehouse",
+            tm1_core::drive::Level::Rooftops => "Rooftops",
             tm1_core::drive::Level::Cyburbia => "Cyburbia",
             tm1_core::drive::Level::CityPark => "City Park",
             tm1_core::drive::Level::Freeway => "Freeway",
@@ -213,6 +214,7 @@ mod tests {
             Level::Freeway,
             Level::CityPark,
             Level::Cyburbia,
+            Level::Rooftops,
         ] {
             let kinds =
                 level.opponents(vehicle, &mut tm1_core::drive::ArenaDeck::default(), &mut 1);

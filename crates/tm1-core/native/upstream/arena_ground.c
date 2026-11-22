@@ -925,10 +925,10 @@ void InitTireGroup(CarTire* tires, s16 group)
     tires[1].unk10 = group;
     tires[2].unk10 = group;
     tires[3].unk10 = group;
-    tires[0].unk40 = triggerPtGroups.pos[group].vz;
-    tires[1].unk40 = triggerPtGroups.pos[group].vz;
-    tires[2].unk40 = triggerPtGroups.pos[group].vz;
-    tires[3].unk40 = triggerPtGroups.pos[group].vz;
+    tires[0].unk40 = arena_group_height(group);
+    tires[1].unk40 = arena_group_height(group);
+    tires[2].unk40 = arena_group_height(group);
+    tires[3].unk40 = arena_group_height(group);
     tires[0].unk22 = tires[0].unk40;
     tires[1].unk22 = tires[1].unk40;
     tires[2].unk22 = tires[2].unk40;
@@ -1055,8 +1055,8 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
 
     if (tires[0].unk10 != g0) {
         previousGroup = tires[0].unk10;
-        value = triggerPtGroups.pos[g0].vz;
-        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        value = arena_group_height(g0);
+        previousHeight = arena_group_height(previousGroup);
         tireOffset = tires[0].unk40 - value;
         value -= previousHeight;
         if (value > 0) {
@@ -1074,7 +1074,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
                 }
                 tires[0].unk26 = 0;
                 tires[0].unk16 = tireOffset;
-                tires[0].unk24 = triggerPtGroups.pos[g0].vz;
+                tires[0].unk24 = arena_group_height(g0);
             }
         } else if (value < 0) {
             tires[0].unk10 = g0;
@@ -1082,7 +1082,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
             tires[0].unk14 = 0;
             tires[0].unk26 = 0;
             tires[0].unk16 = tireOffset;
-            tires[0].unk24 = triggerPtGroups.pos[g0].vz;
+            tires[0].unk24 = arena_group_height(g0);
             tires[0].unk3 = 1;
         } else {
             tires[0].unk10 = g0;
@@ -1090,8 +1090,8 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
     }
     if (tires[1].unk10 != g1) {
         previousGroup = tires[1].unk10;
-        value = triggerPtGroups.pos[g1].vz;
-        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        value = arena_group_height(g1);
+        previousHeight = arena_group_height(previousGroup);
         tireOffset = tires[1].unk40 - value;
         value -= previousHeight;
         if (value > 0) {
@@ -1109,7 +1109,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
                 }
                 tires[1].unk26 = 0;
                 tires[1].unk16 = tireOffset;
-                tires[1].unk24 = triggerPtGroups.pos[g1].vz;
+                tires[1].unk24 = arena_group_height(g1);
             }
         } else if (value < 0) {
             tires[1].unk10 = g1;
@@ -1117,7 +1117,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
             tires[1].unk14 = 0;
             tires[1].unk26 = 0;
             tires[1].unk16 = tireOffset;
-            tires[1].unk24 = triggerPtGroups.pos[g1].vz;
+            tires[1].unk24 = arena_group_height(g1);
             tires[1].unk3 = 1;
         } else {
             tires[1].unk10 = g1;
@@ -1125,8 +1125,8 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
     }
     if (tires[2].unk10 != g2) {
         previousGroup = tires[2].unk10;
-        value = triggerPtGroups.pos[g2].vz;
-        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        value = arena_group_height(g2);
+        previousHeight = arena_group_height(previousGroup);
         tireOffset = tires[2].unk40 - value;
         value -= previousHeight;
         if (value > 0) {
@@ -1144,7 +1144,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
                 }
                 tires[2].unk26 = 0;
                 tires[2].unk16 = tireOffset;
-                tires[2].unk24 = triggerPtGroups.pos[g2].vz;
+                tires[2].unk24 = arena_group_height(g2);
             }
         } else if (value < 0) {
             tires[2].unk10 = g2;
@@ -1152,7 +1152,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
             tires[2].unk14 = 0;
             tires[2].unk26 = 0;
             tires[2].unk16 = tireOffset;
-            tires[2].unk24 = triggerPtGroups.pos[g2].vz;
+            tires[2].unk24 = arena_group_height(g2);
             tires[2].unk3 = 1;
         } else {
             tires[2].unk10 = g2;
@@ -1160,8 +1160,8 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
     }
     if (tires[3].unk10 != g3) {
         previousGroup = tires[3].unk10;
-        value = triggerPtGroups.pos[g3].vz;
-        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        value = arena_group_height(g3);
+        previousHeight = arena_group_height(previousGroup);
         tireOffset = tires[3].unk40 - value;
         value -= previousHeight;
         if (value > 0) {
@@ -1179,7 +1179,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
                     }
                     tires[3].unk26 = 0;
                     tires[3].unk16 = tireOffset;
-                    tires[3].unk24 = triggerPtGroups.pos[g3].vz;
+                    tires[3].unk24 = arena_group_height(g3);
                 }
             }
         } else if (value < 0) {
@@ -1188,7 +1188,7 @@ void CalcTireCoordinates(Car* car, u8 isPlayer)
             tires[3].unk14 = 0;
             tires[3].unk26 = 0;
             tires[3].unk16 = tireOffset;
-            tires[3].unk24 = triggerPtGroups.pos[g3].vz;
+            tires[3].unk24 = arena_group_height(g3);
             tires[3].unk3 = 1;
         } else {
             tires[3].unk10 = g3;
@@ -1954,6 +1954,9 @@ void UpdateTirePositions(Car* car, u8 isPlayer)
     CarTire* tires;
     u8* flags;
     CarBounce* bounce;
+    AICar* ai;
+    s32 uaIndex;
+    s32 spd;
     s32 hi;
     s32 lo;
     s32 lim;
@@ -1962,6 +1965,7 @@ void UpdateTirePositions(Car* car, u8 isPlayer)
     s32 t;
     s32 p;
     s32 ang;
+    s32 ang2;
     s32 roll;
     s32 width;
 
@@ -1970,13 +1974,19 @@ void UpdateTirePositions(Car* car, u8 isPlayer)
         st = &PLAYER_CAR(car)->stats;
         tires = PLAYER_CAR(car)->tires;
         flags = PLAYER_CAR(car)->flags;
+        uaIndex = PLAYER_CAR(car)->uaIndex;
         bounce = &PLAYER_CAR(car)->bounce;
+        spd = 0;
+        ai = 0;
     } else {
         m = &AI_CAR(car)->motion;
         st = &AI_CAR(car)->stats;
         tires = AI_CAR(car)->tires;
         flags = AI_CAR(car)->flags;
         bounce = &AI_CAR(car)->bounce;
+        spd = AI_CAR(car)->unk38;
+        ai = AI_CAR(car);
+        uaIndex = AI_CAR(car)->uaIndex;
     }
     tires[0].unk40 = (s16)tires[0].unk24 + tires[0].unk16 + tires[0].unk18 + (s16)tires[0].unk1C
         + (s16)tires[0].unk1E + tires[0].unk20;
@@ -2081,6 +2091,31 @@ void UpdateTirePositions(Car* car, u8 isPlayer)
         hi += st->unk70 * ang / 1024;
     }
     m->pos.vz += hi;
+    if (shellGetCurrentLevel() == LEVEL6_ROOFTOPS && st->unk40 > 0 && m->pos.vz < 160) {
+        if (isPlayer == 0 && ai != 0) {
+            if (spd >= 1601) {
+                ang2 = 2048 - (GetPlayerInfo(ai->unk0E)->motion.rot.vz - ai->unk30);
+                BoundAngle(&ang2);
+                if (abs(ang2) >= 513) {
+                    spd = 8000;
+                }
+            }
+        }
+        if ((spd >= 6401 || uaIndex == UA_BOSS_CAR) && ai != 0) {
+            if (ai->unk16F == 0) {
+                ai->stats.unk40 -= 20;
+                if (ai->stats.unk40 <= 0) {
+                    ai->unk16F = 0;
+                } else {
+                    ai->unk16F = 1;
+                }
+            } else {
+                PutAICarBackOnRoof(ai);
+            }
+        } else {
+            st->unk40 = -1;
+        }
+    }
 }
 
 void CheckHealthStands(Car* car, u8 isPlayer)
@@ -5917,4 +5952,953 @@ s16 GetGroupTestPointIsIn(s32 x, s32 z, s32 y)
         group = 0;
     }
     return group;
+}
+
+void PutAICarBackOnRoof(AICar* car)
+{
+    s32 dx;
+    s32 dz;
+    s32 tp;
+
+    if (GetPlayerInfo(car->unk0E)->unkC0 == 8) {
+        tp = 7;
+    } else {
+        tp = 0x1F;
+    }
+    dx = car->motion.pos.vx - tPoints[tp].vx;
+    dz = car->motion.pos.vy - tPoints[tp].vy;
+    if (abs(dx) < 240 && abs(dz) < 240) {
+        car->stats.triggerPt = tp;
+        InitTriggerPoint(car);
+        car->stats.unk38 = 1;
+        car->unk16F = 0;
+    } else {
+        car->motion.pos.vx = SmoothValue(car->motion.pos.vx, tPoints[tp].vx, 0x62);
+        car->motion.pos.vy = SmoothValue(car->motion.pos.vy, tPoints[tp].vy, 0x62);
+        car->stats.unk38 = 0;
+        car->motion.vel.vy = 0;
+        car->motion.rotDelta.vz = 0;
+    }
+}
+
+void InitLevel6TriggerPoints(void)
+{
+    s16 i;
+    s16 j;
+
+    numTriggerPoints = 49;
+    for (i = 0; i < numTriggerPoints; i++) {
+        tPoints[i].f1A = 1;
+        tPoints[i].type = 0;
+        tPoints[i].f08 = 0;
+        for (j = 0; j < 4; j++) {
+            tPoints[i].link[j] = 0;
+            tPoints[i].dist[j] = 0x79;
+        }
+    }
+    for (i = 0; i < 15; i++) {
+        triggerPtStartPts.start[i] = i;
+        triggerPtStartPts.grp[i] = 0;
+    }
+    triggerPtStartPts.n = 6;
+    triggerPtStartPts.start[0] = 0;
+    triggerPtStartPts.start[1] = 0xA;
+    triggerPtStartPts.start[2] = 0xF;
+    triggerPtStartPts.start[3] = 0x12;
+    triggerPtStartPts.start[4] = 0x1D;
+    triggerPtStartPts.start[5] = 0x28;
+    triggerPtStartPts.grp[0] = 0;
+    triggerPtStartPts.grp[1] = 0;
+    triggerPtStartPts.grp[2] = 0;
+    triggerPtStartPts.grp[3] = 0;
+    triggerPtStartPts.grp[4] = 0;
+    triggerPtStartPts.grp[5] = 0;
+    triggerPtGroups.count = 14;
+    for (i = 0; i < triggerPtGroups.count; i++) {
+        for (j = 0; j < triggerPtGroups.count; j++) {
+            triggerPtGroups.a[i][j] = -1;
+            triggerPtGroups.b[i][j] = 0;
+            triggerPtGroups.minSpeed[i][j] = 0x3C;
+        }
+    }
+    triggerPtGroups.pos[0].vx = 0xA0;
+    triggerPtGroups.pos[0].vy = 0x50;
+    triggerPtGroups.pos[0].vz = 0x1E50;
+    triggerPtGroups.w[0] = 0x640;
+    triggerPtGroups.d[0] = 0x12C0;
+    triggerPtGroups.a[0][1] = 2;
+    triggerPtGroups.a[0][3] = 2;
+    triggerPtGroups.a[0][4] = 2;
+    triggerPtGroups.a[0][5] = 2;
+    triggerPtGroups.a[0][6] = 2;
+    triggerPtGroups.a[0][7] = 2;
+    triggerPtGroups.a[0][8] = 2;
+    triggerPtGroups.a[0][9] = 2;
+    triggerPtGroups.a[0][10] = 2;
+    triggerPtGroups.a[0][11] = 2;
+    triggerPtGroups.a[0][12] = 2;
+    triggerPtGroups.b[0][1] = 2;
+    triggerPtGroups.b[0][3] = 5;
+    triggerPtGroups.b[0][4] = 5;
+    triggerPtGroups.b[0][5] = 5;
+    triggerPtGroups.b[0][6] = 5;
+    triggerPtGroups.b[0][7] = 5;
+    triggerPtGroups.b[0][8] = 5;
+    triggerPtGroups.b[0][9] = 5;
+    triggerPtGroups.b[0][10] = 2;
+    triggerPtGroups.b[0][11] = 2;
+    triggerPtGroups.b[0][12] = 2;
+    triggerPtGroups.minSpeed[0][5] = 0x6E;
+    triggerPtGroups.pos[1].vx = 0xD20;
+    triggerPtGroups.pos[1].vy = 0x50;
+    triggerPtGroups.pos[1].vz = 0x1E50;
+    triggerPtGroups.w[1] = 0x640;
+    triggerPtGroups.d[1] = 0x12C0;
+    triggerPtGroups.a[1][0] = 4;
+    triggerPtGroups.a[1][3] = 4;
+    triggerPtGroups.a[1][4] = 4;
+    triggerPtGroups.a[1][5] = 4;
+    triggerPtGroups.a[1][6] = 4;
+    triggerPtGroups.a[1][7] = 4;
+    triggerPtGroups.a[1][8] = 4;
+    triggerPtGroups.a[1][9] = 4;
+    triggerPtGroups.a[1][10] = 4;
+    triggerPtGroups.a[1][11] = 4;
+    triggerPtGroups.a[1][12] = 4;
+    triggerPtGroups.b[1][0] = 2;
+    triggerPtGroups.b[1][3] = 5;
+    triggerPtGroups.b[1][4] = 5;
+    triggerPtGroups.b[1][5] = 5;
+    triggerPtGroups.b[1][6] = 5;
+    triggerPtGroups.b[1][7] = 2;
+    triggerPtGroups.b[1][8] = 2;
+    triggerPtGroups.b[1][9] = 2;
+    triggerPtGroups.b[1][10] = 2;
+    triggerPtGroups.b[1][11] = 2;
+    triggerPtGroups.b[1][12] = 2;
+    triggerPtGroups.minSpeed[1][5] = 0x6E;
+    triggerPtGroups.pos[2].vx = 0x6E0;
+    triggerPtGroups.pos[2].vy = 0x50;
+    triggerPtGroups.pos[2].vz = 0x1E50;
+    triggerPtGroups.w[2] = 0x640;
+    triggerPtGroups.d[2] = 0x640;
+    triggerPtGroups.a[2][3] = 0;
+    triggerPtGroups.a[2][4] = 0;
+    triggerPtGroups.a[2][5] = 0;
+    triggerPtGroups.a[2][6] = 0;
+    triggerPtGroups.a[2][7] = 0;
+    triggerPtGroups.a[2][8] = 0;
+    triggerPtGroups.a[2][9] = 0;
+    triggerPtGroups.a[2][10] = 0;
+    triggerPtGroups.a[2][11] = 0;
+    triggerPtGroups.a[2][12] = 0;
+    triggerPtGroups.b[2][3] = 1;
+    triggerPtGroups.b[2][4] = 0;
+    triggerPtGroups.b[2][5] = 1;
+    triggerPtGroups.b[2][6] = 0;
+    triggerPtGroups.b[2][7] = 0xA;
+    triggerPtGroups.b[2][8] = 0xA;
+    triggerPtGroups.b[2][9] = 0xA;
+    triggerPtGroups.b[2][10] = 0xA;
+    triggerPtGroups.b[2][11] = 0xA;
+    triggerPtGroups.b[2][12] = 0xA;
+    triggerPtGroups.minSpeed[2][10] = 0x78;
+    triggerPtGroups.pos[3].vx = 0x6E0;
+    triggerPtGroups.pos[3].vy = 0x2210;
+    triggerPtGroups.pos[3].vz = 0x1D10;
+    triggerPtGroups.w[3] = 0xC80;
+    triggerPtGroups.d[3] = 0x640;
+    triggerPtGroups.a[3][0] = 0xE;
+    triggerPtGroups.a[3][1] = 0xE;
+    triggerPtGroups.a[3][2] = 0xE;
+    triggerPtGroups.a[3][6] = 0xE;
+    triggerPtGroups.a[3][7] = 0xE;
+    triggerPtGroups.a[3][8] = 0xE;
+    triggerPtGroups.a[3][9] = 0xE;
+    triggerPtGroups.a[3][10] = 0xE;
+    triggerPtGroups.a[3][11] = 0xE;
+    triggerPtGroups.a[3][12] = 0xE;
+    triggerPtGroups.b[3][0] = 6;
+    triggerPtGroups.b[3][1] = 6;
+    triggerPtGroups.b[3][2] = 6;
+    triggerPtGroups.b[3][6] = 6;
+    triggerPtGroups.b[3][7] = 6;
+    triggerPtGroups.b[3][8] = 6;
+    triggerPtGroups.b[3][9] = 6;
+    triggerPtGroups.b[3][10] = 6;
+    triggerPtGroups.b[3][11] = 6;
+    triggerPtGroups.b[3][12] = 6;
+    triggerPtGroups.minSpeed[3][6] = 0x78;
+    triggerPtGroups.pos[4].vx = 0x3C0;
+    triggerPtGroups.pos[4].vy = 0x2080;
+    triggerPtGroups.pos[4].vz = 0x1D10;
+    triggerPtGroups.w[4] = 0x320;
+    triggerPtGroups.d[4] = 0x7D0;
+    triggerPtGroups.a[4][0] = 0xD;
+    triggerPtGroups.a[4][1] = 0xD;
+    triggerPtGroups.a[4][2] = 0xD;
+    triggerPtGroups.a[4][6] = 0xD;
+    triggerPtGroups.a[4][7] = 0xD;
+    triggerPtGroups.a[4][8] = 0xD;
+    triggerPtGroups.a[4][9] = 0xD;
+    triggerPtGroups.a[4][10] = 0xD;
+    triggerPtGroups.a[4][11] = 0xD;
+    triggerPtGroups.a[4][12] = 0xD;
+    triggerPtGroups.b[4][0] = 3;
+    triggerPtGroups.b[4][1] = 3;
+    triggerPtGroups.b[4][2] = 3;
+    triggerPtGroups.b[4][6] = 3;
+    triggerPtGroups.b[4][7] = 3;
+    triggerPtGroups.b[4][8] = 3;
+    triggerPtGroups.b[4][9] = 3;
+    triggerPtGroups.b[4][10] = 3;
+    triggerPtGroups.b[4][11] = 3;
+    triggerPtGroups.b[4][12] = 3;
+    triggerPtGroups.pos[5].vx = 0xA0;
+    triggerPtGroups.pos[5].vy = 0x1590;
+    triggerPtGroups.pos[5].vz = 0x1B30;
+    triggerPtGroups.w[5] = 0x12C0;
+    triggerPtGroups.d[5] = 0x12C0;
+    triggerPtGroups.a[5][0] = 0xC;
+    triggerPtGroups.a[5][1] = 0xC;
+    triggerPtGroups.a[5][2] = 0xC;
+    triggerPtGroups.a[5][3] = 0xC;
+    triggerPtGroups.a[5][4] = 0xC;
+    triggerPtGroups.a[5][6] = 0xC;
+    triggerPtGroups.a[5][7] = 0xC;
+    triggerPtGroups.a[5][8] = 0xC;
+    triggerPtGroups.a[5][9] = 0xC;
+    triggerPtGroups.a[5][10] = 0xC;
+    triggerPtGroups.a[5][11] = 0xC;
+    triggerPtGroups.a[5][12] = 0xC;
+    triggerPtGroups.b[5][0] = 4;
+    triggerPtGroups.b[5][1] = 4;
+    triggerPtGroups.b[5][2] = 4;
+    triggerPtGroups.b[5][3] = 4;
+    triggerPtGroups.b[5][4] = 4;
+    triggerPtGroups.b[5][6] = 4;
+    triggerPtGroups.b[5][7] = 4;
+    triggerPtGroups.b[5][8] = 4;
+    triggerPtGroups.b[5][9] = 4;
+    triggerPtGroups.b[5][10] = 4;
+    triggerPtGroups.b[5][11] = 4;
+    triggerPtGroups.b[5][12] = 4;
+    triggerPtGroups.pos[6].vx = 0x15E0;
+    triggerPtGroups.pos[6].vy = 0x1900;
+    triggerPtGroups.pos[6].vz = 0x1C20;
+    triggerPtGroups.w[6] = 0x960;
+    triggerPtGroups.d[6] = 0xFA0;
+    triggerPtGroups.a[6][0] = 0x11;
+    triggerPtGroups.a[6][1] = 0x11;
+    triggerPtGroups.a[6][2] = 0x11;
+    triggerPtGroups.a[6][3] = 0x11;
+    triggerPtGroups.a[6][4] = 0x11;
+    triggerPtGroups.a[6][5] = 0x11;
+    triggerPtGroups.a[6][7] = 0x11;
+    triggerPtGroups.a[6][8] = 0x11;
+    triggerPtGroups.a[6][9] = 0x11;
+    triggerPtGroups.a[6][10] = 0x11;
+    triggerPtGroups.a[6][11] = 0x11;
+    triggerPtGroups.a[6][12] = 0x11;
+    triggerPtGroups.b[6][0] = 8;
+    triggerPtGroups.b[6][1] = 8;
+    triggerPtGroups.b[6][2] = 8;
+    triggerPtGroups.b[6][3] = 8;
+    triggerPtGroups.b[6][4] = 8;
+    triggerPtGroups.b[6][5] = 8;
+    triggerPtGroups.b[6][7] = 8;
+    triggerPtGroups.b[6][8] = 8;
+    triggerPtGroups.b[6][9] = 8;
+    triggerPtGroups.b[6][10] = 8;
+    triggerPtGroups.b[6][11] = 8;
+    triggerPtGroups.b[6][12] = 8;
+    triggerPtGroups.minSpeed[6][5] = 0x78;
+    triggerPtGroups.pos[7].vx = 0x2594;
+    triggerPtGroups.pos[7].vy = 0xFB4;
+    triggerPtGroups.pos[7].vz = 0x1CE8;
+    triggerPtGroups.w[7] = 0x938;
+    triggerPtGroups.d[7] = 0x938;
+    triggerPtGroups.a[7][0] = 0x2B;
+    triggerPtGroups.a[7][1] = 0x2B;
+    triggerPtGroups.a[7][2] = 0x2B;
+    triggerPtGroups.a[7][3] = 0x2B;
+    triggerPtGroups.a[7][4] = 0x2B;
+    triggerPtGroups.a[7][5] = 0x2B;
+    triggerPtGroups.a[7][6] = 0x2B;
+    triggerPtGroups.a[7][8] = 0x2B;
+    triggerPtGroups.a[7][9] = 0x2B;
+    triggerPtGroups.a[7][10] = 0x2B;
+    triggerPtGroups.a[7][11] = 0x2B;
+    triggerPtGroups.a[7][12] = 0x2B;
+    triggerPtGroups.b[7][0] = 9;
+    triggerPtGroups.b[7][1] = 9;
+    triggerPtGroups.b[7][2] = 9;
+    triggerPtGroups.b[7][3] = 9;
+    triggerPtGroups.b[7][4] = 9;
+    triggerPtGroups.b[7][5] = 9;
+    triggerPtGroups.b[7][6] = 9;
+    triggerPtGroups.b[7][8] = 9;
+    triggerPtGroups.b[7][9] = 9;
+    triggerPtGroups.b[7][10] = 9;
+    triggerPtGroups.b[7][11] = 9;
+    triggerPtGroups.b[7][12] = 9;
+    triggerPtGroups.minSpeed[7][5] = 0x78;
+    triggerPtGroups.pos[8].vx = 0x15E0;
+    triggerPtGroups.pos[8].vy = 0x960;
+    triggerPtGroups.pos[8].vz = 0x1F40;
+    triggerPtGroups.w[8] = 0x28A0;
+    triggerPtGroups.d[8] = 0x1F40;
+    triggerPtGroups.a[8][0] = 0x19;
+    triggerPtGroups.a[8][1] = 0x19;
+    triggerPtGroups.a[8][2] = 0x19;
+    triggerPtGroups.a[8][3] = 0x17;
+    triggerPtGroups.a[8][4] = 0x17;
+    triggerPtGroups.a[8][5] = 0x17;
+    triggerPtGroups.a[8][6] = 0x16;
+    triggerPtGroups.a[8][7] = 0x1B;
+    triggerPtGroups.a[8][9] = 0x1B;
+    triggerPtGroups.a[8][10] = 0x18;
+    triggerPtGroups.a[8][11] = 0x1A;
+    triggerPtGroups.a[8][12] = 0x1A;
+    triggerPtGroups.b[8][0] = 1;
+    triggerPtGroups.b[8][1] = 1;
+    triggerPtGroups.b[8][2] = 1;
+    triggerPtGroups.b[8][3] = 5;
+    triggerPtGroups.b[8][4] = 5;
+    triggerPtGroups.b[8][5] = 5;
+    triggerPtGroups.b[8][6] = 6;
+    triggerPtGroups.b[8][7] = 7;
+    triggerPtGroups.b[8][9] = 7;
+    triggerPtGroups.b[8][10] = 0xA;
+    triggerPtGroups.b[8][11] = 0xB;
+    triggerPtGroups.b[8][12] = 0xB;
+    triggerPtGroups.minSpeed[8][1] = 0x78;
+    triggerPtGroups.minSpeed[8][5] = 0x78;
+    triggerPtGroups.pos[9].vx = 0x15E0;
+    triggerPtGroups.pos[9].vy = 0x960;
+    triggerPtGroups.pos[9].vz = 0x1CE8;
+    triggerPtGroups.w[9] = 0x28A0;
+    triggerPtGroups.d[9] = 0x1F40;
+    triggerPtGroups.a[9][0] = 0x2E;
+    triggerPtGroups.a[9][1] = 0x2E;
+    triggerPtGroups.a[9][2] = 0x2E;
+    triggerPtGroups.a[9][3] = 0x2E;
+    triggerPtGroups.a[9][4] = 0x2E;
+    triggerPtGroups.a[9][5] = 0x2E;
+    triggerPtGroups.a[9][6] = 0x2E;
+    triggerPtGroups.a[9][7] = 0x2B;
+    triggerPtGroups.a[9][8] = 0x2E;
+    triggerPtGroups.a[9][10] = 0x2E;
+    triggerPtGroups.a[9][11] = 0x2E;
+    triggerPtGroups.a[9][12] = 0x2E;
+    triggerPtGroups.b[9][0] = 5;
+    triggerPtGroups.b[9][1] = 5;
+    triggerPtGroups.b[9][2] = 5;
+    triggerPtGroups.b[9][3] = 5;
+    triggerPtGroups.b[9][4] = 5;
+    triggerPtGroups.b[9][5] = 5;
+    triggerPtGroups.b[9][6] = 5;
+    triggerPtGroups.b[9][7] = 7;
+    triggerPtGroups.b[9][8] = 5;
+    triggerPtGroups.b[9][10] = 5;
+    triggerPtGroups.b[9][11] = 5;
+    triggerPtGroups.b[9][12] = 5;
+    triggerPtGroups.minSpeed[9][1] = 0x78;
+    triggerPtGroups.minSpeed[9][2] = 0x78;
+    triggerPtGroups.minSpeed[9][3] = 0x78;
+    triggerPtGroups.minSpeed[9][4] = 0x78;
+    triggerPtGroups.minSpeed[9][5] = 0x78;
+    triggerPtGroups.minSpeed[9][6] = 0x78;
+    triggerPtGroups.minSpeed[9][8] = 0x78;
+    triggerPtGroups.minSpeed[9][10] = 0x78;
+    triggerPtGroups.minSpeed[9][11] = 0x78;
+    triggerPtGroups.minSpeed[9][12] = 0x78;
+    triggerPtGroups.pos[10].vx = 0x15E0;
+    triggerPtGroups.pos[10].vy = 0;
+    triggerPtGroups.pos[10].vz = 0x1D60;
+    triggerPtGroups.w[10] = 0x1900;
+    triggerPtGroups.d[10] = 0x960;
+    triggerPtGroups.a[10][0] = 0x25;
+    triggerPtGroups.a[10][1] = 0x25;
+    triggerPtGroups.a[10][2] = 0x25;
+    triggerPtGroups.a[10][3] = 0x25;
+    triggerPtGroups.a[10][4] = 0x25;
+    triggerPtGroups.a[10][5] = 0x25;
+    triggerPtGroups.a[10][6] = 0x25;
+    triggerPtGroups.a[10][7] = 0x25;
+    triggerPtGroups.a[10][8] = 0x25;
+    triggerPtGroups.a[10][9] = 0x25;
+    triggerPtGroups.a[10][11] = 0x25;
+    triggerPtGroups.a[10][12] = 0x25;
+    triggerPtGroups.b[10][0] = 0xB;
+    triggerPtGroups.b[10][1] = 0xB;
+    triggerPtGroups.b[10][2] = 0xB;
+    triggerPtGroups.b[10][3] = 0xB;
+    triggerPtGroups.b[10][4] = 0xB;
+    triggerPtGroups.b[10][5] = 0xB;
+    triggerPtGroups.b[10][6] = 0xB;
+    triggerPtGroups.b[10][7] = 0xB;
+    triggerPtGroups.b[10][8] = 0xB;
+    triggerPtGroups.b[10][9] = 0xB;
+    triggerPtGroups.b[10][11] = 0xB;
+    triggerPtGroups.b[10][12] = 0xB;
+    triggerPtGroups.pos[11].vx = 0x2EE0;
+    triggerPtGroups.pos[11].vy = 0;
+    triggerPtGroups.pos[11].vz = 0x1E50;
+    triggerPtGroups.w[11] = 0xAF0;
+    triggerPtGroups.d[11] = 0x960;
+    triggerPtGroups.a[11][0] = 0x22;
+    triggerPtGroups.a[11][1] = 0x22;
+    triggerPtGroups.a[11][2] = 0x22;
+    triggerPtGroups.a[11][3] = 0x22;
+    triggerPtGroups.a[11][4] = 0x22;
+    triggerPtGroups.a[11][5] = 0x22;
+    triggerPtGroups.a[11][6] = 0x22;
+    triggerPtGroups.a[11][7] = 0x22;
+    triggerPtGroups.a[11][8] = 0x22;
+    triggerPtGroups.a[11][9] = 0x22;
+    triggerPtGroups.a[11][12] = 0x22;
+    triggerPtGroups.b[11][0] = 8;
+    triggerPtGroups.b[11][1] = 8;
+    triggerPtGroups.b[11][2] = 8;
+    triggerPtGroups.b[11][3] = 8;
+    triggerPtGroups.b[11][4] = 8;
+    triggerPtGroups.b[11][5] = 8;
+    triggerPtGroups.b[11][6] = 8;
+    triggerPtGroups.b[11][7] = 8;
+    triggerPtGroups.b[11][8] = 8;
+    triggerPtGroups.b[11][9] = 8;
+    triggerPtGroups.b[11][12] = 0xC;
+    triggerPtGroups.pos[12].vx = 0x39D1;
+    triggerPtGroups.pos[12].vy = 0;
+    triggerPtGroups.pos[12].vz = 0x1E50;
+    triggerPtGroups.w[12] = 0x4B0;
+    triggerPtGroups.d[12] = 0x960;
+    triggerPtGroups.a[12][0] = 0x30;
+    triggerPtGroups.a[12][1] = 0x30;
+    triggerPtGroups.a[12][2] = 0x30;
+    triggerPtGroups.a[12][3] = 0x30;
+    triggerPtGroups.a[12][4] = 0x30;
+    triggerPtGroups.a[12][5] = 0x30;
+    triggerPtGroups.a[12][6] = 0x30;
+    triggerPtGroups.a[12][7] = 0x30;
+    triggerPtGroups.a[12][8] = 0x30;
+    triggerPtGroups.a[12][9] = 0x30;
+    triggerPtGroups.a[12][11] = 0x30;
+    triggerPtGroups.b[12][0] = 8;
+    triggerPtGroups.b[12][1] = 8;
+    triggerPtGroups.b[12][2] = 8;
+    triggerPtGroups.b[12][3] = 8;
+    triggerPtGroups.b[12][4] = 8;
+    triggerPtGroups.b[12][5] = 8;
+    triggerPtGroups.b[12][6] = 8;
+    triggerPtGroups.b[12][7] = 8;
+    triggerPtGroups.b[12][8] = 8;
+    triggerPtGroups.b[12][9] = 8;
+    triggerPtGroups.b[12][11] = 0xB;
+    triggerPtGroups.pos[13].vx = -0x1F40;
+    triggerPtGroups.pos[13].vy = -0x1F40;
+    triggerPtGroups.pos[13].vz = 0;
+    triggerPtGroups.w[13] = 0x7D00;
+    triggerPtGroups.d[13] = 0x6720;
+
+    Init2ndPartOfLevel6TriggerPts();
+}
+
+void Init2ndPartOfLevel6TriggerPts(void)
+{
+    tPoints[0].vx = 0xA00;
+    tPoints[0].vy = 0x370;
+    tPoints[0].f1A = 4;
+    tPoints[0].link[0] = 1;
+    tPoints[0].link[1] = 2;
+    tPoints[0].link[2] = 4;
+    tPoints[0].link[3] = 0x25;
+    tPoints[0].dist[3] = 0x4F;
+    tPoints[0].type = 2;
+    tPoints[1].vx = 0x320;
+    tPoints[1].vy = 0x320;
+    tPoints[1].f1A = 3;
+    tPoints[1].link[0] = 0;
+    tPoints[1].link[1] = 2;
+    tPoints[1].link[2] = 3;
+    tPoints[1].dist[0] = 0x4F;
+    tPoints[1].dist[1] = 0x4F;
+    tPoints[1].type = 0;
+    tPoints[2].vx = 0x3C0;
+    tPoints[2].vy = 0x640;
+    tPoints[2].f1A = 4;
+    tPoints[2].link[0] = 0;
+    tPoints[2].link[1] = 1;
+    tPoints[2].link[2] = 3;
+    tPoints[2].link[3] = 0xA;
+    tPoints[2].dist[0] = 0x4F;
+    tPoints[2].dist[1] = 0x4F;
+    tPoints[2].dist[2] = 0x4F;
+    tPoints[2].dist[3] = 0x4F;
+    tPoints[2].type = 0;
+    tPoints[3].vx = 0x3C0;
+    tPoints[3].vy = 0x1040;
+    tPoints[3].f1A = 2;
+    tPoints[3].link[0] = 1;
+    tPoints[3].link[1] = 2;
+    tPoints[3].type = 0;
+    tPoints[4].vx = 0x1040;
+    tPoints[4].vy = 0x640;
+    tPoints[4].f1A = 4;
+    tPoints[4].link[0] = 0;
+    tPoints[4].link[1] = 5;
+    tPoints[4].link[2] = 6;
+    tPoints[4].link[3] = 0xC;
+    tPoints[4].dist[0] = 0x4F;
+    tPoints[4].dist[1] = 0x4F;
+    tPoints[4].dist[2] = 0x4F;
+    tPoints[4].dist[3] = 0x4F;
+    tPoints[4].type = 1;
+    tPoints[5].vx = 0x1040;
+    tPoints[5].vy = 0x320;
+    tPoints[5].f1A = 3;
+    tPoints[5].link[0] = 0;
+    tPoints[5].link[1] = 4;
+    tPoints[5].link[2] = 6;
+    tPoints[5].dist[0] = 0x4F;
+    tPoints[5].dist[1] = 0x4F;
+    tPoints[5].dist[2] = 0x4F;
+    tPoints[5].type = 1;
+    tPoints[6].vx = 0x1040;
+    tPoints[6].vy = 0x1090;
+    tPoints[6].f1A = 2;
+    tPoints[6].link[0] = 4;
+    tPoints[6].link[1] = 5;
+    tPoints[6].type = 1;
+    tPoints[7].vx = 0x230;
+    tPoints[7].vy = 0x2580;
+    tPoints[7].f1A = 1;
+    tPoints[7].link[0] = 8;
+    tPoints[7].type = 5;
+    tPoints[8].vx = 0x230;
+    tPoints[8].vy = 0x1DB0;
+    tPoints[8].f1A = 3;
+    tPoints[8].link[0] = 7;
+    tPoints[8].link[1] = 9;
+    tPoints[8].link[2] = 0xB;
+    tPoints[8].type = 5;
+    tPoints[9].vx = 0x4B0;
+    tPoints[9].vy = 0x18B0;
+    tPoints[9].f1A = 3;
+    tPoints[9].link[0] = 8;
+    tPoints[9].link[1] = 0xB;
+    tPoints[9].link[2] = 0xC;
+    tPoints[9].type = 5;
+    tPoints[10].vx = 0x500;
+    tPoints[10].vy = 0x1A90;
+    tPoints[10].f1A = 2;
+    tPoints[10].link[0] = 0xB;
+    tPoints[10].link[1] = 0x2F;
+    tPoints[10].type = 5;
+    tPoints[11].vx = 0x1040;
+    tPoints[11].vy = 0x17D0;
+    tPoints[11].f1A = 4;
+    tPoints[11].link[0] = 8;
+    tPoints[11].link[1] = 0xA;
+    tPoints[11].link[2] = 0xC;
+    tPoints[11].link[3] = 0x2F;
+    tPoints[11].dist[2] = 0x4F;
+    tPoints[11].type = 5;
+    tPoints[12].vx = 0x1220;
+    tPoints[12].vy = 0x2120;
+    tPoints[12].f1A = 4;
+    tPoints[12].link[0] = 0xA;
+    tPoints[12].link[1] = 0xB;
+    tPoints[12].link[2] = 0xD;
+    tPoints[12].link[3] = 0x2F;
+    tPoints[12].dist[2] = 0x4F;
+    tPoints[12].type = 5;
+    tPoints[13].vx = 0x5A0;
+    tPoints[13].vy = 0x2148;
+    tPoints[13].f1A = 2;
+    tPoints[13].link[0] = 0xC;
+    tPoints[13].link[1] = 0xE;
+    tPoints[13].dist[0] = 0x4F;
+    tPoints[13].dist[1] = 0x4F;
+    tPoints[13].dist[2] = 0x4F;
+    tPoints[13].type = 4;
+    tPoints[14].vx = 0x7D0;
+    tPoints[14].vy = 0x2580;
+    tPoints[14].f1A = 4;
+    tPoints[14].link[0] = 0xD;
+    tPoints[14].link[1] = 0xF;
+    tPoints[14].link[2] = 0x10;
+    tPoints[14].link[3] = 0x11;
+    tPoints[14].dist[0] = 0x4F;
+    tPoints[14].type = 3;
+    tPoints[15].vx = 0xD20;
+    tPoints[15].vy = 0x2580;
+    tPoints[15].f1A = 2;
+    tPoints[15].link[0] = 0xE;
+    tPoints[15].link[1] = 0x10;
+    tPoints[15].type = 3;
+    tPoints[16].vx = 0x1090;
+    tPoints[16].vy = 0x24E0;
+    tPoints[16].f1A = 2;
+    tPoints[16].link[0] = 0xE;
+    tPoints[16].link[1] = 0xF;
+    tPoints[16].type = 3;
+    tPoints[17].vx = 0x1E50;
+    tPoints[17].vy = 0x26C0;
+    tPoints[17].f1A = 3;
+    tPoints[17].link[0] = 0x12;
+    tPoints[17].link[1] = 0x13;
+    tPoints[17].link[2] = 0x16;
+    tPoints[17].dist[0] = 0x4F;
+    tPoints[17].dist[1] = 0x4F;
+    tPoints[17].dist[2] = 0x4F;
+    tPoints[17].type = 6;
+    tPoints[18].vx = 0x1900;
+    tPoints[18].vy = 0x1C20;
+    tPoints[18].f1A = 2;
+    tPoints[18].link[0] = 0x11;
+    tPoints[18].link[1] = 0x14;
+    tPoints[18].type = 6;
+    tPoints[19].vx = 0x18B0;
+    tPoints[19].vy = 0x1BD0;
+    tPoints[19].f1A = 2;
+    tPoints[19].link[0] = 0x11;
+    tPoints[19].link[1] = 0x14;
+    tPoints[19].type = 6;
+    tPoints[20].vx = 0x18B0;
+    tPoints[20].vy = 0x25D0;
+    tPoints[20].f1A = 3;
+    tPoints[20].link[0] = 0x11;
+    tPoints[20].link[1] = 0x13;
+    tPoints[20].link[2] = 0x15;
+    tPoints[20].type = 6;
+    tPoints[21].vx = 0x1B80;
+    tPoints[21].vy = 0x1BD0;
+    tPoints[21].f1A = 1;
+    tPoints[21].link[0] = 0x14;
+    tPoints[21].type = 6;
+    tPoints[22].vx = 0x1E78;
+    tPoints[22].vy = 0x1770;
+    tPoints[22].f1A = 4;
+    tPoints[22].link[0] = 0x11;
+    tPoints[22].link[1] = 0x17;
+    tPoints[22].link[2] = 0x19;
+    tPoints[22].link[3] = 0x1D;
+    tPoints[22].dist[0] = 0x4F;
+    tPoints[22].dist[1] = 0x4F;
+    tPoints[22].dist[2] = 0x4F;
+    tPoints[22].dist[3] = 0x4F;
+    tPoints[22].type = 8;
+    tPoints[23].vx = 0x1900;
+    tPoints[23].vy = 0x16D0;
+    tPoints[23].f1A = 4;
+    tPoints[23].link[0] = 0xA;
+    tPoints[23].link[1] = 0x16;
+    tPoints[23].link[2] = 0x18;
+    tPoints[23].link[3] = 0x19;
+    tPoints[23].dist[0] = 0x4F;
+    tPoints[23].type = 8;
+    tPoints[24].vx = 0x1860;
+    tPoints[24].vy = 0xBB8;
+    tPoints[24].f1A = 4;
+    tPoints[24].link[0] = 0x16;
+    tPoints[24].link[1] = 0x19;
+    tPoints[24].link[2] = 0x1B;
+    tPoints[24].link[3] = 0x26;
+    tPoints[24].type = 8;
+    tPoints[25].vx = 0x2260;
+    tPoints[25].vy = 0x1090;
+    tPoints[25].f1A = 4;
+    tPoints[25].link[0] = 6;
+    tPoints[25].link[1] = 0x16;
+    tPoints[25].link[2] = 0x1B;
+    tPoints[25].link[3] = 0x1E;
+    tPoints[25].dist[0] = 0x4F;
+    tPoints[25].type = 8;
+    tPoints[26].vx = 0x3908;
+    tPoints[26].vy = 0xAF0;
+    tPoints[26].f1A = 4;
+    tPoints[26].link[0] = 0x1B;
+    tPoints[26].link[1] = 0x1C;
+    tPoints[26].link[2] = 0x21;
+    tPoints[26].link[3] = 0x22;
+    tPoints[26].dist[3] = 0x4F;
+    tPoints[26].type = 8;
+    tPoints[27].vx = 0x28A0;
+    tPoints[27].vy = 0xC80;
+    tPoints[27].f1A = 4;
+    tPoints[27].link[0] = 0x19;
+    tPoints[27].link[1] = 0x1A;
+    tPoints[27].link[2] = 0x1C;
+    tPoints[27].link[3] = 0x29;
+    tPoints[27].type = 8;
+    tPoints[28].vx = 0x36B0;
+    tPoints[28].vy = 0x12C0;
+    tPoints[28].f1A = 4;
+    tPoints[28].link[0] = 0x1A;
+    tPoints[28].link[1] = 0x1B;
+    tPoints[28].link[2] = 0x1D;
+    tPoints[28].link[3] = 0x21;
+    tPoints[28].type = 8;
+    tPoints[29].vx = 0x2A30;
+    tPoints[29].vy = 0x2260;
+    tPoints[29].f1A = 4;
+    tPoints[29].link[0] = 0x16;
+    tPoints[29].link[1] = 0x1C;
+    tPoints[29].link[2] = 0x1E;
+    tPoints[29].link[3] = 0x21;
+    tPoints[29].type = 8;
+    tPoints[30].vx = 0x2260;
+    tPoints[30].vy = 0x2580;
+    tPoints[30].f1A = 3;
+    tPoints[30].link[0] = 0x1D;
+    tPoints[30].link[1] = 0x1F;
+    tPoints[30].link[2] = 0x21;
+    tPoints[30].type = 8;
+    tPoints[31].vx = 0x3200;
+    tPoints[31].vy = 0x2620;
+    tPoints[31].f1A = 3;
+    tPoints[31].link[0] = 0x1D;
+    tPoints[31].link[1] = 0x1E;
+    tPoints[31].link[2] = 0x20;
+    tPoints[31].type = 8;
+    tPoints[32].vx = 0x3B60;
+    tPoints[32].vy = 0x2620;
+    tPoints[32].f1A = 2;
+    tPoints[32].link[0] = 0x1F;
+    tPoints[32].link[1] = 0x21;
+    tPoints[32].type = 8;
+    tPoints[33].vx = 0x3B60;
+    tPoints[33].vy = 0x1C20;
+    tPoints[33].f1A = 3;
+    tPoints[33].link[0] = 0x1C;
+    tPoints[33].link[1] = 0x1D;
+    tPoints[33].link[2] = 0x20;
+    tPoints[33].type = 8;
+    tPoints[34].vx = 0x3908;
+    tPoints[34].vy = 0x280;
+    tPoints[34].f1A = 3;
+    tPoints[34].link[0] = 0x1A;
+    tPoints[34].link[1] = 0x24;
+    tPoints[34].link[2] = 0x30;
+    tPoints[34].dist[0] = 0x4F;
+    tPoints[34].type = 0xB;
+    tPoints[35].vx = 0x3110;
+    tPoints[35].vy = 0x258;
+    tPoints[35].f1A = 3;
+    tPoints[35].link[0] = 0x22;
+    tPoints[35].link[1] = 0x24;
+    tPoints[35].link[2] = 0x26;
+    tPoints[35].type = 0xB;
+    tPoints[36].vx = 0x3110;
+    tPoints[36].vy = 0x898;
+    tPoints[36].f1A = 3;
+    tPoints[36].link[0] = 0x22;
+    tPoints[36].link[1] = 0x23;
+    tPoints[36].link[2] = 0x25;
+    tPoints[36].dist[2] = 0x4F;
+    tPoints[36].type = 0xB;
+    tPoints[37].vx = 0x28A0;
+    tPoints[37].vy = 0x870;
+    tPoints[37].f1A = 4;
+    tPoints[37].link[0] = 0x24;
+    tPoints[37].link[1] = 0x26;
+    tPoints[37].link[2] = 0x27;
+    tPoints[37].link[3] = 0x28;
+    tPoints[37].dist[0] = 0x4F;
+    tPoints[37].type = 0xA;
+    tPoints[38].vx = 0x1F40;
+    tPoints[38].vy = 0x320;
+    tPoints[38].f1A = 3;
+    tPoints[38].link[0] = 0x25;
+    tPoints[38].link[1] = 0x27;
+    tPoints[38].link[2] = 0x28;
+    tPoints[38].type = 0xA;
+    tPoints[39].vx = 0x28A0;
+    tPoints[39].vy = 0x320;
+    tPoints[39].f1A = 3;
+    tPoints[39].link[0] = 0x25;
+    tPoints[39].link[1] = 0x26;
+    tPoints[39].link[2] = 0x28;
+    tPoints[39].type = 0xA;
+    tPoints[40].vx = 0x1900;
+    tPoints[40].vy = 0x690;
+    tPoints[40].f1A = 3;
+    tPoints[40].link[0] = 0x25;
+    tPoints[40].link[1] = 0x26;
+    tPoints[40].link[2] = 0x27;
+    tPoints[40].type = 0xA;
+    tPoints[41].vx = 0x2A30;
+    tPoints[41].vy = 0x1450;
+    tPoints[41].f1A = 1;
+    tPoints[41].link[0] = 0x2A;
+    tPoints[41].type = 7;
+    tPoints[42].vx = 0x2BC0;
+    tPoints[42].vy = 0x17D0;
+    tPoints[42].f1A = 4;
+    tPoints[42].link[0] = 0xB;
+    tPoints[42].link[1] = 0x29;
+    tPoints[42].link[2] = 0x2B;
+    tPoints[42].link[3] = 0x2C;
+    tPoints[42].type = 7;
+    tPoints[43].vx = 0x2620;
+    tPoints[43].vy = 0x17D0;
+    tPoints[43].f1A = 3;
+    tPoints[43].link[0] = 0xB;
+    tPoints[43].link[1] = 0x2A;
+    tPoints[43].link[2] = 0x2C;
+    tPoints[43].dist[0] = 0x4F;
+    tPoints[43].type = 7;
+    tPoints[44].vx = 0x2260;
+    tPoints[44].vy = 0x17D0;
+    tPoints[44].f1A = 1;
+    tPoints[44].link[0] = 0xB;
+    tPoints[44].link[1] = 0x2B;
+    tPoints[44].link[2] = 0x2D;
+    tPoints[44].dist[0] = 0x4F;
+    tPoints[44].type = 9;
+    tPoints[45].vx = 0x1DB0;
+    tPoints[45].vy = 0x17D0;
+    tPoints[45].f1A = 1;
+    tPoints[45].link[0] = 0xB;
+    tPoints[45].link[1] = 0x2C;
+    tPoints[45].link[2] = 0x2E;
+    tPoints[45].dist[0] = 0x4F;
+    tPoints[45].type = 9;
+    tPoints[46].vx = 0x1900;
+    tPoints[46].vy = 0x17D0;
+    tPoints[46].f1A = 1;
+    tPoints[46].link[0] = 0xB;
+    tPoints[46].link[1] = 0x2D;
+    tPoints[46].dist[0] = 0x4F;
+    tPoints[46].type = 9;
+    tPoints[47].vx = 0xFA0;
+    tPoints[47].vy = 0x1C20;
+    tPoints[47].f1A = 3;
+    tPoints[47].link[0] = 0xA;
+    tPoints[47].link[1] = 0xB;
+    tPoints[47].link[2] = 0xC;
+    tPoints[47].dist[2] = 0x4F;
+    tPoints[47].type = 5;
+    tPoints[48].vx = 0x3CF0;
+    tPoints[48].vy = 0x7D0;
+    tPoints[48].f1A = 1;
+    tPoints[48].link[0] = 0x22;
+    tPoints[48].dist[2] = 0x4F;
+    tPoints[48].type = 0xC;
+}
+
+void InitLevel6Bridges(void)
+{
+    s16 i;
+    s16 j;
+
+    numBridges = 0xB;
+    numCheckBridges = 0xA;
+
+    for (i = 0; i <= numBridges; i++) {
+        bridges[i].unk08 = 0;
+        bridges[i].unk0A = 10;
+        for (j = 0; j < 4; j++) {
+            bridges[i].obj[j] = -1;
+        }
+    }
+
+    bridges[0].rampDir = 3;
+    bridges[0].minX = 0x6E1;
+    bridges[0].minZ = 0x2080;
+    bridges[0].y0 = 0x1E0;
+    bridges[0].y1 = 0;
+    bridges[0].extentX = 0x960;
+    bridges[0].extentZ = 0x190;
+
+    bridges[1].rampDir = 1;
+    bridges[1].minX = 0x1DB0;
+    bridges[1].minZ = 0x1900;
+    bridges[1].y0 = 0x320;
+    bridges[1].y1 = 0;
+    bridges[1].extentX = 0x190;
+    bridges[1].extentZ = 0xC80;
+
+    bridges[2].rampDir = 2;
+    bridges[2].minX = 0x2A30;
+    bridges[2].minZ = 0x7D0;
+    bridges[2].y0 = 0;
+    bridges[2].y1 = 0xF0;
+    bridges[2].extentX = 0x4B0;
+    bridges[2].extentZ = 0x190;
+
+    bridges[3].rampDir = 0;
+    bridges[3].minX = 0x3840;
+    bridges[3].minZ = 0x4AF;
+    bridges[3].y0 = 0;
+    bridges[3].y1 = 0xF0;
+    bridges[3].extentX = 0x190;
+    bridges[3].extentZ = 0x4B0;
+
+    bridges[4].rampDir = 2;
+    bridges[4].minX = 0x29A0;
+    bridges[4].minZ = 0x1080;
+    bridges[4].y0 = 0;
+    bridges[4].y1 = 0x18;
+    bridges[4].extentX = 0x48;
+    bridges[4].extentZ = 0x90;
+    bridges[4].obj[0] = 0xA;
+
+    bridges[5].rampDir = 3;
+    bridges[5].minX = 0x2A78;
+    bridges[5].minZ = 0x1080;
+    bridges[5].y0 = 0x18;
+    bridges[5].y1 = 0;
+    bridges[5].extentX = 0x48;
+    bridges[5].extentZ = 0x90;
+    bridges[5].obj[0] = 0xA;
+
+    bridges[6].rampDir = 3;
+    bridges[6].minX = 0x1638;
+    bridges[6].minZ = 0xB18;
+    bridges[6].y0 = 0x28;
+    bridges[6].y1 = 0;
+    bridges[6].extentX = 0xD0;
+    bridges[6].extentZ = 0xA0;
+    bridges[6].obj[0] = 7;
+
+    bridges[7].rampDir = 2;
+    bridges[7].minX = 0x1608;
+    bridges[7].minZ = 0xB18;
+    bridges[7].y0 = 0;
+    bridges[7].y1 = 0x28;
+    bridges[7].extentX = 0x30;
+    bridges[7].extentZ = 0xA0;
+    bridges[7].obj[0] = 6;
+
+    bridges[8].rampDir = 3;
+    bridges[8].minX = 0x1660;
+    bridges[8].minZ = 0x1E0;
+    bridges[8].y0 = 0x30;
+    bridges[8].y1 = 0;
+    bridges[8].extentX = 0xD0;
+    bridges[8].extentZ = 0xA0;
+    bridges[8].obj[0] = 9;
+
+    bridges[9].rampDir = 2;
+    bridges[9].minX = 0x1630;
+    bridges[9].minZ = 0x1E0;
+    bridges[9].y0 = 0;
+    bridges[9].y1 = 0x30;
+    bridges[9].extentX = 0x30;
+    bridges[9].extentZ = 0xA0;
+    bridges[9].obj[0] = 8;
+
+    bridges[10].rampDir = 2;
+    bridges[10].minX = 0x29E8;
+    bridges[10].minZ = 0x1080;
+    bridges[10].y0 = 0x18;
+    bridges[10].y1 = 0x18;
+    bridges[10].extentX = 0x90;
+    bridges[10].extentZ = 0x90;
+    bridges[10].obj[0] = 4;
+    bridges[10].obj[1] = 5;
+    bridges[10].unk08 = 1;
 }

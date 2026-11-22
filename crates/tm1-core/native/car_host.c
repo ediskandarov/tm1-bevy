@@ -187,6 +187,11 @@ void tm1_bind_level(int level)
         InitLevel5Bridges();
         InitLevel5Curbs();
         InitLevel5PotHoles();
+    } else if (level == LEVEL6_ROOFTOPS) {
+        InitLevel6TriggerPoints();
+        InitLevel6Bridges();
+        numCurbs = 0;
+        numPotHoles = numCheckPotHoles = 0;
     } else {
         InitLevel1TriggerPoints();
         InitLevel1Bridges();
@@ -247,7 +252,7 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     SetBounce(&car, 2, 2, 0, 1);
     *seed = random_state;
     InitTireInfo(car.tires);
-    InitTireGroup(car.tires, 0);
+    InitTireGroup(car.tires, current_level == LEVEL6_ROOFTOPS ? 11 : 0);
     uaPadInit(&car, 1);
     car.stats.unk4C = 1;
     InitControlPad(car.skid);
@@ -277,6 +282,11 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
         car.motion.pos.vx = -0x28a0;
         car.motion.pos.vy = -0x11d0;
         car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
+    } else if (current_level == LEVEL6_ROOFTOPS) {
+        car.motion.pos.vx = 0x3cd8;
+        car.motion.pos.vy = 0x250;
+        car.motion.pos.vz = 0x1e50;
+        car.motion.rot.vz = car.motion.rot2.vz = -0x1c7;
     } else if (current_level == LEVEL5_CYBURBIA) {
         car.motion.pos.vx = 0x1c20;
         car.motion.pos.vy = 0x2ee0;
@@ -318,7 +328,7 @@ void tm1_drive_step(u8* state, u8* opponent, u16 buttons, s16 fields, u32 frame,
     memcpy(&car.flags[30], &closest, 2);
     if (car.flags[16] && (s16)(car.stats.unk18 -= fields) <= 0)
         car.flags[16] = 0;
-    car.flags[25] = !(car.flags[10] || car.flags[23] || car.flags[0]);
+    car.flags[25] = current_level != LEVEL6_ROOFTOPS && !(car.flags[10] || car.flags[23] || car.flags[0]);
     s32 speed = car.motion.vel.vy;
     UpdateBearing(&car, 1);
     CarUpdateDeltas(&car, 1);
@@ -445,7 +455,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
         car.motion.mat = car.motion.mat2;
         InitTireInfo(car.tires);
-        InitTireGroup(car.tires, 0);
+        InitTireGroup(car.tires, current_level == LEVEL6_ROOFTOPS ? 8 : 0);
         car.unk01 = 2;
         car.stats.triggerPt = reserve_ai_start(spawn_points);
         InitTriggerPoint(&car);

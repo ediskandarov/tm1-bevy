@@ -37,7 +37,7 @@ impl Reference {
         let opponent = match level {
             Level::Arena => Vehicle::Outlaw,
             Level::Warehouse => vehicle.warehouse_opponents()[0],
-            Level::Freeway | Level::CityPark | Level::Cyburbia => {
+            Level::Freeway | Level::CityPark | Level::Cyburbia | Level::Rooftops => {
                 level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1)[0]
             }
         };
@@ -219,6 +219,7 @@ fn group_spawn_original() {
         (Level::Freeway, 0x801268f8),
         (Level::CityPark, 0x80127694),
         (Level::Cyburbia, 0x801281b8),
+        (Level::Rooftops, 0x8012b5a4),
     ] {
         put(&mut cpu, 0x8018c3b4, level as u32);
         for vehicle in Vehicle::ROSTER {
@@ -986,20 +987,7 @@ fn city_park_slick_drive_matches_retail() {
             ..Default::default()
         };
         let fields = [3u8, 4, 5][step % 3];
-        r.cpu.call(0x800ffb98, &[2, u32::from(input.ps1_buttons())]);
-        r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
-        r.cpu
-            .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
-        put(&mut r.cpu, 0x8017023c, step as u32);
-        r.cpu.call(0x801125ac, &[PLAYER]);
-        r.cpu.call_until(0x8011125c, &[PLAYER], 0x801115c0);
-        r.player.step(input, fields);
-        let start = (PLAYER & 0x1fffff) as usize;
-        assert_eq!(
-            &r.player.state[..],
-            &r.cpu.ram[start..start + r.player.state.len()],
-            "slick drive step {step}"
-        );
+        compare_drive_step(&mut r, step, input, fields);
         let slick = r.player.state[0xa0 + 13] != 0;
         if entered && !slick {
             left = true;
@@ -1011,6 +999,61 @@ fn city_park_slick_drive_matches_retail() {
         "expected to cross slick, ended at {:?}",
         r.player.position()
     );
+}
+
+fn compare_drive_step(r: &mut Reference, step: usize, input: Input, fields: u8) {
+    r.cpu.call(0x800ffb98, &[2, u32::from(input.ps1_buttons())]);
+    r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
+    r.cpu
+        .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
+    put(&mut r.cpu, 0x8017023c, step as u32);
+    r.cpu.call(0x801125ac, &[PLAYER]);
+    r.cpu.call_until(0x8011125c, &[PLAYER], 0x801115c0);
+    r.player.step(input, fields);
+    let start = (PLAYER & 0x1fffff) as usize;
+    assert_eq!(
+        &r.player.state[..],
+        &r.cpu.ram[start..start + r.player.state.len()],
+        "drive step {step}"
+    );
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn rooftop_edge_fall_matches_retail() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
+    vec3(&mut r.player.state, 0x388, [15400, 1800, 7760]);
+    vec3(&mut r.player.state, 0x3a0, [0, 0, 0]);
+    vec3(&mut r.player.state, 0x3b8, [0, 0, 0]);
+    r.sync();
+    put(&mut r.cpu, 0x8018c3b4, Level::Rooftops as u32);
+    put(&mut r.cpu, 0x8018c34c, 1);
+    for entry in [0x8012b5a4, 0x8013026c, 0x80130a7c, 0x801312ec, 0x80131368] {
+        r.cpu.call(entry, &[]);
+    }
+    for entry in [0x80108378, 0x801083b0, 0x801417d0, 0x801466b0, 0x80146930] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let mut airborne = false;
+    for step in 1..=300 {
+        compare_drive_step(
+            &mut r,
+            step,
+            Input {
+                accelerate: true,
+                ..Default::default()
+            },
+            3,
+        );
+        let h = r.player.position()[2];
+        airborne |= h < 7000 && h >= 160 && r.player.health().0 > 0;
+        if r.player.health().0 <= 0 {
+            assert!(airborne && h < 160);
+            println!("Rooftops player fell from 7760 to {h} and died at step {step}");
+            return;
+        }
+    }
+    panic!("expected a fatal fall, ended at {:?}", r.player.position());
 }
 
 #[test]
@@ -1110,6 +1153,15 @@ fn cyburbia_visibility_and_ground_groups_match_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn rooftops_encounter_original() {
+    for player in Vehicle::ROSTER {
+        println!("Rooftops retail encounter with {player:?}");
+        compare_encounter(player, 20, Level::Rooftops);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn cyburbia_encounter_original() {
     for player in Vehicle::ROSTER {
         println!("Cyburbia retail encounter with {player:?}");
@@ -1144,6 +1196,7 @@ fn database_and_opponents_match_retail_shell() {
         (Level::Freeway, 0x801717b4),
         (Level::CityPark, 0x801717cc),
         (Level::Cyburbia, 0x801717e4),
+        (Level::Rooftops, 0x801717fc),
     ] {
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         let start = (r.cpu.word(0x8017187c + 4 * level as u32) & 0x1fffff) as usize;
@@ -1254,6 +1307,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     r.police.state[0x40] = 0;
     for entry in match level {
         Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::Rooftops => [0x8012b5a4, 0x8013026c, 0x80130a7c, 0x801312ec, 0x80131368],
         Level::Cyburbia => [0x801281b8, 0x8012ed70, 0x801309c8, 0x80130ee4, 0x8013135c],
         Level::CityPark => [0x80127694, 0x8012da2c, 0x80130938, 0x80130c20, 0x8013131c],
         Level::Freeway => [0x801268f8, 0x8012d3e0, 0x80130884, 0x80130c14, 0x80131310],
@@ -1268,8 +1322,14 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     r.cpu.put(0x8018c378, &(level as u16 + 1).to_le_bytes());
-    r.cpu.put(0x8018c34c, &[u8::from(level == Level::Cyburbia)]);
-    r.cpu.put(0x8018c374, &[u8::from(level != Level::Arena)]);
+    r.cpu.put(
+        0x8018c34c,
+        &[u8::from(matches!(level, Level::Cyburbia | Level::Rooftops))],
+    );
+    r.cpu.put(
+        0x8018c374,
+        &[u8::from(!matches!(level, Level::Arena | Level::Rooftops))],
+    );
     put(&mut r.cpu, 0x8018c3b4, level as u32);
     r.cpu.put(PLAYER + 0x388, &[0xff; 0x24]);
     r.cpu.call(0x80122ea4, &[PLAYER, 1]);

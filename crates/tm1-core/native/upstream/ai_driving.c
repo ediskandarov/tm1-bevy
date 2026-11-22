@@ -20,7 +20,7 @@ void AICarUpdate(AICar* car)
     RecomputeCarDeltas(&car->stats);
     if (car->stats.unk18 >= 0 && (car->stats.unk18 -= GetFieldsLastFrame()) <= 0)
         car->flags[16] = 0;
-    car->flags[25] = !(car->flags[10] || car->flags[23] || car->flags[27] || car->flags[0]);
+    car->flags[25] = shellGetCurrentLevel() != LEVEL6_ROOFTOPS && !(car->flags[10] || car->flags[23] || car->flags[27] || car->flags[0]);
     car->collision.unk12 = 0;
     car->flags[0x09] = 0;
     AICarUpdateHealthTier(car);
@@ -42,7 +42,7 @@ void AICarUpdate(AICar* car)
         CarRotUpdate(car, 0);
         CarTransUpdate(car, 0);
     }
-    if (arena_bullets() && car->stats.unk38 && car->unk40) {
+    if (arena_bullets() && car->stats.unk38 && (car->unk40 || shellGetCurrentLevel() == LEVEL6_ROOFTOPS)) {
         CheckHitDetection(car, 0);
         if (car->collision.unk0 && abs(car->motion.rot.vz - car->motion.rot2.vz) >= 683)
             car->unk4B = 1;
@@ -246,7 +246,7 @@ void AICarInitTransition(AICar* car)
         car->stats.unk22 = 0;
     }
     if (triggerPtGroups.count >= 2 && car->flags[0x0A] == 0 && car->unk34 >= 3201) {
-        d = abs(triggerPtGroups.pos[car->unk176].vz - car->motion.pos.vz);
+        d = abs(arena_group_height(car->unk176) - car->motion.pos.vz);
         if ((car->stats.unk6C * 2) < d) {
             car->stats.unk03 = 1;
             if (shellGetCurrentLevel() == LEVEL6_ROOFTOPS) {

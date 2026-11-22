@@ -3,6 +3,11 @@
 #include "tm1/TRIGPTS.H"
 #include "tm1/BRIDGES.H"
 #include "tm1/CARUPD.H"
+// The retail no-match result for all 14 groups reads pos[14].vz at w[2].
+static inline s32 arena_group_height(s16 group)
+{
+    return group == 14 ? triggerPtGroups.w[2] : triggerPtGroups.pos[group].vz;
+}
 void InitLevel2TriggerPoints(void);
 void InitLevel2Bridges(void);
 void InitLevel5Curbs(void);
