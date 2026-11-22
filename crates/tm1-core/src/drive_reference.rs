@@ -919,6 +919,51 @@ fn warehouse_encounter_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn temporary_pothole_matches_retail_clock() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::CityPark);
+    r.cpu.call(0x80130938, &[]);
+    unsafe extern "C" {
+        fn MakeFakePotHole() -> i16;
+        static numCheckPotHoles: i16;
+    }
+    let bind = |scene: &CollisionScene, create: bool| {
+        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_level(Level::CityPark as i32);
+            tm1_use_scene(scene.native.as_ptr());
+            if create {
+                MakeFakePotHole();
+            }
+            let count = numCheckPotHoles;
+            tm1_use_scene(std::ptr::null_mut());
+            count
+        }
+    };
+    // A second impact replaces the temporary slot while its timer keeps running.
+    for tick in 1..=120 {
+        if [1, 15, 70].contains(&tick) {
+            bind(&r.scene, true);
+            r.cpu.call(0x80120704, &[]);
+        }
+        let fields = [2, 3, 5][tick % 3];
+        r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
+        r.cpu.call(0x80120728, &[]);
+        r.scene.step_bout(
+            &mut r.player,
+            std::slice::from_mut(&mut r.police),
+            Input::default(),
+            fields,
+        );
+        let count = r.cpu.word(0x8018bfdc) >> 16;
+        assert_eq!(bind(&r.scene, false) as u32, count, "tick {tick}");
+        if tick == 31 || tick == 110 {
+            assert_eq!(count, 1);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn city_park_slick_drive_matches_retail() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::CityPark);
     // Approach the south edge of the rectangular slick along its long axis.
@@ -1241,6 +1286,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
         r.cpu.call(0x80135e10, &[]);
+        r.cpu.call(0x80120728, &[]);
         if lineup.is_empty() {
             r.scene.step(&mut r.player, &mut r.police, input, fields);
             r.compare();

@@ -1,44 +1,45 @@
-running 28 tests
+running 29 tests
 City Park retail encounter with SweetTooth
-test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... Freeway retail encounter with SweetTooth
-ok
-test drive::reference::arena_animation_matches_retail ... ok
-test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
-test drive::reference::damage_body_switch_matches_retail ... ok
-test drive::reference::group_battle_selection_original ... ok
-Hammerhead completed the crush at step 19
+test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... ok
+Freeway retail encounter with SweetTooth
 test drive::reference::bullet_impact_original ... ok
-test drive::reference::city_park_slick_drive_matches_retail ... ok
+test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
+Hammerhead completed the crush at step 19
+test drive::reference::damage_body_switch_matches_retail ... ok
 test drive::reference::group_spawn_original ... ok
 test drive::reference::database_and_opponents_match_retail_shell ... ok
+test drive::reference::arena_animation_matches_retail ... ok
+test drive::reference::group_battle_selection_original ... ok
+test drive::reference::city_park_slick_drive_matches_retail ... ok
 test drive::reference::coupled_arena_original ... ok
-Warehouse retail encounter with SweetTooth
-test drive::reference::police_update_original ... ok
-test drive::reference::radar_signals_original ... ok
-vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
 test drive::reference::hammerhead_crush_original ... ok
+Warehouse retail encounter with SweetTooth
+test drive::reference::temporary_pothole_matches_retail_clock ... ok
+test drive::reference::radar_signals_original ... ok
+test drive::reference::police_update_original ... ok
+vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
 Freeway retail encounter with YellowJacket
 test drive::reference::warehouse_group_hit_ids_original ... ok
 test drive::vehicle_body_thresholds ... ok
 test tests::original_timer_rounding_and_clamp ... ok
 test tests::unsigned_clock_wrap_and_replay_reset ... ok
-test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
 City Park retail encounter with YellowJacket
+test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
+test drive::reference::flamethrowers_original ... ok
 wall fixture at tick 73, taxi [3946, 3946, 16], police [4096, 2896, 0]
 test drive::reference::vehicle_and_wall_contact_original ... ok
-test drive::reference::flamethrowers_original ... ok
-Warehouse retail encounter with YellowJacket
 test drive::reference::outlaw_taser_original ... ok
 test drive::reference::warehouse_stands_match_retail ... ok
+Warehouse retail encounter with YellowJacket
 Freeway retail encounter with Darkside
 City Park retail encounter with Darkside
 Warehouse retail encounter with Darkside
-test drive::reference::special_missiles_original ... ok
-test drive::reference::player_special_launch_original ... ok
 test drive::reference::regular_missile_impacts_original ... ok
+test drive::reference::special_missiles_original ... ok
 Freeway retail encounter with Hammerhead
-Warehouse retail encounter with Hammerhead
+test drive::reference::player_special_launch_original ... ok
 City Park retail encounter with Hammerhead
+Warehouse retail encounter with Hammerhead
 Freeway retail encounter with Outlaw
 Warehouse retail encounter with Outlaw
 City Park retail encounter with Outlaw
@@ -47,18 +48,18 @@ Warehouse retail encounter with CrimsonFury
 City Park retail encounter with CrimsonFury
 Freeway retail encounter with Warthog
 Warehouse retail encounter with Warthog
-City Park retail encounter with Warthog
 Freeway retail encounter with MrGrimm
+City Park retail encounter with Warthog
 Warehouse retail encounter with MrGrimm
 Freeway retail encounter with PitViper
 City Park retail encounter with MrGrimm
 Warehouse retail encounter with PitViper
 Freeway retail encounter with Thumper
-Warehouse retail encounter with Thumper
 City Park retail encounter with PitViper
+Warehouse retail encounter with Thumper
 Freeway retail encounter with Spectre
-Warehouse retail encounter with Spectre
 City Park retail encounter with Thumper
+Warehouse retail encounter with Spectre
 Freeway retail encounter with RoadKill
 Warehouse retail encounter with RoadKill
 City Park retail encounter with Spectre
@@ -67,7 +68,7 @@ test drive::reference::warehouse_encounter_original ... ok
 City Park retail encounter with RoadKill
 test drive::reference::city_park_encounter_original ... ok
 
-test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 25.68s
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.82s
 
 
 running 4 tests
@@ -93,7 +94,7 @@ Spectre, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 180, all ti
 RoadKill, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 27, all tires airborne false
 test drive_trace ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.92s
 
 
 running 2 tests
@@ -101,7 +102,7 @@ test mips::executes_branch_and_load_delay_slots ... ok
 Original MIPS vs native C: 8192 matrix cases, 4096 normalization cases, 4444 square-root cases; seed 0x544d3101
 test native_math_matches_original_instructions ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.66s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
 
 
 running 0 tests

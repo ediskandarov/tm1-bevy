@@ -34,6 +34,7 @@ typedef struct CollisionScene {
         int life, frame, variant;
     } fragments[20];
     PotHole temporary_hole;
+    int pothole_fields;
     bool has_temporary_hole;
     int battle_wait;
     DbTrans* pickups[50];
@@ -373,6 +374,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->effects, 0, sizeof s->effects);
     s->next_effect = 0;
     s->has_temporary_hole = false;
+    s->pothole_fields = 0;
     memset(&s->temporary_hole, 0, sizeof(PotHole));
     memset(s->fragments, 0, sizeof s->fragments);
     memset(s->drops, 0, sizeof s->drops);
@@ -799,6 +801,16 @@ s16 MakeFakePotHole(void)
 {
     numCheckPotHoles = numPotHoles + 1;
     return numPotHoles;
+}
+void UpdateNumPotHoles(void)
+{
+    if (numCheckPotHoles != numPotHoles) {
+        current->pothole_fields += GetFieldsLastFrame();
+        if (current->pothole_fields >= 101) {
+            current->pothole_fields = 0;
+            numCheckPotHoles = numPotHoles;
+        }
+    }
 }
 PotHole* GetPotHoleDat(s16 i)
 {

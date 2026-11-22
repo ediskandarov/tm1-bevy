@@ -532,8 +532,10 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
     tm1_contact_setup(GetAICs3D(0), &ai.motion, &ai.stats);
     contact_phase(&player, &ai, is_player, fields);
-    if (!is_player)
+    if (!is_player) {
         arena_regenerate_pickups();
+        UpdateNumPotHoles();
+    }
     memcpy(player_state, &player, sizeof(player));
     memcpy(ai_state, &ai, sizeof(ai));
     *seed = random_state;
@@ -586,6 +588,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();
     tm1_regenerate_stands();
+    UpdateNumPotHoles();
     tm1_store_battle(battle);
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));
