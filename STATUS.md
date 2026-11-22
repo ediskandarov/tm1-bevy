@@ -25,6 +25,8 @@ L displays each surviving opponent on its original roster row. Destroying a car 
 
 ## Single-player pause input
 
+In both modes, selecting AUDIO plays the confirmation sound immediately. The pause screen stays visible and the stage music stays paused until the participating players release all mapped buttons. This follows the release loop before screenAudioOptions in the JP executable. Keyboard integration tests cover a held Enter in the campaign and a second player holding a driving key in a duel.
+
 The pause menu waits for the mapped controls to be released on entry, between choices, and before returning to battle. Overlapping inputs leave the selection in place until release. Controller options highlight the active arrow while the direction is held. Enter or Space confirms from the keyboard, and P retains its resume shortcut. A keyboard integration test holds overlapping inputs during navigation and checks the active arrow, layout, pause state and simulation frame through release.
 
 ## Camera and HUD controls

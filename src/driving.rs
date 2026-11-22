@@ -625,8 +625,8 @@ pub fn advance(
     if drive.pause_input != PauseInput::Ready {
         if window.focused && !pause_input_held() {
             drive.control_arrows = [false; 2];
-            if drive.pause_input == PauseInput::ResumeOnRelease {
-                drive.pause = None;
+            if let PauseInput::ChangeOnRelease(next) = drive.pause_input {
+                drive.pause = next;
             }
             drive.pause_input = PauseInput::Ready;
         }
@@ -677,10 +677,11 @@ pub fn advance(
                         let layout = drive.settings.layout;
                         drive.player.set_pad_layout(layout);
                     }
-                    if drive.pause.is_none() && pause_input_held() {
-                        drive.pause = Some(page);
-                        drive.pause_input = PauseInput::ResumeOnRelease;
-                    }
+                    let next = drive.pause;
+                    drive.pause =
+                        drive
+                            .pause_input
+                            .defer_transition(page, next, pause_input_held());
                 }
             }
         }
@@ -1131,9 +1132,23 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .release(ArrowDown);
         tick(&mut app, 0);
-        for key in [ArrowDown, ArrowDown, Enter, ArrowRight] {
+        for key in [ArrowDown, ArrowDown] {
             tap(&mut app, key);
         }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(Enter);
+        tick(&mut app, 50);
+        tick(&mut app, 500);
+        assert_eq!(
+            app.world().resource::<Drive>().pause,
+            Some(Page::Choices(2))
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(Enter);
+        tick(&mut app, 0);
+        tap(&mut app, ArrowRight);
         let drive = app.world().resource::<Drive>();
         assert_eq!(drive.pause, Some(Page::Audio(0)));
         assert_eq!((drive.settings.music, drive.settings.effects), (8, 6));

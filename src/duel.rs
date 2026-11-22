@@ -315,10 +315,10 @@ pub fn pause_menu(
         if held {
             return;
         }
-        let resuming = duel.pause_input == PauseInput::ResumeOnRelease;
+        let pending = duel.pause_input;
         duel.pause_input = PauseInput::Ready;
-        if resuming {
-            duel.pause = None;
+        if let PauseInput::ChangeOnRelease(next) = pending {
+            duel.pause = next;
         } else {
             return;
         }
@@ -333,7 +333,7 @@ pub fn pause_menu(
     let mut sound = None;
     let before_settings = duel.settings;
     let mut controls_changed = false;
-    if let Some(page) = duel.pause {
+    if let Some(page) = duel.pause.filter(|_| duel.pause == before) {
         let (action, idle_reset) = if page == Page::Controls {
             let slot = duel.control_slot;
             let input = duel.controls_view.advance(time.delta(), &keys, slot);
@@ -382,10 +382,8 @@ pub fn pause_menu(
                 duel.layouts[slot] = layout;
                 duel.cars[slot].set_pad_layout(layout);
             }
-            if duel.pause.is_none() && held {
-                duel.pause = Some(page);
-                duel.pause_input = PauseInput::ResumeOnRelease;
-            }
+            let next = duel.pause;
+            duel.pause = duel.pause_input.defer_transition(page, next, held);
             if !expired {
                 sound = crate::pause::navigation_sound(
                     page,
@@ -730,10 +728,22 @@ mod tests {
         assert_eq!(voices(&mut world), playing);
         tick(&mut world, true, 50, &[]);
         assert_eq!(clocks(&world), frame.map(|f| f + 1));
-        for key in [KeyP, ArrowDown, ArrowDown, Enter] {
+        for key in [KeyP, ArrowDown, ArrowDown] {
             tick(&mut world, true, 50, &[key]);
             tick(&mut world, true, 0, &[]);
         }
+        tick(&mut world, true, 50, &[Enter, Slash]);
+        tick(&mut world, true, 500, &[Slash]);
+        assert_eq!(
+            world.resource::<Duel>().pause,
+            Some(crate::pause::Page::Choices(2))
+        );
+        let track = world
+            .query_filtered::<&PlaybackSettings, With<AudioPlayer<crate::music::StageTrack>>>()
+            .single(&world)
+            .unwrap();
+        assert!(track.paused);
+        tick(&mut world, true, 0, &[]);
         assert_eq!(
             world.resource::<Duel>().pause,
             Some(crate::pause::Page::Audio(0))

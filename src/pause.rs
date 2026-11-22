@@ -60,7 +60,24 @@ impl Settings {
 pub(crate) enum PauseInput {
     Ready,
     WaitRelease,
-    ResumeOnRelease,
+    ChangeOnRelease(Option<Page>),
+}
+
+impl PauseInput {
+    pub fn defer_transition(
+        &mut self,
+        current: Page,
+        next: Option<Page>,
+        held: bool,
+    ) -> Option<Page> {
+        if held && (next.is_none() || (current == Page::Choices(2) && next == Some(Page::Audio(0))))
+        {
+            *self = Self::ChangeOnRelease(next);
+            Some(current)
+        } else {
+            next
+        }
+    }
 }
 
 #[derive(Default)]
