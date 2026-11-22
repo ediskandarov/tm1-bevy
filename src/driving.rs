@@ -94,6 +94,7 @@ pub fn advance(
         match drive.player.level() {
             tm1_core::drive::Level::Arena => "Arena",
             tm1_core::drive::Level::Warehouse => "Warehouse",
+            tm1_core::drive::Level::Cyburbia => "Cyburbia",
             tm1_core::drive::Level::CityPark => "City Park",
             tm1_core::drive::Level::Freeway => "Freeway",
         }
@@ -207,7 +208,12 @@ mod tests {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
         let vehicle = Vehicle::YellowJacket;
-        for level in [Level::Warehouse, Level::Freeway, Level::CityPark] {
+        for level in [
+            Level::Warehouse,
+            Level::Freeway,
+            Level::CityPark,
+            Level::Cyburbia,
+        ] {
             let kinds =
                 level.opponents(vehicle, &mut tm1_core::drive::ArenaDeck::default(), &mut 1);
             let data = disc

@@ -50,14 +50,6 @@ s32 ratan2(s32 y, s32 x)
         angle = 2048 - angle;
     return y < 0 ? -angle : angle;
 }
-s16 GetGroupTestPointIsIn(s32 x, s32 y, s32 z)
-{
-    // InitLevel1DBSpecifics disables group ground height.
-    (void)x;
-    (void)y;
-    (void)z;
-    return 0;
-}
 void do_smoke(VECTOR3* pos)
 {
     arena_effect(pos, 8);
@@ -190,6 +182,11 @@ void tm1_bind_level(int level)
         InitLevel4Curbs();
         InitLevel4PotHoles();
         InitLevel4SlickSpots();
+    } else if (level == LEVEL5_CYBURBIA) {
+        InitLevel5TriggerPoints();
+        InitLevel5Bridges();
+        InitLevel5Curbs();
+        InitLevel5PotHoles();
     } else {
         InitLevel1TriggerPoints();
         InitLevel1Bridges();
@@ -280,6 +277,10 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
         car.motion.pos.vx = -0x28a0;
         car.motion.pos.vy = -0x11d0;
         car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
+    } else if (current_level == LEVEL5_CYBURBIA) {
+        car.motion.pos.vx = 0x1c20;
+        car.motion.pos.vy = 0x2ee0;
+        car.motion.rot.vz = car.motion.rot2.vz = 0x400;
     } else if (current_level == LEVEL4_CITY_PARK) {
         car.motion.pos.vx = 0x12c0;
         car.motion.pos.vy = -0x12c0;

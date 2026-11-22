@@ -21,6 +21,7 @@ pub enum Level {
     Warehouse,
     Freeway,
     CityPark,
+    Cyburbia,
 }
 
 impl Level {
@@ -29,6 +30,9 @@ impl Level {
             Self::Arena => vec![deck.draw(player, seed)],
             Self::Warehouse => player.warehouse_opponents(),
             Self::Freeway => player.freeway_opponents(),
+            Self::Cyburbia => player.opponents_from_masks([
+                0x7ec, 0xf95, 0xf93, 0x7e5, 0xf87, 0x7cd, 0x7ad, 0x76d, 0x6ed, 0x5ed, 0x3ed, 0x797,
+            ]),
             Self::CityPark => player.opponents_from_masks([
                 0xe32, 0x1cd, 0x1cb, 0x1c7, 0xe23, 0xe13, 0x18f, 0x14f, 0xcf, 0xc33, 0xa33, 0x633,
             ]),
@@ -38,6 +42,10 @@ impl Level {
         use Vehicle::*;
         match self {
             Self::Arena => "XARENA1",
+            Self::Cyburbia => match vehicle {
+                YellowJacket | Darkside | Thumper | RoadKill => "SUBURB2",
+                _ => "SUBURB1",
+            },
             Self::CityPark => match vehicle {
                 SweetTooth | Hammerhead | CrimsonFury | Thumper | Spectre | RoadKill => "PARK1",
                 _ => "PARK2",

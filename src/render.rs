@@ -506,7 +506,16 @@ pub fn update(
             .zip(&poses)
             .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
     );
+    let hidden_ranges: Vec<_> = arena
+        .scene
+        .visibility
+        .iter()
+        .map(|controller| controller.hidden_polygons([eye.x, -eye.z, eye.y]))
+        .collect();
     for i in visible {
+        if hidden_ranges.iter().any(|range| range.contains(&i)) {
+            continue;
+        }
         let p = &arena.scene.polygons[i];
         if p.animation
             .iter()

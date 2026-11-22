@@ -22,6 +22,10 @@ Launch with `--level freeway`. The selected vehicle determines the XFWY1 or XFWY
 
 Launch with `--level city-park` for the six-opponent encounter. Both park databases load with their corresponding textures, original player and opponent starts, 42 routing points, 54 bridge records, 16 curbs, the active pothole and the rectangular slick. Single-player City Park uses CDDA track 4. The M3 Pro Metal captures show Yellow Jacket on PARK2 and Hammerhead on PARK1.
 
+## Cyburbia
+
+Launch with `--level cyburbia` to fight eight opponents in SUBURB1 or SUBURB2. The port uses the original routing and ground-height tables, daytime headlight settings and CDDA track 6. The street geometry belongs to a visibility controller. Each frame selects its inside or outside branch using the camera position and the original oriented box test. Metal captures of Outlaw and Yellow Jacket show the residential streets on both variants.
+
 ## Reference execution
 
 The test interpreter executes instructions loaded from the verified retail executable. The two vehicle records are copied to PS1-layout memory and compared byte by byte. The RNG starts at 1 for spawning and is then shared by both cars. Tests provide the BIOS random service, relevant GTE instructions, and explicit calls or stubs for presentation endpoints. These are controlled function-level scenarios. They do not execute an entire booted PlayStation or compare PCM and draw packets.
@@ -36,6 +40,7 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Battle selection | Checked the PlayGame scheduler against the JP instructions in 128 combinations of opponent count, occupied attack slots, surviving vehicles and elapsed fields. Compared the wait counter and every opponent record after selection. |
 | Opponent radar | For every regular vehicle, checked contact color, screen position and all four edge directions against retail hudAddRadarSig at seven headings and fourteen offsets (1,176 cases). Warehouse Metal capture shows the three opponents in their original colors. V toggles the overlay. Active Warehouse recharge stations flash on the radar. |
 | Temporary potholes | A collision can create one temporary pothole alongside the level geometry. Its remaining lifetime follows the original field counter, including when a second impact replaces the hole. A 120-step sequence compares the active pothole count against retail after each update. |
+| Cyburbia pursuit, ground and visibility | Each of the twelve vehicles fought the full eight-opponent lineup for 360 mixed-timing updates. The tests compare all nine vehicle records, active fragments and RNG. Separate fixtures compare 900 ground-group boundary probes and 42 camera probes with the retail functions. |
 | City Park pursuit and traction | All twelve player choices ran for 360 mixed-timing steps against the original six opponents. The replay checks all seven car records, active fragment positions and RNG every step. A separate 150-step steering and acceleration trace crossed the slick and regained traction, with the entire player record checked on every step. |
 | Freeway pursuit | Twelve 360-step mixed-timing encounters compared every byte of the six vehicle records, active fragment positions and RNG after each step. The Road Kill encounter exercises a computer-controlled Hammerhead driving over another vehicle. |
 | Warehouse pursuit | Twelve 360-step runs, one per player vehicle with its full three-opponent lineup. Compared starting position and heading, then all four complete vehicle records and RNG on every step. The reference executes the PlayGame battle scheduler and updates active flamethrowers and explosion particles. |

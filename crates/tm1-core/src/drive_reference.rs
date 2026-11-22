@@ -37,7 +37,7 @@ impl Reference {
         let opponent = match level {
             Level::Arena => Vehicle::Outlaw,
             Level::Warehouse => vehicle.warehouse_opponents()[0],
-            Level::Freeway | Level::CityPark => {
+            Level::Freeway | Level::CityPark | Level::Cyburbia => {
                 level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1)[0]
             }
         };
@@ -218,6 +218,7 @@ fn group_spawn_original() {
         (Level::Warehouse, 0x801262ec),
         (Level::Freeway, 0x801268f8),
         (Level::CityPark, 0x80127694),
+        (Level::Cyburbia, 0x801281b8),
     ] {
         put(&mut cpu, 0x8018c3b4, level as u32);
         for vehicle in Vehicle::ROSTER {
@@ -1014,6 +1015,110 @@ fn city_park_slick_drive_matches_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn cyburbia_visibility_and_ground_groups_match_retail() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let mut samples = 0;
+    for db in ["SUBURB1", "SUBURB2"] {
+        let data = disc.read(&format!("UADMD/{db}.DMD")).unwrap();
+        let scene = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .extract_kind(1)
+            .unwrap();
+        cpu.put(0x800188b8, &data);
+        assert!(!scene.visibility.is_empty());
+        for controller in scene.visibility {
+            let count = cpu.ram[(controller.node as usize & 0x1fffff) + 10];
+            let boxes: Vec<_> = (0..count)
+                .map(|i| cpu.word(controller.node + 20 + 4 * u32::from(i)))
+                .collect();
+            let mut outcomes = [false; 2];
+            for &b in &boxes {
+                let half = |at: u32| {
+                    let i = (at & 0x1fffff) as usize;
+                    i32::from(i16::from_le_bytes(cpu.ram[i..i + 2].try_into().unwrap()))
+                };
+                let lo = [32, 34, 36].map(|o| half(b + o));
+                let size = [40, 42, 44].map(|o| half(b + o));
+                let basis = [0, 1, 2].map(|row| [0, 1, 2].map(|col| half(b + 2 * (row * 3 + col))));
+                for axis in 0..3 {
+                    for distance in [
+                        -1,
+                        0,
+                        1,
+                        size[axis] / 2,
+                        size[axis] - 1,
+                        size[axis],
+                        size[axis] + 1,
+                    ] {
+                        let mut local = [0, 1, 2].map(|j| size[j] / 2 - lo[j]);
+                        local[axis] = distance - lo[axis];
+                        let eye = [0, 1, 2]
+                            .map(|j| (0..3).map(|k| basis[k][j] * local[k]).sum::<i32>() / 4096);
+                        for (j, v) in eye.iter().enumerate() {
+                            put(&mut cpu, 0x800e7800 + 4 * j as u32, (-v) as u32);
+                        }
+                        let inside = boxes
+                            .iter()
+                            .any(|&b| cpu.call(0x800fe388, &[b, 0x800e7800]) != 0);
+                        assert_eq!(
+                            controller.camera_inside(eye.map(|v| v as f32)),
+                            inside,
+                            "{db} controller {:x} eye {eye:?}",
+                            controller.node
+                        );
+                        outcomes[usize::from(inside)] = true;
+                        samples += 1;
+                    }
+                }
+            }
+            assert_eq!(
+                outcomes,
+                [true, true],
+                "{db} controller {:x}",
+                controller.node
+            );
+        }
+    }
+    cpu.call(0x801281b8, &[]);
+    put(&mut cpu, 0x8018c34c, 1);
+    unsafe extern "C" {
+        fn GetGroupTestPointIsIn(x: i32, z: i32, y: i32) -> i16;
+    }
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        tm1_bind_level(Level::Cyburbia as i32);
+    }
+    let groups = 0x801ac35c;
+    for i in 0..12 {
+        let [x, z, y] = [0, 4, 8].map(|offset| cpu.word(groups + 0x49c + i * 12 + offset) as i32);
+        let w = cpu.word(groups + 0x544 + 4 * i) as i32;
+        let d = cpu.word(groups + 0x57c + 4 * i) as i32;
+        for px in [x - 1, x, x + w / 2, x + w, x + w + 1] {
+            for pz in [z - 1, z, z + d / 2, z + d, z + d + 1] {
+                for py in [y - 81, y - 80, y - 79] {
+                    assert_eq!(
+                        unsafe { GetGroupTestPointIsIn(px, pz, py) } as u32,
+                        cpu.call(0x8011ce9c, &[px as u32, pz as u32, py as u32])
+                    );
+                }
+            }
+        }
+    }
+    println!("Compared {samples} Cyburbia camera probes and 900 ground probes with retail.");
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn cyburbia_encounter_original() {
+    for player in Vehicle::ROSTER {
+        println!("Cyburbia retail encounter with {player:?}");
+        compare_encounter(player, 20, Level::Cyburbia);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn city_park_encounter_original() {
     for player in Vehicle::ROSTER {
         println!("City Park retail encounter with {player:?}");
@@ -1038,6 +1143,7 @@ fn database_and_opponents_match_retail_shell() {
         (Level::Warehouse, 0x8017179cusize),
         (Level::Freeway, 0x801717b4),
         (Level::CityPark, 0x801717cc),
+        (Level::Cyburbia, 0x801717e4),
     ] {
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         let start = (r.cpu.word(0x8017187c + 4 * level as u32) & 0x1fffff) as usize;
@@ -1148,6 +1254,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     r.police.state[0x40] = 0;
     for entry in match level {
         Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::Cyburbia => [0x801281b8, 0x8012ed70, 0x801309c8, 0x80130ee4, 0x8013135c],
         Level::CityPark => [0x80127694, 0x8012da2c, 0x80130938, 0x80130c20, 0x8013131c],
         Level::Freeway => [0x801268f8, 0x8012d3e0, 0x80130884, 0x80130c14, 0x80131310],
         Level::Warehouse => [0x801262ec, 0x8012cf58, 0x801307a4, 0x80130a98, 0x80131304],
@@ -1161,6 +1268,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     r.cpu.put(0x8018c378, &(level as u16 + 1).to_le_bytes());
+    r.cpu.put(0x8018c34c, &[u8::from(level == Level::Cyburbia)]);
     r.cpu.put(0x8018c374, &[u8::from(level != Level::Arena)]);
     put(&mut r.cpu, 0x8018c3b4, level as u32);
     r.cpu.put(PLAYER + 0x388, &[0xff; 0x24]);

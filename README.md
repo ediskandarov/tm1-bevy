@@ -6,7 +6,7 @@ The arena includes machine guns, missiles, pickups, contact damage, sound, music
 Initial decision date: 2026-11-22.
 
 The goal is to port the full original game. The first playable milestone is
-the arena encounter. Warehouse is playable against all three original opponents simultaneously. Drive onto either Warehouse recharge station to repair your vehicle. Both stations return after both have been used. The radar shows active stations as flashing crosses. Arena draws one opponent using the retail selection rules and a reproducible starting seed. Freeway features five simultaneous opponents and City Park features six. All twelve regular vehicles are selectable on each stage. With
+the arena encounter. Warehouse is playable against all three original opponents simultaneously. Drive onto either Warehouse recharge station to repair your vehicle. Both stations return after both have been used. The radar shows active stations as flashing crosses. Arena draws one opponent using the retail selection rules and a reproducible starting seed. Freeway features five simultaneous opponents, City Park features six and Cyburbia features eight. All twelve regular vehicles are selectable on each stage. With
 `TM1_CUE` set to the path of the JP disc cue, run:
 
 ```sh
@@ -14,6 +14,7 @@ cargo run --locked --offline -- "$TM1_CUE" --car sweet-tooth
 cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car road-kill
 cargo run --locked --offline -- "$TM1_CUE" --level freeway --car outlaw
 cargo run --locked --offline -- "$TM1_CUE" --level city-park --car yellow-jacket
+cargo run --locked --offline -- "$TM1_CUE" --level cyburbia --car outlaw
 ```
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,

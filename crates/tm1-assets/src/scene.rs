@@ -56,16 +56,57 @@ pub struct Polygon {
     pub fixed_ot: u32,
 }
 #[derive(Debug)]
+struct VisibilityBox {
+    matrix: [[i16; 3]; 3],
+    lo: [i16; 3],
+    hi: [i16; 3],
+}
+impl VisibilityBox {
+    fn contains(&self, point: [i32; 3]) -> bool {
+        (0..3).all(|i| {
+            let projected = (0..3).fold(0i32, |sum, j| {
+                sum.wrapping_add(point[j].wrapping_mul(i32::from(self.matrix[i][j])))
+            }) / 4096;
+            let distance = projected + i32::from(self.lo[i]);
+            distance > 0 && distance < i32::from(self.hi[i])
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct VisibilityController {
+    pub node: u32,
+    transform: Transform,
+    boxes: Vec<VisibilityBox>,
+    branches: [std::ops::Range<usize>; 2],
+}
+impl VisibilityController {
+    /// HIER selects one child when the camera is inside any of the control boxes.
+    pub fn camera_inside(&self, eye: [f32; 3]) -> bool {
+        let point = std::array::from_fn(|i| {
+            (0..3)
+                .map(|j| self.transform.axes[j][i] * (eye[j] - self.transform.offset[j]))
+                .sum::<f32>() as i32
+        });
+        self.boxes.iter().any(|b| b.contains(point))
+    }
+    pub fn hidden_polygons(&self, eye: [f32; 3]) -> std::ops::Range<usize> {
+        self.branches[usize::from(!self.camera_inside(eye))].clone()
+    }
+}
+
+#[derive(Debug)]
 pub struct Scene {
     pub version: u32,
     pub root_id: u32,
     pub polygons: Vec<Polygon>,
     pub object_ids: Vec<u32>,
     pub omitted_nodes: Vec<String>,
+    pub visibility: Vec<VisibilityController>,
     pub health_stands: Vec<(u8, [i32; 3])>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Transform {
     axes: [[f32; 3]; 3],
     offset: [f32; 3],
@@ -82,6 +123,14 @@ impl Transform {
         let rotated = self.rotate(point);
         std::array::from_fn(|i| self.offset[i] + rotated[i])
     }
+}
+
+#[derive(Clone, Copy)]
+struct BodySelection {
+    node: u32,
+    stage: u8,
+    headlights_kind: u16,
+    headlights: bool,
 }
 
 pub struct Dmd<'a> {
@@ -203,13 +252,16 @@ impl<'a> Dmd<'a> {
     }
     /// Read the three body-switch branches selected by UA's damage update.
     pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {
+        self.vehicle_bodies_with_lights(kind, true)
+    }
+    pub fn vehicle_bodies_with_lights(&self, kind: u16, headlights: bool) -> Result<[Scene; 3]> {
         Ok([
-            self.extract(kind, Some(0))?,
-            self.extract(kind, Some(1))?,
-            self.extract(kind, Some(2))?,
+            self.extract(kind, Some((0, headlights)))?,
+            self.extract(kind, Some((1, headlights)))?,
+            self.extract(kind, Some((2, headlights)))?,
         ])
     }
-    fn extract(&self, kind: u16, body: Option<u8>) -> Result<Scene> {
+    fn extract(&self, kind: u16, body: Option<(u8, bool)>) -> Result<Scene> {
         let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
         ensure!(
             roots.len() == 1,
@@ -218,7 +270,7 @@ impl<'a> Dmd<'a> {
         );
         let root_id = roots[0].0;
         let mut selection = None;
-        if let Some(stage) = body {
+        if let Some((stage, headlights)) = body {
             // uaswInitCarSwitch follows child zero through two groups.
             let mut node = root_id;
             for _ in 0..2 {
@@ -233,12 +285,18 @@ impl<'a> Dmd<'a> {
                 self.data[self.offset(node)?] == 9,
                 "missing vehicle body switch"
             );
-            selection = Some((node, stage));
+            selection = Some(BodySelection {
+                node,
+                stage,
+                headlights_kind: kind + 4,
+                headlights,
+            });
         }
         let mut scene = Scene {
             version: self.version,
             root_id,
             polygons: vec![],
+            visibility: vec![],
             health_stands: vec![],
             object_ids: vec![],
             omitted_nodes: vec![],
@@ -261,7 +319,7 @@ impl<'a> Dmd<'a> {
         &self,
         ptr: u32,
         transform: Transform,
-        selection: Option<(u32, u8)>,
+        selection: Option<BodySelection>,
         mut pickup: Option<u8>,
         ancestors: &mut Vec<u32>,
         scene: &mut Scene,
@@ -293,7 +351,18 @@ impl<'a> Dmd<'a> {
             1 => {
                 bytes(d, p, 24)?;
                 if d[p + 21] & 2 == 0 {
-                    list(d[p + 20] as usize, p + 24)?;
+                    let kind = u16le(d, p + 2)?;
+                    let sub = u16le(d, p + 22)?;
+                    let count =
+                        match selection {
+                            Some(body)
+                                if body.headlights_kind == kind && (1..=3).contains(&sub) =>
+                            {
+                                if body.headlights { 2 } else { 0 }
+                            }
+                            _ => usize::from(d[p + 20]),
+                        };
+                    list(count, p + 24)?;
                 }
             }
             2 => {
@@ -386,8 +455,8 @@ impl<'a> Dmd<'a> {
             9 => {
                 bytes(d, p, 8)?;
                 let child = selection
-                    .filter(|(node, _)| *node == ptr)
-                    .map_or(d[p + 7], |(_, stage)| stage);
+                    .filter(|body| body.node == ptr)
+                    .map_or(d[p + 7], |body| body.stage);
                 ensure!(child < d[p + 6], "switch child out of range");
                 if u16le(d, p + 2)? == 920 && d[p + 6] == 2 {
                     let id = u16le(d, p + 4)?;
@@ -416,9 +485,37 @@ impl<'a> Dmd<'a> {
             }
             6..=8 | 10 => {}
             11 => {
-                scene.omitted_nodes.push(format!(
-                    "visibility controller {ptr:#x}: camera-dependent branch pending"
-                ));
+                bytes(d, p, 20)?;
+                if u32le(d, p + 4)? & 2 == 0 {
+                    let mut boxes = Vec::new();
+                    for i in 0..usize::from(d[p + 10]) {
+                        let offset = self.offset(u32le(d, p + 20 + i * 4)?)?;
+                        let data = bytes(d, offset, 48)?;
+                        let half = |i: usize| i16::from_le_bytes([data[i], data[i + 1]]);
+                        boxes.push(VisibilityBox {
+                            matrix: std::array::from_fn(|r| {
+                                std::array::from_fn(|c| half(2 * (3 * r + c)))
+                            }),
+                            lo: std::array::from_fn(|j| half(32 + 2 * j)),
+                            hi: std::array::from_fn(|j| half(40 + 2 * j)),
+                        });
+                    }
+                    let mut branches = [0..0, 0..0];
+                    for (i, range) in branches.iter_mut().enumerate() {
+                        let child = u32le(d, p + 12 + i * 4)?;
+                        let start = scene.polygons.len();
+                        if child != 0 {
+                            self.visit(child, transform, selection, pickup, ancestors, scene)?;
+                        }
+                        *range = start..scene.polygons.len();
+                    }
+                    scene.visibility.push(VisibilityController {
+                        node: ptr,
+                        transform,
+                        boxes,
+                        branches,
+                    });
+                }
             }
             op => bail!("unsupported DMD opcode {op} at {ptr:#x}"),
         }

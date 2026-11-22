@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park] [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
     use tm1_core::drive::{Level, Vehicle};
@@ -28,10 +28,13 @@ fn main() -> Result<()> {
         if flag.as_deref() == Some(std::ffi::OsStr::new("--level")) {
             level = match args.next().as_ref().and_then(|s| s.to_str()) {
                 Some("warehouse") => Level::Warehouse,
+                Some("cyburbia") => Level::Cyburbia,
                 Some("city-park") => Level::CityPark,
                 Some("freeway") => Level::Freeway,
                 Some("arena") => Level::Arena,
-                _ => anyhow::bail!("--level requires arena, warehouse, freeway or city-park"),
+                _ => anyhow::bail!(
+                    "--level requires arena, warehouse, freeway, city-park or cyburbia"
+                ),
             };
             flag = args.next();
             continue;
@@ -98,10 +101,11 @@ fn main() -> Result<()> {
     let player =
         tm1_core::drive::PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
             .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
-    let player_mesh = dmd.vehicle_bodies(vehicle as u16)?;
+    let headlights = level != Level::Cyburbia;
+    let player_mesh = dmd.vehicle_bodies_with_lights(vehicle as u16, headlights)?;
     let opponent_mesh = opponent_kinds
         .iter()
-        .map(|&kind| dmd.vehicle_bodies(kind as u16))
+        .map(|&kind| dmd.vehicle_bodies_with_lights(kind as u16, headlights))
         .collect::<Result<Vec<_>>>()?;
     let contacts = tm1_core::drive::CollisionScene::for_opponents(
         &data,
@@ -144,6 +148,7 @@ fn main() -> Result<()> {
         .insert_resource(driving::Drive::new(player, contacts, &opponent_kinds))
         .insert_resource(ClearColor(match level {
             Level::Arena => Color::srgb(0.035, 0.045, 0.065),
+            Level::Cyburbia => Color::srgb_u8(110, 110, 100),
             Level::CityPark => Color::srgb_u8(75, 60, 30),
             Level::Freeway => Color::srgb_u8(60, 45, 20),
             Level::Warehouse => Color::srgb_u8(75, 70, 55),
