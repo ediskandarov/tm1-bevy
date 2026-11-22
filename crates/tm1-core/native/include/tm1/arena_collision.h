@@ -36,7 +36,8 @@ void InitMonsterSmash(Car*,u8,Car*,u8,s16);
 #define DIFFICULTY_EASY 0
 #define DIFFICULTY_HARD 2
 s32 uaGetDifficulty(void);
-static inline u8 uaHasPlayerBeatThisLevel(void) { return 0; }
+u8 uaHasPlayerBeatThisLevel(void);
+void tm1_check_victory(const PlayerCar*, const AICar*, int);
 s32 uaIsCarMatID(s16,s8*,u16*);
 void SetFXSheet(s32,s32,s32,s32);
 void UAeffectActHitLights(Cs*,s32,u8*);

@@ -971,6 +971,7 @@ unsafe extern "C" {
         opponents: *const u32,
         count: usize,
     ) -> *mut std::ffi::c_void;
+    fn tm1_level_won(scene: *const std::ffi::c_void) -> bool;
     fn tm1_reset_projectiles(scene: *mut std::ffi::c_void);
     fn tm1_scene_free(scene: *mut std::ffi::c_void);
     fn tm1_bout_step(
@@ -1140,6 +1141,9 @@ impl CollisionScene {
             tm1_new_life(self.native.as_ptr());
         }
         self.battle = [0; 3];
+    }
+    pub fn level_won(&self) -> bool {
+        unsafe { tm1_level_won(self.native.as_ptr()) }
     }
     pub fn reset_projectiles(&mut self) {
         self.battle = [0; 3];

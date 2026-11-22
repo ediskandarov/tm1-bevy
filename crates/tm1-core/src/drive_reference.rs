@@ -938,36 +938,79 @@ fn password_weapon_and_damage_modes_original() {
         r.cpu.call(0x8013148c, &[PLAYER, 1]);
         r.scene.phase(&mut r.player, &mut r.police, 1, 3);
         r.compare();
-        let pos = [2700i32, 2250, 400];
-        let dir = [0i32, 4096, 0];
-        for (at, v) in [(0x800be000, dir), (0x800be020, pos)] {
-            for (i, x) in v.into_iter().enumerate() {
-                put(&mut r.cpu, at + 4 * i as u32, x as u32);
-            }
-        }
-        r.cpu.call(0x8010c930, &[50, 0x800be000, 0x800be020, 1]);
-        {
-            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-            unsafe extern "C" {
-                fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
-            }
-            unsafe {
-                tm1_use_scene(r.scene.native.as_ptr());
-                create_bullet(50, dir.as_ptr(), pos.as_ptr(), 1);
-                tm1_use_scene(std::ptr::null_mut());
-            }
-        }
         let hp = r.player.health().0;
-        for _ in 0..5 {
-            r.cpu.call(0x8010d03c, &[]);
-            r.cpu.call(0x80137d2c, &[]);
-            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
-            r.compare();
-        }
+        fire_at_player(&mut r);
         assert_eq!(hp - r.player.health().0, i32::from(!god_mode));
         r.player.reset();
         assert_eq!(r.player.state[0x4a1], 1);
         assert_eq!(r.player.state[0x184], u8::from(!god_mode));
+    }
+}
+
+fn fire_at_player(r: &mut Reference) {
+    let pos = [2700i32, 2250, 400];
+    let dir = [0i32, 4096, 0];
+    for (at, v) in [(0x800be000, dir), (0x800be020, pos)] {
+        for (i, x) in v.into_iter().enumerate() {
+            put(&mut r.cpu, at + 4 * i as u32, x as u32);
+        }
+    }
+    r.cpu.call(0x8010c930, &[50, 0x800be000, 0x800be020, 1]);
+    {
+        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe extern "C" {
+            fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
+        }
+        unsafe {
+            tm1_use_scene(r.scene.native.as_ptr());
+            create_bullet(50, dir.as_ptr(), pos.as_ptr(), 1);
+            tm1_use_scene(std::ptr::null_mut());
+        }
+    }
+    for _ in 0..5 {
+        r.cpu.call(0x8010d03c, &[]);
+        r.cpu.call(0x80137d2c, &[]);
+        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+        r.compare();
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn victory_blocks_late_bullet_damage_original() {
+    for simultaneous_death in [false, true] {
+        let mut r = Reference::new();
+        r.police.state[0x24c..0x250].fill(0);
+        if simultaneous_death {
+            r.player.state[0x178..0x17c].fill(0);
+        }
+        r.scene
+            .step(&mut r.player, &mut r.police, Input::default(), 3);
+        r.sync();
+        // Observe the retail victory branch twice to check that it queues one return.
+        for _ in 0..2 {
+            r.cpu.call_until(0x8014e0b4, &[], 0x8014e10c);
+            assert_eq!(r.scene.level_won(), r.cpu.word(0x8018c360) != 0);
+            assert_eq!(r.cpu.word(0x8018bf18), u32::from(!simultaneous_death));
+        }
+        assert_eq!(r.scene.level_won(), !simultaneous_death);
+        if simultaneous_death {
+            continue;
+        }
+        assert_eq!(r.cpu.word(0x80194bf0), 180);
+        assert_eq!(r.cpu.word(0x80194bf4), 3);
+
+        vec3(&mut r.player.state, 0x388, [2700, 3050, 400]);
+        vec3(&mut r.police.state, 0x444, [2700, 2000, 400]);
+        r.sync();
+        let hp = r.player.health().0;
+        fire_at_player(&mut r);
+        assert_eq!(r.player.health().0, hp);
+        r.scene.reset_projectiles();
+        put(&mut r.cpu, 0x8018c360, 0);
+        assert!(!r.scene.level_won());
+        fire_at_player(&mut r);
+        assert_eq!(r.player.health().0, hp - 1);
     }
 }
 
@@ -2540,6 +2583,7 @@ fn compare_battle_controls(
             r.cpu.call(0x8014ee14, &[cs, address]);
             start_retail_death(&mut r.cpu, address, false);
         }
+        r.cpu.call_until(0x8014e0b4, &[], 0x8014e10c);
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
         r.cpu.call(0x80135e10, &[]);
@@ -2609,6 +2653,7 @@ fn compare_battle_controls(
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
         }
+        assert_eq!(r.scene.level_won(), r.cpu.word(0x8018c360) != 0);
         assert_eq!(
             r.scene.battle_music_playing(),
             matches!(r.cpu.word(0x8018bf64), 5 | 7),

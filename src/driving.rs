@@ -134,7 +134,7 @@ impl Drive {
         }
     }
     pub fn cleared(&self) -> bool {
-        !self.awaiting_minion() && self.opponents.iter().all(|ai| ai.health().0 <= 0)
+        !self.awaiting_minion() && self.victory_fields > 0
     }
     fn awaiting_minion(&self) -> bool {
         self.player.level() == tm1_core::drive::Level::Rooftops && self.opponents.len() == 3
@@ -596,7 +596,7 @@ pub fn advance(
                 });
             }
         }
-        if state.player.health().0 > 0 && state.opponents.iter().all(|car| car.health().0 <= 0) {
+        if state.contacts.level_won() {
             state.advance_victory_delay(3);
         } else if state.player.health().0 <= 0 {
             state.advance_death(3);

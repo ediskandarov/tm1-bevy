@@ -1078,6 +1078,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         contact_phase(&player, &cars[i], 0, fields);
         tm1_start_death(&cars[i], 0);
     }
+    tm1_check_victory(&player, cars, count);
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();
     tm1_regenerate_stands();

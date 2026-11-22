@@ -457,6 +457,8 @@ void tm1_start_death(Car* car, u8 player)
     CarMotion* motion = player ? &PLAYER_CAR(car)->motion : &AI_CAR(car)->motion;
     flags[0] = 1;
     flags[21] = player || AI_CAR(car)->unk2C <= 0;
+    if (player && uaHasPlayerBeatThisLevel())
+        return;
     VECTOR3 pos = motion->pos;
     pos.vz = 0;
     do_smoke(&pos);
@@ -468,7 +470,7 @@ void tm1_start_death(Car* car, u8 player)
     stats->monster = 0;
     SetBounce(car, 0, 2, 0, player);
     arena_effect(&motion->pos, 29);
-    arena_effect(&motion->pos, 28);
+    arena_effect(&motion->pos, 37);
     flags[26] = 1;
 }
 

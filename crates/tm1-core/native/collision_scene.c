@@ -50,6 +50,7 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count, model_count;
+    bool beat_level;
     // Freeway barricades occupy 0..3. Rooftop crate and window pairs follow.
     DbSwitch* arena_switches[8];
     int drop_box_tick, window_tick;
@@ -699,6 +700,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->music = s->initial_music;
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
+    s->beat_level = false;
     for (int i = 0; i < s->num_targets; i++)
         s->targets[i].health = target_health(s->targets[i].type);
     for (int group = 0; group <= 1; group++) {
@@ -766,6 +768,25 @@ void tm1_active_opponents(CollisionScene* scene, int count)
     for (int i = 0; i < scene->model_count; i++)
         scene->opponents[i].drawMode = i < count;
     scene->opponent_count = count;
+    scene->beat_level = false; /* uaInitBossCar reopens the Rooftops battle. */
+}
+
+bool tm1_level_won(const CollisionScene* scene)
+{
+    return scene->beat_level;
+}
+u8 uaHasPlayerBeatThisLevel(void)
+{
+    return current && current->beat_level;
+}
+void tm1_check_victory(const PlayerCar* player, const AICar* cars, int count)
+{
+    if (current->beat_level || player->flags[0])
+        return;
+    for (int i = 0; i < count; i++)
+        if (cars[i].stats.unk40 > 0)
+            return;
+    current->beat_level = true;
 }
 
 s16 GetNumAICars(void)

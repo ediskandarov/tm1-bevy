@@ -27,6 +27,8 @@ After 1,201 idle fields the title cycles through the battle movie, the contest h
 
 ## Defeat and Minion introduction
 
+The single-player battle records victory after the AI updates, before arena targets move. Incoming weapon hits during the 180-field return delay now follow the original damage guard. A disc-backed replay checks that the JP executable queues one victory, a late bullet leaves the winner’s health unchanged, and the same shot deals damage after a stage reset. A simultaneous player and opponent death leaves the victory flag clear. Activating Minion clears the flag for the boss encounter.
+
 Losing the last life interrupts the level music, plays the engine rev and Sweet Tooth signature, shows the original “YOU LOSE!” lettering over the battle and returns to the title. A new contest starts in Arena with three lives. The return transition plays `UAMOVIES/TMTTL15S.STR` before the title theme starts. A disc-backed test traverses the defeat, title and fresh contest in one Bevy world.
 
 The Rooftops boss introduction uses the five original lines, font and screen coordinates from `screenBossCar`. Held input must be released before its five-second timer starts. The intermediate lost-life overlay follows the 30-field red ramp and 60-field hold in `screenLostALife`. The Bevy overlay uses alpha blending over the live render target. To capture the boss message on Metal, use `--level rooftops --demo-boss-screenshot local/boss-rooftops.png 36`.
