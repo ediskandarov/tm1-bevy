@@ -7,13 +7,19 @@ The player completed a manual keyboard playthrough, heard game sounds and reache
 Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Warthog, Mr. Grimm, Pit Viper, Thumper, Spectre and Road Kill
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
-Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The original front end and multiplayer are outstanding.
+Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The full retail menu and multiplayer are outstanding.
 
 ## Contest ending
 
-After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. Completing or skipping the credits currently starts a fresh Arena contest with the same vehicle.
+After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. Completing or skipping the credits returns to the title screen.
 
-The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. Password entry, the title movie and difficulty-specific bonus progression remain open.
+The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The title movie, non-stage access codes and difficulty-specific bonus progression remain open.
+
+## Arena 5 and stage passwords
+
+The contest selector accepts the six JP stage passwords. P opens a five-slot editor with four controller symbols, left/right cursor wrap, submission and retry. During a fight, P shows the current stage password in keyboard digits. The bonus Arena 5 password is 21422. XARENA1 supplies the arena, the retail random deck deals five rivals and CDDA track 2 plays. Clearing this bonus contest returns to the title.
+
+The bonus encounter comparison runs all twelve vehicle selections against the JP executable. The frontend test enters an invalid password, retries, enters 21422 and starts a five-opponent fight as Darkside. Metal captures on Apple M3 Pro cover the title and a running bonus encounter.
 
 ## Warehouse
 

@@ -1,6 +1,7 @@
 //! Arena driving frontend.
 mod additive;
 mod campaign;
+mod contest;
 mod driving;
 mod ending;
 mod gpu_timing;
@@ -20,13 +21,19 @@ fn main() -> Result<()> {
         "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
+    let mut menu = flag.is_none();
     use tm1_core::drive::{Level, Vehicle};
     let mut level = Level::Arena;
     let mut vehicle = Vehicle::YellowJacket;
     while matches!(
         flag.as_ref().and_then(|s| s.to_str()),
-        Some("--car" | "--level")
+        Some("--car" | "--level" | "--menu")
     ) {
+        if flag.as_deref() == Some(std::ffi::OsStr::new("--menu")) {
+            menu = true;
+            flag = args.next();
+            continue;
+        }
         if flag.as_deref() == Some(std::ffi::OsStr::new("--level")) {
             level = match args.next().as_ref().and_then(|s| s.to_str()) {
                 Some("warehouse") => Level::Warehouse,
@@ -35,8 +42,9 @@ fn main() -> Result<()> {
                 Some("city-park") => Level::CityPark,
                 Some("freeway") => Level::Freeway,
                 Some("arena") => Level::Arena,
+                Some("arena-5") => Level::Arena5,
                 _ => anyhow::bail!(
-                    "--level requires arena, warehouse, freeway, city-park, cyburbia or rooftops"
+                    "--level requires arena, warehouse, freeway, city-park, cyburbia, rooftops or arena-5"
                 ),
             };
             flag = args.next();
@@ -83,7 +91,11 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let stage = campaign::Stage::load(&disc, level, vehicle, None)?;
+    let stage = if menu {
+        None
+    } else {
+        Some(campaign::Stage::load(&disc, level, vehicle, None)?)
+    };
     eprintln!(
         "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview, V radar."
     );
@@ -98,7 +110,12 @@ fn main() -> Result<()> {
             }),
             ..default()
         }));
-    stage.install(app.world_mut());
+    if let Some(stage) = stage {
+        stage.install(app.world_mut());
+        app.add_systems(Startup, (render::setup, music::start, sfx::start));
+    } else {
+        contest::show(app.world_mut(), vehicle, level)?;
+    }
     app.add_plugins(additive::AdditivePlugin);
     if demo {
         app.add_plugins((
@@ -107,7 +124,10 @@ fn main() -> Result<()> {
         ));
     }
     let exit = app
-        .add_systems(Startup, (render::setup, music::start, sfx::start))
+        .add_systems(
+            Update,
+            contest::update.run_if(resource_exists::<contest::Contest>),
+        )
         .add_systems(
             Update,
             (
@@ -118,7 +138,8 @@ fn main() -> Result<()> {
                 render::boss_intro,
             )
                 .chain()
-                .run_if(not(resource_exists::<ending::Ending>)),
+                .run_if(not(resource_exists::<ending::Ending>))
+                .run_if(not(resource_exists::<contest::Contest>)),
         )
         .add_systems(
             Update,
@@ -126,16 +147,19 @@ fn main() -> Result<()> {
                 smoke::capture,
                 sfx::update
                     .after(driving::advance)
-                    .run_if(not(resource_exists::<ending::Ending>)),
+                    .run_if(not(resource_exists::<ending::Ending>))
+                    .run_if(not(resource_exists::<contest::Contest>)),
                 music::control
                     .after(driving::advance)
-                    .run_if(not(resource_exists::<ending::Ending>)),
+                    .run_if(not(resource_exists::<ending::Ending>))
+                    .run_if(not(resource_exists::<contest::Contest>)),
             ),
         )
         .add_systems(
             Update,
             campaign::advance
                 .run_if(not(resource_exists::<ending::Ending>))
+                .run_if(not(resource_exists::<contest::Contest>))
                 .after(render::boss_intro)
                 .after(sfx::update)
                 .after(music::control)

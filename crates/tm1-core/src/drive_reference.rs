@@ -37,9 +37,11 @@ impl Reference {
         let opponent = match level {
             Level::Arena => Vehicle::Outlaw,
             Level::Warehouse => vehicle.warehouse_opponents()[0],
-            Level::Freeway | Level::CityPark | Level::Cyburbia | Level::Rooftops => {
-                level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1)[0]
-            }
+            Level::Freeway
+            | Level::CityPark
+            | Level::Cyburbia
+            | Level::Rooftops
+            | Level::Arena5 => level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1)[0],
         };
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
@@ -1255,7 +1257,7 @@ fn campaign_player_carryover_matches_retail() {
             Level::CityPark => 0x80127694,
             Level::Cyburbia => 0x801281b8,
             Level::Rooftops => 0x8012b5a4,
-            Level::Arena => unreachable!(),
+            Level::Arena | Level::Arena5 => unreachable!(),
         };
         r.cpu.call(points, &[]);
         put(&mut r.cpu, 0x8018c3b4, level as u32);
@@ -1435,6 +1437,14 @@ fn minion_encounter_original() {
     }
 }
 
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn bonus_arena_original() {
+    for vehicle in Vehicle::ROSTER {
+        compare_encounter(vehicle, 20, Level::Arena5);
+    }
+}
+
 fn start_retail_death(cpu: &mut Cpu, car: u32, player: bool) {
     let flags = car + if player { 0xa0 } else { 0x66 };
     let health = car + if player { 0x178 } else { 0x24c };
@@ -1460,7 +1470,9 @@ fn compare_battle(vehicle: Vehicle, charge: i16, level: Level, boss: bool) {
     }
     r.police.state[0x40] = 0;
     for entry in match level {
-        Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::Arena | Level::Arena5 => {
+            [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8]
+        }
         Level::Rooftops => [0x8012b5a4, 0x8013026c, 0x80130a7c, 0x801312ec, 0x80131368],
         Level::Cyburbia => [0x801281b8, 0x8012ed70, 0x801309c8, 0x80130ee4, 0x8013135c],
         Level::CityPark => [0x80127694, 0x8012da2c, 0x80130938, 0x80130c20, 0x8013131c],
@@ -1482,7 +1494,10 @@ fn compare_battle(vehicle: Vehicle, charge: i16, level: Level, boss: bool) {
     );
     r.cpu.put(
         0x8018c374,
-        &[u8::from(!matches!(level, Level::Arena | Level::Rooftops))],
+        &[u8::from(!matches!(
+            level,
+            Level::Arena | Level::Arena5 | Level::Rooftops
+        ))],
     );
     put(&mut r.cpu, 0x8018c3b4, level as u32);
     r.cpu.put(PLAYER + 0x388, &[0xff; 0x24]);

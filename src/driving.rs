@@ -169,14 +169,7 @@ pub fn advance(
     } else if drive.paused {
         "Paused • P to resume"
     } else {
-        match drive.player.level() {
-            tm1_core::drive::Level::Arena => "Arena",
-            tm1_core::drive::Level::Warehouse => "Warehouse",
-            tm1_core::drive::Level::Rooftops => "Rooftops",
-            tm1_core::drive::Level::Cyburbia => "Cyburbia",
-            tm1_core::drive::Level::CityPark => "City Park",
-            tm1_core::drive::Level::Freeway => "Freeway",
-        }
+        drive.player.level().name()
     };
     let title = format!(
         "TM1 • {status}   |   {} {}   {} {}   |   Fire missiles {}",

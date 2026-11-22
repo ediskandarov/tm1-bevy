@@ -397,6 +397,28 @@ pub fn hud(
     } else {
         ""
     };
+    let password = if drive.paused {
+        drive
+            .player
+            .level()
+            .password()
+            .map(|code| {
+                let digits: String = code
+                    .bytes()
+                    .map(|c| match c {
+                        b'<' => '1',
+                        b'=' => '2',
+                        b'>' => '3',
+                        b'@' => '4',
+                        _ => ' ',
+                    })
+                    .collect();
+                format!("   Password  {digits}")
+            })
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
     let (weapon, ammo) = drive.player.weapon();
     let remaining = if drive.opponents.len() > 1 {
         format!(
@@ -413,7 +435,7 @@ pub fn hud(
     };
     let message = format!(
         "{}  {}      {}  {}{remaining}     Lives  {}
-{}  × {}     {}",
+{}  × {}     {}{password}",
         drive.nearest_opponent().vehicle().name(),
         drive.nearest_opponent().health().0.max(0),
         drive.player.vehicle().name(),

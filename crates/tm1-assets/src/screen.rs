@@ -117,13 +117,20 @@ impl Fonts {
         self.glyph(Face::Text, b'M').h as i32
     }
     pub fn centered(&self, frame: &mut [u8], face: Face, y: i32, text: &str) {
+        let spacing = match face {
+            Face::Text => -1,
+            Face::Password => 7,
+        };
+        let advance = |c| self.glyph(face, c).w as i32 + spacing;
+        let width: i32 = text.bytes().map(advance).sum();
+        self.at(frame, face, 159 - (width >> 1), y, text);
+    }
+    pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
         let (spacing, tint) = match face {
             Face::Text => (-1, [115, 84, 35]),
             Face::Password => (7, [50, 50, 50]),
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        let width: i32 = text.bytes().map(advance).sum();
-        let mut x = 159 - (width >> 1);
         for c in text.bytes() {
             let g = self.glyph(face, c);
             if c != b' ' {

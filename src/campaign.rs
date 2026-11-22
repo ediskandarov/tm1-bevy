@@ -30,7 +30,7 @@ impl Stage {
         let dmd = Dmd::parse(&data)?;
         ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
         let mut scene = dmd.extract_kind(1)?;
-        if level == Level::Arena {
+        if matches!(level, Level::Arena | Level::Arena5) {
             scene.polygons.extend(dmd.extract_kind(3)?.polygons);
         }
         for issue in &scene.omitted_nodes {
@@ -69,7 +69,7 @@ impl Stage {
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
         let arena = render::Arena::new(
             scene,
-            (level != Level::Arena)
+            (!matches!(level, Level::Arena | Level::Arena5))
                 .then(|| dmd.extract_kind(2))
                 .transpose()?,
             player_mesh,
@@ -94,7 +94,7 @@ impl Stage {
             music: music::Music::level(disc, level)?,
             sounds: sfx::Sounds::load(disc, vehicle, &models)?,
             clear: ClearColor(match level {
-                Level::Arena => Color::srgb(0.035, 0.045, 0.065),
+                Level::Arena | Level::Arena5 => Color::srgb(0.035, 0.045, 0.065),
                 Level::Rooftops => Color::srgb_u8(0, 20, 0),
                 Level::Cyburbia => Color::srgb_u8(110, 110, 100),
                 Level::CityPark => Color::srgb_u8(75, 60, 30),
@@ -115,6 +115,14 @@ impl Stage {
 pub fn advance(world: &mut World) {
     let drive = world.resource::<driving::Drive>();
     if !drive.stage_finished() {
+        return;
+    }
+    if drive.player.level() == Level::Arena5 {
+        // This contest ends at the title, without playing the Rooftops ending.
+        if let Err(e) = crate::contest::open(world) {
+            error!("Opening contest screen failed: {e:#}");
+            world.write_message(AppExit::error());
+        }
         return;
     }
     let Some(level) = drive.player.level().next() else {

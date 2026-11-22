@@ -25,9 +25,45 @@ pub enum Level {
     CityPark,
     Cyburbia,
     Rooftops,
+    Arena5,
 }
 
 impl Level {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Arena => "Arena",
+            Self::Warehouse => "Warehouse",
+            Self::Freeway => "Freeway",
+            Self::CityPark => "City Park",
+            Self::Cyburbia => "Cyburbia",
+            Self::Rooftops => "Rooftops",
+            Self::Arena5 => "Arena 5",
+        }
+    }
+    /// The five controller glyphs used by the JP password screen.
+    pub fn password(self) -> Option<&'static str> {
+        match self {
+            Self::Arena => None,
+            Self::Warehouse => Some("@<=@@"),
+            Self::Freeway => Some(">==@<"),
+            Self::CityPark => Some("><=@="),
+            Self::Cyburbia => Some(">=<<<"),
+            Self::Rooftops => Some("=<>@>"),
+            Self::Arena5 => Some("=<@=="),
+        }
+    }
+    pub fn from_stage_password(code: &str) -> Option<Self> {
+        [
+            Self::Warehouse,
+            Self::Freeway,
+            Self::CityPark,
+            Self::Cyburbia,
+            Self::Rooftops,
+            Self::Arena5,
+        ]
+        .into_iter()
+        .find(|level| level.password() == Some(code))
+    }
     pub fn next(self) -> Option<Self> {
         match self {
             Self::Arena => Some(Self::Warehouse),
@@ -35,12 +71,13 @@ impl Level {
             Self::Freeway => Some(Self::CityPark),
             Self::CityPark => Some(Self::Cyburbia),
             Self::Cyburbia => Some(Self::Rooftops),
-            Self::Rooftops => None,
+            Self::Rooftops | Self::Arena5 => None,
         }
     }
     pub fn opponents(self, player: Vehicle, deck: &mut ArenaDeck, seed: &mut u32) -> Vec<Vehicle> {
         match self {
             Self::Arena => vec![deck.draw(player, seed)],
+            Self::Arena5 => (0..5).map(|_| deck.draw(player, seed)).collect(),
             Self::Warehouse => player.warehouse_opponents(),
             Self::Freeway => player.freeway_opponents(),
             Self::Rooftops => player.opponents_from_masks([
@@ -57,7 +94,7 @@ impl Level {
     pub fn database(self, vehicle: Vehicle) -> &'static str {
         use Vehicle::*;
         match self {
-            Self::Arena => "XARENA1",
+            Self::Arena | Self::Arena5 => "XARENA1",
             Self::Rooftops => match vehicle {
                 SweetTooth | YellowJacket | Darkside | Outlaw | CrimsonFury | Thumper => "ROOF1",
                 _ => "ROOF2",

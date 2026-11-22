@@ -15,7 +15,7 @@ impl Music {
         let track = match level {
             tm1_core::drive::Level::Rooftops => 8,
             tm1_core::drive::Level::Cyburbia => 6,
-            tm1_core::drive::Level::Freeway => 2,
+            tm1_core::drive::Level::Freeway | tm1_core::drive::Level::Arena5 => 2,
             tm1_core::drive::Level::Arena => 3,
             tm1_core::drive::Level::Warehouse | tm1_core::drive::Level::CityPark => 4,
         };

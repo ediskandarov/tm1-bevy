@@ -1,5 +1,5 @@
 //! Single-player JP SCREEN.c reward and scrolling credits.
-use crate::campaign::{Campaign, Stage, StageEntity};
+use crate::campaign::{Campaign, StageEntity};
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
@@ -14,7 +14,7 @@ use tm1_assets::{
     screen::{self, Face, Fonts, HEIGHT, WIDTH},
     texture::Vram,
 };
-use tm1_core::drive::{Level, Vehicle};
+use tm1_core::drive::Vehicle;
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Phase {
@@ -53,7 +53,10 @@ impl Ending {
         let (prize, password) = [
             ("Infinite Weapons", "< =@@"),
             ("Minion and Friends", "<>@=<"),
-            ("Arena with 5 Opponents", "=<@=="),
+            (
+                "Arena with 5 Opponents",
+                tm1_core::drive::Level::Arena5.password().unwrap(),
+            ),
             ("Helicopter View", "@@<> "),
         ][draw as usize];
         for (y, line) in [
@@ -285,6 +288,16 @@ pub fn begin(world: &mut World) -> Result<()> {
     crate::campaign::clear_stage(world);
     let engine = world.resource::<crate::sfx::Sounds>().ending_engine();
     world.spawn((StageEntity, EndingEngine, engine));
+    ending.image = spawn_screen(world, EndingScreen, ending.reward.clone());
+    world.insert_resource(ending);
+    Ok(())
+}
+
+pub(crate) fn spawn_screen(
+    world: &mut World,
+    marker: impl Component,
+    pixels: Vec<u8>,
+) -> Handle<Image> {
     let mut image = Image::new(
         Extent3d {
             width: WIDTH as u32,
@@ -292,21 +305,16 @@ pub fn begin(world: &mut World) -> Result<()> {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        ending.reward.clone(),
+        pixels,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
     );
     image.sampler = ImageSampler::nearest();
-    ending.image = world.resource_mut::<Assets<Image>>().add(image);
+    let handle = world.resource_mut::<Assets<Image>>().add(image);
     world.spawn((StageEntity, Camera2d));
-    world.spawn((
-        StageEntity,
-        EndingScreen,
-        Sprite::from_image(ending.image.clone()),
-    ));
+    world.spawn((StageEntity, marker, Sprite::from_image(handle.clone())));
     world.insert_resource(ClearColor(Color::BLACK));
-    world.insert_resource(ending);
-    Ok(())
+    handle
 }
 
 pub fn update(
@@ -399,21 +407,10 @@ pub fn finish(world: &mut World) {
     if ending.phase != Phase::Finished {
         return;
     }
-    let result = Stage::load(
-        &world.resource::<Campaign>().0,
-        Level::Arena,
-        ending.vehicle,
-        None,
-    );
-    match result {
-        Ok(stage) => {
-            world.remove_resource::<Ending>();
-            crate::campaign::replace(world, stage);
-        }
-        Err(e) => {
-            error!("Starting a new contest failed: {e:#}");
-            world.write_message(AppExit::error());
-        }
+    world.remove_resource::<Ending>();
+    if let Err(e) = crate::contest::open(world) {
+        error!("Opening contest screen failed: {e:#}");
+        world.write_message(AppExit::error());
     }
 }
 
