@@ -1564,6 +1564,9 @@ fn draw_instruments(
             health_colors(target.health_tier()),
         );
     }
+    if drive.player.gun_overheated() {
+        hud.bar([216, 214, 38, 10], [[255, 0, 0]; 2]);
+    }
     for (i, (x, y)) in [(102, 40), (151, 37), (216, 202), (216, 215)]
         .into_iter()
         .enumerate()
@@ -1586,9 +1589,6 @@ fn draw_instruments(
     if let Some(icon) = icons.weapons.get(slot).filter(|_| ammo > 0) {
         hud.sprite(255, 210, *icon, white, true);
         hud.number(290, 212, i32::from(ammo), &icons.digits, green);
-    }
-    if drive.player.gun_overheated() {
-        hud.bar([216, 214, 38, 10], [[255, 0, 0]; 2]);
     }
     hud.number(
         243,
@@ -1804,6 +1804,10 @@ pub fn duel_view(
         let icons = &arena.icons;
         let (weapon, ammo, special) = car.dashboard_weapon();
         let green = [36, 120, 36];
+        hud.sprite(309, 189 + bias, icons.life, [128; 3], true);
+        if car.gun_overheated() {
+            hud.bar([216, 214 + bias, 38, 10], [[255, 0, 0]; 2]);
+        }
         for (index, y) in [(2, 202), (3, 215)] {
             hud.sprite(216, y + bias, icons.labels[index], green, false);
         }
@@ -1826,9 +1830,6 @@ pub fn duel_view(
         if let Some(icon) = icons.weapons.get(weapon).filter(|_| ammo > 0) {
             hud.sprite(255, 210 + bias, *icon, [128; 3], true);
             hud.number(290, 212 + bias, i32::from(ammo), &icons.digits, green);
-        }
-        if car.gun_overheated() {
-            hud.bar([216, 214 + bias, 38, 10], [[255, 0, 0]; 2]);
         }
     }
     panel.write(&mut meshes, &arena.mesh);
