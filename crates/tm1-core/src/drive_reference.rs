@@ -1959,10 +1959,26 @@ fn player_special_launch_original() {
         r.scene.phase(&mut r.player, &mut r.police, 1, 3);
         r.compare();
         for _ in 0..3 {
+            let pose = |cpu: &Cpu| {
+                let b = 0x80198c28;
+                [0, 4, 8, 12, 16, 20, 0x34, 0x28].map(|off| {
+                    if off == 0x34 {
+                        (cpu.word(b + off) & 255) as i32
+                    } else {
+                        cpu.word(b + off) as i32
+                    }
+                })
+            };
+            let main_pose = pose(&r.cpu);
             r.cpu.call(0x8010d03c, &[]);
             r.cpu.call(0x80137d2c, &[]);
             r.scene.phase(&mut r.player, &mut r.police, 2, 3);
             r.compare();
+            for (secondary, expected) in [(false, main_pose), (true, pose(&r.cpu))] {
+                let mut bullets = [[0; 8]; 40];
+                assert_eq!(r.scene.drawn_bullets(secondary, &mut bullets), 1);
+                assert_eq!(bullets[0], expected, "{vehicle:?} secondary {secondary}");
+            }
             let mut segments = [[[0; 3]; 2]; 40];
             assert_eq!(r.scene.bullet_segments(&mut segments), 1, "{vehicle:?}");
             for (point, offset) in [12, 0].into_iter().enumerate() {
@@ -2050,6 +2066,101 @@ fn outlaw_taser_original() {
                     0
                 }
             );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn bullet_draw_packets_original() {
+    use crate::bullet::{Primitive, project};
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let art = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .special_bullet_frames()
+        .unwrap();
+    let mut r = Reference::new();
+    let cpu = &mut r.cpu;
+    let matrix = cpu.call(0x8010af70, &[0]);
+    cpu.put(matrix, &[0; 32]);
+    for offset in [0, 8, 16] {
+        cpu.put(matrix + offset, &4096i16.to_le_bytes());
+    }
+    let translation = cpu.call(0x8010af54, &[0]);
+    cpu.put(translation, &[0; 12]);
+    cpu.call(0x8010aed4, &[0, VIEW_OUTPUT, VIEW_OUTPUT + 4]);
+    let center = [0, 4].map(|k| cpu.word(VIEW_OUTPUT + k) as i32);
+    let focal = [0x80109e3c, 0x80109e74].map(|f| cpu.call(f, &[0]) as i32);
+    let ot = 0x80010000;
+    let packet = RENDER_SCRATCH + 0x100;
+    put(cpu, RENDER_SCRATCH, ot);
+    put(cpu, RENDER_SCRATCH + 12, packet + 256);
+    let bullet = 0x80198c28;
+    for kind in [0, 2, 4, 6, 5, 7, 15, 17, 19, 21] {
+        for life in 1..=8 {
+            let head = [-95, 41, 390];
+            let tail = [101, -33, 422];
+            for (i, n) in head.into_iter().chain(tail).enumerate() {
+                put(cpu, bullet + 4 * i as u32, n as u32);
+            }
+            cpu.put(bullet + 0x34, &[kind as u8]);
+            put(cpu, bullet + 0x28, life as u32);
+            put(cpu, RENDER_SCRATCH + 8, packet);
+            put(cpu, ot + 4 * (head[2] as u32 >> 3), 0xffffff);
+            cpu.put(packet, &[0; 160]);
+            cpu.call(0x8010d434, &[RENDER_SCRATCH, 0]);
+            assert_eq!(
+                cpu.word(ot + 4 * (head[2] as u32 >> 3)) & 0xffffff,
+                packet & 0xffffff
+            );
+            let xy = |at| {
+                let w = cpu.word(packet + at);
+                [
+                    w as i16 as i32 - center[0],
+                    (w >> 16) as i16 as i32 - center[1],
+                ]
+            };
+            let color = |at| {
+                let [r, g, b, _] = cpu.word(packet + at).to_le_bytes();
+                [r, g, b]
+            };
+            match project(kind, life, head, tail, focal, center).unwrap() {
+                Primitive::Line { points, colors } => {
+                    assert_eq!(points, [8, 16].map(xy));
+                    assert_eq!(colors, [4, 12].map(color));
+                }
+                Primitive::Triangle { points, colors } => {
+                    assert_eq!(points, [8, 16, 24].map(xy));
+                    assert_eq!(colors, [4, 12, 20].map(color));
+                }
+                Primitive::Sprite {
+                    center: [x, y],
+                    radius,
+                    group,
+                    frame,
+                    tint,
+                } => {
+                    assert_eq!(
+                        [8, 16, 24, 32].map(xy),
+                        [
+                            [x - radius, y - radius],
+                            [x + radius, y - radius],
+                            [x - radius, y + radius],
+                            [x + radius, y + radius]
+                        ]
+                    );
+                    assert_eq!(color(4), tint);
+                    let sprite = &art[group].unwrap()[frame];
+                    let uv = [12, 20, 28, 36].map(|at| {
+                        let [u, v, _, _] = cpu.word(packet + at).to_le_bytes();
+                        [u, v]
+                    });
+                    assert_eq!(sprite.uv, uv, "kind {kind}, life {life}");
+                    assert_eq!(sprite.texture.clut, (cpu.word(packet + 12) >> 16) as u16);
+                    assert_eq!(sprite.texture.page, (cpu.word(packet + 20) >> 16) as u16);
+                }
+            }
         }
     }
 }

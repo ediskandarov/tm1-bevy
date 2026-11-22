@@ -69,6 +69,8 @@ typedef struct CollisionScene {
     u16 stand_slots, active_stands;
     int regen_timer;
     Bullet bullets[40];
+    s32 drawn_bullets[40][8];
+    size_t drawn_bullet_count;
     Missile missiles[10];
     DropWeap drops[12];
     ArenaTaser tasers[3];
@@ -702,6 +704,7 @@ void tm1_new_life(CollisionScene* s)
 void tm1_reset_projectiles(CollisionScene* s)
 {
     memset(s->bullets, 0, sizeof s->bullets);
+    s->drawn_bullet_count = 0;
     memset(s->effects, 0, sizeof s->effects);
     s->next_effect = 0;
     s->has_temporary_hole = false;
@@ -1869,6 +1872,33 @@ size_t tm1_taser_arcs(CollisionScene* s, VECTOR3 (*out)[16])
         if (s->tasers[i].visible)
             memcpy(out[count++], s->tasers[i].points, sizeof s->tasers[i].points);
     return count;
+}
+
+static size_t copy_bullets(const CollisionScene* scene, s32 (*out)[8])
+{
+    size_t count = 0;
+    for (size_t i = 0; i < 40; i++) {
+        const Bullet* b = &scene->bullets[i];
+        if (b->life > 0) {
+            s32 pose[] = { b->pos.vx, b->pos.vy, b->pos.vz, b->prev.vx, b->prev.vy,
+                b->prev.vz, b->kind, b->life };
+            memcpy(out[count++], pose, sizeof pose);
+        }
+    }
+    return count;
+}
+
+void arena_capture_bullets(void)
+{
+    current->drawn_bullet_count = copy_bullets(current, current->drawn_bullets);
+}
+
+size_t tm1_drawn_bullets(CollisionScene* scene, int second_view, s32 (*out)[8])
+{
+    if (second_view)
+        return copy_bullets(scene, out);
+    memcpy(out, scene->drawn_bullets, scene->drawn_bullet_count * sizeof(*out));
+    return scene->drawn_bullet_count;
 }
 
 size_t tm1_bullet_segments(CollisionScene* s, VECTOR3 (*segments)[2])

@@ -41,6 +41,7 @@ const MIRROR_FOCAL: f32 = 91.;
 
 #[derive(Default)]
 struct ViewMeshes {
+    secondary: bool,
     additive: Handle<Mesh>,
     solids: Handle<Mesh>,
     transparent: Handle<Mesh>,
@@ -58,6 +59,7 @@ pub struct Arena {
     missile_models: [Option<Scene>; 2],
     merc_models: [Vec<Scene>; 2],
     pedestrians: Vec<Vec<Scene>>,
+    bullet_frames: [Option<[SpriteFrame; 4]>; 4],
     drop_sprites: [SpriteFrame; 4],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
@@ -102,6 +104,7 @@ impl Arena {
         flame_frames: [SpriteFrame; 10],
         burn_frames: [SpriteFrame; 8],
         smoke_frames: [[SpriteFrame; 16]; 2],
+        bullet_frames: [Option<[SpriteFrame; 4]>; 4],
         drop_sprites: [SpriteFrame; 4],
         contrail_frames: [SpriteFrame; 8],
         icons: tm1_assets::scene::DashboardIcons,
@@ -144,6 +147,7 @@ impl Arena {
             .chain(&burn_frames)
             .chain(smoke_frames.iter().flatten())
             .chain(&contrail_frames)
+            .chain(bullet_frames.iter().flatten().flatten())
             .chain(&arrows)
             .map(|f| (f, true))
             .chain(drop_sprites.iter().map(|f| (f, false)))
@@ -200,6 +204,7 @@ impl Arena {
             flame_frames,
             burn_frames,
             smoke_frames,
+            bullet_frames,
             drop_sprites,
             contrail_frames,
             overview: false,
@@ -419,6 +424,7 @@ pub fn setup(
         (1, &mut arena_views.main_view),
         (3, &mut arena_views.rear_view),
     ] {
+        view.secondary = layer == 3;
         view.additive = meshes.add(Batch::default().mesh());
         commands.spawn((
             crate::campaign::StageEntity,
@@ -1418,8 +1424,8 @@ fn draw_view(
             );
         }
     };
-    let mut segments = [[[0; 3]; 2]; 40];
-    let count = contacts.bullet_segments(&mut segments);
+    let mut bullets = [[0; 8]; 40];
+    let count = contacts.drawn_bullets(view.secondary, &mut bullets);
     let mut arcs = [[[0; 3]; 16]; 3];
     let arc_count = contacts.taser_arcs(&mut arcs);
     let camera_point = |p: [i32; 3]| {
@@ -1427,7 +1433,17 @@ fn draw_view(
         Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
     };
     // draw_tasers emits one opaque Gouraud line per adjacent pair in the PS1 framebuffer.
-    let pixel_scale = focal / if batch_bodies { 228. } else { 204. };
+    let (lens, center) = if batch_bodies {
+        (228, [160, 60])
+    } else if view.secondary {
+        (
+            MIRROR_FOCAL as i32,
+            [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
+        )
+    } else {
+        (204, [160, 120])
+    };
+    let pixel_scale = focal / lens as f32;
     for arc in &arcs[..arc_count] {
         let points = arc.map(camera_point);
         for (j, segment) in points.windows(2).enumerate() {
@@ -1448,25 +1464,75 @@ fn draw_view(
             );
         }
     }
-    for segment in &segments[..count] {
-        let mut v = segment.map(camera_point);
-        if v[0].z < near && v[1].z < near {
+    for &[x, y, z, px, py, pz, kind, life] in &bullets[..count] {
+        let head = camera_point([x, y, z]);
+        let tail = camera_point([px, py, pz]);
+        let camera_coords = |p: Vec3| [p.x as i32, -p.y as i32, p.z as i32];
+        let Some(primitive) = tm1_core::bullet::project(
+            kind,
+            life,
+            camera_coords(head),
+            camera_coords(tail),
+            [lens; 2],
+            center,
+        ) else {
             continue;
+        };
+        let screen = |[x, y]: [i32; 2]| Vec2::new(x as f32, -y as f32) * pixel_scale;
+        let vertex = |point: Vec2, depth: f32| {
+            eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
+        };
+        let rgb = |[r, g, b]: [u8; 3]| Color::srgb_u8(r, g, b).to_linear().to_f32_array();
+        use tm1_core::bullet::Primitive;
+        match primitive {
+            Primitive::Line { points, colors } => {
+                let [a, b] = points.map(screen);
+                let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
+                quad(
+                    &mut solids,
+                    [a - normal, a + normal, b - normal, b + normal],
+                    [head.z, head.z, tail.z, tail.z],
+                    colors.map(rgb),
+                );
+            }
+            Primitive::Triangle { points, colors } => {
+                for ((point, color), depth) in
+                    points.into_iter().zip(colors).zip([head.z, head.z, tail.z])
+                {
+                    solids.push(vertex(screen(point), depth), white, rgb(color));
+                }
+            }
+            Primitive::Sprite {
+                center,
+                radius,
+                group,
+                frame,
+                tint,
+            } => {
+                let Some(frames) = &arena.bullet_frames[group] else {
+                    continue;
+                };
+                let sprite = &frames[frame];
+                let tile = arena.tiles[&(Some(sprite.texture), true)];
+                let batch = if (sprite.texture.page >> 5) & 3 == 1 {
+                    &mut additive
+                } else {
+                    &mut transparent
+                };
+                let [r, g, b] = tint.map(|v| f32::from(v) / 128.);
+                for &i in indices(4) {
+                    let point = [
+                        center[0] + if i & 1 == 0 { -radius } else { radius },
+                        center[1] + if i < 2 { -radius } else { radius },
+                    ];
+                    batch.push(
+                        vertex(screen(point), head.z),
+                        arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
+                        [r, g, b, 1.],
+                    );
+                }
+            }
         }
-        if (v[0].z < near) != (v[1].z < near) {
-            let t = (near - v[0].z) / (v[1].z - v[0].z);
-            let cross = v[0].lerp(v[1], t);
-            let i = usize::from(v[1].z < near);
-            v[i] = cross;
-        }
-        let [a, b] = v.map(|p| p.truncate() * (focal / p.z));
-        let normal = (b - a).normalize_or_zero().perp();
-        quad(
-            &mut transparent,
-            [a - normal, a + normal, b - normal, b + normal],
-            [v[0].z, v[0].z, v[1].z, v[1].z],
-            [[1., 0.82, 0.22, 1.]; 2],
-        );
     }
     for &[x, y, z, kind, ttl] in &effects[..effect_count] {
         let delta = world([x as f32, y as f32, z as f32]) - eye;

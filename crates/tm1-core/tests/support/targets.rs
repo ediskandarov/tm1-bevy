@@ -11,6 +11,7 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
     cpu.put(PROCESS, &[8, 0, 224, 3, 0, 0, 0, 0]);
     let mut calls = Vec::new();
     let mut pedestrians = Vec::new();
+    let mut bullet_art = Vec::new();
     for &(root, _) in roots {
         cpu.call_observed(0x801001f8, &[root], 0x80000080, |cpu| {
             if cpu.pc() != PROCESS {
@@ -19,6 +20,9 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
             let kind = cpu.r[4];
             if matches!(kind, 751 | 756 | 760 | 772 | 773 | 775..=778 | 781 | 782) {
                 pedestrians.push((kind, cpu.r[5]));
+            }
+            if matches!(kind, 301 | 302 | 308 | 309) {
+                bullet_art.push((kind, cpu.r[5]));
             }
             let tracked = matches!(
                 kind,
@@ -32,6 +36,9 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
         });
     }
     cpu.put(PROCESS, &original);
+    for (kind, node) in bullet_art {
+        cpu.call(0x8010c108, &[kind, node]);
+    }
     for i in 0..50 {
         cpu.put(0x801ac968 + i * 28 + 8, &u32::MAX.to_le_bytes());
     }

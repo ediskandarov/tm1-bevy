@@ -1006,6 +1006,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
         arena_move_drops();
         arena_move_flames();
         arena_move_tasers();
+        arena_capture_bullets();
         arena_move_bullets();
         arena_move_fragments();
         arena_animate_flames();

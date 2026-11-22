@@ -9,6 +9,12 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The title offers the single-player contest, local two-player battle and main options.
 
+## Bullet rendering
+
+The main view draws bullets before their movement step. The rear-view mirror and the second duel camera use the updated positions and lifetimes, following RT.c. Machine guns draw two-color tracers. Darkside and Crimson Fury draw tapered triangles. Sweet Tooth, Yellow Jacket, Pit Viper, Mr. Grimm and Minion use the weapon sprites stored in the current stage database. The two-frame Pit Viper sequence repeats across four animation slots.
+
+A disc-backed test executes the original bullet renderer for ten projectile types over eight successive lifetime values. It compares the emitted PlayStation primitive coordinates, vertex colors, UVs, texture page and palette with the port. The special-launch replay also checks both camera snapshots against the live JP bullet record. The Metal capture at `local/warehouse-grimm-shot.png` shows the skull ahead of the motorcycle on update seven.
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.

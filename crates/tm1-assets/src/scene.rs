@@ -233,6 +233,22 @@ impl<'a> Dmd<'a> {
     pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
         self.sprite_frames(650, true)
     }
+    /// WEAPON.c bulMakeSpecialBullet registers four slots per available weapon.
+    pub fn special_bullet_frames(&self) -> Result<[Option<[SpriteFrame; 4]>; 4]> {
+        let mut groups = [None; 4];
+        for (group, kind) in groups.iter_mut().zip([301, 302, 309, 308]) {
+            if let Some(p) = self.find_sprite_node(0, kind)? {
+                let count = u32le(self.data, p + 16)? as usize;
+                *group = Some(if kind == 309 {
+                    let [a, b] = self.read_sprite_frames(p, false, count)?;
+                    [a, b, a, b]
+                } else {
+                    self.read_sprite_frames(p, false, count)?
+                });
+            }
+        }
+        Ok(groups)
+    }
     pub fn drop_sprites(&self) -> Result<[SpriteFrame; 4]> {
         let sprite = |kind| self.sprite_frames::<1>(kind, false).map(|[frame]| frame);
         Ok([sprite(210)?, sprite(212)?, sprite(213)?, sprite(214)?])
@@ -375,6 +391,10 @@ impl<'a> Dmd<'a> {
         Ok(rects)
     }
     fn sprite_node(&self, op: u8, kind: u16) -> Result<usize> {
+        self.find_sprite_node(op, kind)?
+            .ok_or_else(|| anyhow::anyhow!("missing sprite animation {kind}"))
+    }
+    fn find_sprite_node(&self, op: u8, kind: u16) -> Result<Option<usize>> {
         let mut pending: Vec<_> = self
             .roots
             .iter()
@@ -388,7 +408,7 @@ impl<'a> Dmd<'a> {
             }
             let p = self.offset(ptr)?;
             if self.data[p] == op && u16le(self.data, p + 2)? == kind {
-                return Ok(p);
+                return Ok(Some(p));
             }
             let (count_at, children_at) = match self.data[p] {
                 1 => (20, 24),
@@ -400,7 +420,7 @@ impl<'a> Dmd<'a> {
                 pending.push(u32le(self.data, p + children_at + 4 * i)?);
             }
         }
-        bail!("missing sprite animation {kind}")
+        Ok(None)
     }
     /// Read the three body-switch branches selected by UA's damage update.
     pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {

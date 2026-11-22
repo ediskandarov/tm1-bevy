@@ -1,6 +1,7 @@
 //! Host integration probe for the unchanged upstream timer module.
 //! This is not yet a gameplay core or a hardware timer emulator.
 use std::sync::Mutex;
+pub mod bullet;
 pub mod drive;
 pub mod math;
 pub mod sound;

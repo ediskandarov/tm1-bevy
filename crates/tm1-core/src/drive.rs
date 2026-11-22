@@ -1744,6 +1744,22 @@ impl CollisionScene {
         }
         unsafe { tm1_taser_arcs(self.native.as_ptr(), arcs.as_mut_ptr()) }
     }
+    pub fn drawn_bullets(&self, second_view: bool, out: &mut [[i32; 8]; 40]) -> usize {
+        unsafe extern "C" {
+            fn tm1_drawn_bullets(
+                scene: *mut std::ffi::c_void,
+                second_view: i32,
+                out: *mut [i32; 8],
+            ) -> usize;
+        }
+        unsafe {
+            tm1_drawn_bullets(
+                self.native.as_ptr(),
+                i32::from(second_view),
+                out.as_mut_ptr(),
+            )
+        }
+    }
     pub fn bullet_segments(&self, segments: &mut [[[i32; 3]; 2]; 40]) -> usize {
         unsafe extern "C" {
             fn tm1_bullet_segments(scene: *mut std::ffi::c_void, out: *mut [[i32; 3]; 2]) -> usize;

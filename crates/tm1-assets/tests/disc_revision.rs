@@ -17,11 +17,24 @@ fn supported_disc_arena_and_audio() {
     assert_eq!(vram.tim_count, 192);
     assert_eq!(vram.version, db.version);
     for name in [
-        "XARENA1", "WH1", "WH2", "XFWY1", "XFWY2", "PARK1", "PARK2", "SUBURB1", "SUBURB2", "ROOF1",
-        "ROOF2",
+        "XARENA1", "XARENA2", "WH1", "WH2", "XFWY1", "XFWY2", "PARK1", "PARK2", "SUBURB1",
+        "SUBURB2", "ROOF1", "ROOF2",
     ] {
         let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
         let level = Dmd::parse(&data).unwrap();
+        let available = level
+            .special_bullet_frames()
+            .unwrap()
+            .map(|group| group.is_some());
+        let expected = match name {
+            "PARK1" | "XFWY1" => [true, true, false, false],
+            "ROOF1" => [true, true, true, false],
+            "ROOF2" | "XFWY2" => [false, false, true, true],
+            "SUBURB1" => [true, false, true, true],
+            "SUBURB2" => [true, true, false, true],
+            _ => [true; 4],
+        };
+        assert_eq!(available, expected, "{name}");
         assert!(level.flame_frames().unwrap().iter().all(|f| f.width > 0));
         assert!(
             level

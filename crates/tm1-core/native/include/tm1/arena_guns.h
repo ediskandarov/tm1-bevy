@@ -41,6 +41,7 @@ void arena_flash(VECTOR3*);
 void arena_cop_missile(int, int, const VECTOR3*);
 void tm1_move_static_cops(const VECTOR3*);
 void arena_move_bullets(void);
+void arena_capture_bullets(void);
 void arena_request_battle_music(void);
 void tm1_update_battle_music(struct CollisionScene*, int, int);
 void arena_update_guns(Car *,u8);
