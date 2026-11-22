@@ -4,7 +4,15 @@ use tm1_core::drive::{
     CollisionScene, Input, Opponent, PlayerVehicle, PlayerView, RooftopPassage, Vehicle,
 };
 
+#[derive(Clone, Copy, PartialEq)]
+pub enum ExclusiveVoice {
+    Recharge,
+    Hover,
+    Pickup(i32),
+}
+
 pub struct BattleSound {
+    pub exclusive: Option<ExclusiveVoice>,
     pub id: usize,
     pub position: [i32; 3],
     pub full_range: bool,
@@ -518,6 +526,7 @@ pub fn advance(
                 (36, 2) => state.recharge_sound() + 1,
                 (0 | 51, 2) => 1,
                 (52, 2) => 4,
+                (401..=406 | 410..=414 | 430, 2) => state.recharge_sound() + 4,
                 (11, 2) => 6,
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
@@ -529,6 +538,11 @@ pub fn advance(
                 _ => continue,
             };
             state.sounds.push(BattleSound {
+                exclusive: match kind {
+                    26 => Some(ExclusiveVoice::Recharge),
+                    401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
+                    _ => None,
+                },
                 id,
                 position: if kind == 36 {
                     state.player.position()
@@ -541,6 +555,7 @@ pub fn advance(
         for slot in 0..2 {
             if let Some([_, x, y, z, 1]) = state.contacts.merc_pose(slot) {
                 state.sounds.push(BattleSound {
+                    exclusive: Some(ExclusiveVoice::Hover),
                     id: state.recharge_sound() + 3,
                     position: [x, y, z],
                     full_range: false,

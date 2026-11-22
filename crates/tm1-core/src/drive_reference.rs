@@ -121,7 +121,7 @@ impl Reference {
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
             0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
-            0x80107bc0,
+            0x80106d60,
         ] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -307,6 +307,74 @@ fn carrying_capacity_matches_disc() {
             &r.cpu.ram[start..start + 0x48]
         );
     }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn pickup_sounds_match_disc() {
+    unsafe extern "C" {
+        fn carGetPickup(car: *mut u8, player: u8, tag: i32, slot: i32);
+        fn tm1_age_effects();
+    }
+    let mut r = Reference::new();
+    r.cpu.put(0x801419c8, &[8, 0, 224, 3, 0, 0, 0, 0]); // pickup mesh switch
+    let table = r.cpu.call(0x801073bc, &[]);
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    let mut voice_ids = std::collections::BTreeMap::new();
+    for player in [0, 1] {
+        for tag in [
+            401, 402, 403, 404, 405, 406, 410, 411, 412, 413, 414, 430, 431, 450,
+        ] {
+            for total in [0u16, 10] {
+                let (mut car, weapon, position) = if player == 1 {
+                    (r.player.state.to_vec(), 0x458, 0x388)
+                } else {
+                    (r.police.state.to_vec(), 0x514, 0x444)
+                };
+                vec3(&mut car, position, [131, -279, 405]);
+                car[weapon + 0x28..weapon + 0x2a].copy_from_slice(&10u16.to_le_bytes());
+                car[weapon + 0x34..weapon + 0x36].copy_from_slice(&total.to_le_bytes());
+                r.cpu.put(PLAYER, &car);
+                let mut origin = [0; 3];
+                let mut expected = Vec::new();
+                r.cpu.call_observed(
+                    0x80135840,
+                    &[PLAYER, player as u32, tag, 1],
+                    0x80000080,
+                    |cpu| {
+                        if cpu.pc() == 0x8010461c {
+                            origin =
+                                std::array::from_fn(|i| cpu.word(cpu.r[4] + 4 * i as u32) as i32);
+                        }
+                        if cpu.pc() == 0x80106d60 {
+                            assert_eq!(cpu.r[7], 7);
+                            if let Some(previous_tag) = voice_ids.insert(cpu.r[4], tag) {
+                                assert_eq!(previous_tag, tag);
+                            }
+                            let rec = (table + 6 * cpu.r[4]) as usize & 0x1fffff;
+                            assert_eq!(&cpu.ram[rec..rec + 4], &[0, 0, 36, 0]);
+                            expected.push([origin[0], origin[1], origin[2], tag as i32, 2]);
+                        }
+                    },
+                );
+                unsafe {
+                    tm1_use_scene(r.scene.native.as_ptr());
+                    tm1_age_effects();
+                    carGetPickup(car.as_mut_ptr(), player, tag as i32, 1);
+                    tm1_use_scene(std::ptr::null_mut());
+                }
+                let mut effects = [[0; 5]; 122];
+                let count = r.scene.effects(&mut effects);
+                let sounds: Vec<_> = effects[..count]
+                    .iter()
+                    .copied()
+                    .filter(|e| e[3..] == [tag as i32, 2])
+                    .collect();
+                assert_eq!(sounds, expected, "player {player} tag {tag} total {total}");
+            }
+        }
+    }
+    assert_eq!(voice_ids.len(), 12);
 }
 
 #[test]

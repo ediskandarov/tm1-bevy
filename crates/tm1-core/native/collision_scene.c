@@ -1219,6 +1219,10 @@ void carGetPickup(Car* c, u8 player, s32 tag, s32 sub)
         pad->unk46++;
     else if (tag == 431)
         pad->unk44 += 120;
+    if (slot >= 0 || tag == 430) {
+        CarMotion* motion = player ? &PLAYER_CAR(c)->motion : &AI_CAR(c)->motion;
+        arena_effect(&motion->pos, tag); /* UA pickup kind identifies its sound voice. */
+    }
     if (sub > 0 && sub <= 50 && current->pickups[sub - 1])
         current->pickups[sub - 1]->nChild = 0;
     pad->totalAmmo = 0;

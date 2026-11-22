@@ -118,7 +118,7 @@ impl Sounds {
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .chain(opponents.iter().map(|&car| programs(car).1))
-            .chain([52, 53, 27, 38, programs(SweetTooth).1, 57, 58])
+            .chain([52, 53, 27, 38, 36, programs(SweetTooth).1, 57, 58])
             .enumerate()
         {
             let sample = Sample::load(&bank, prog, id == 0)?;
@@ -142,7 +142,7 @@ impl Sounds {
 #[derive(Component)]
 pub struct Engine;
 #[derive(Component)]
-pub struct OneShot(usize);
+pub struct OneShot(Option<crate::driving::ExclusiveVoice>);
 pub fn start(
     mut commands: Commands,
     mut sounds: ResMut<Sounds>,
@@ -206,12 +206,15 @@ pub fn update(
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
         ));
     }
+    if drive.sounds.is_empty() {
+        return;
+    }
     let mut remaining = 22usize.saturating_sub(shots.iter().count());
     let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
-    let recharge_id = drive.recharge_sound();
-    let mut recharge_playing = !reset && shots.iter().any(|(_, _, sound)| sound.0 == recharge_id);
-    let hover_id = recharge_id + 3;
-    let mut hover_playing = !reset && shots.iter().any(|(_, _, sound)| sound.0 == hover_id);
+    let mut active: Vec<_> = shots
+        .iter()
+        .filter_map(|(_, _, shot)| shot.0.filter(|_| !reset))
+        .collect();
     for sound in &drive.sounds {
         let id = sound.id;
         let point = sound.position;
@@ -227,16 +230,15 @@ pub fn update(
             (1. - range / 6000.).clamp(0., 1.)
         };
         let volume = attenuation * if id == 2 { 0.16 } else { 0.44 };
-        if (id == recharge_id && recharge_playing) || (id == hover_id && hover_playing) {
+        if sound.exclusive.is_some_and(|voice| active.contains(&voice)) {
             continue;
         }
         if volume > 0. && remaining > 0 {
-            recharge_playing |= id == recharge_id;
-            hover_playing |= id == hover_id;
+            active.extend(sound.exclusive);
             remaining -= 1;
             commands.spawn((
                 crate::campaign::StageEntity,
-                OneShot(id),
+                OneShot(sound.exclusive),
                 AudioPlayer::new(sounds.voices[id * 5 + bin as usize].clone()),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * gain)),
             ));
