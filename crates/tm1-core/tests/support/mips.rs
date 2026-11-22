@@ -8,6 +8,7 @@ pub struct Cpu {
     lo: u32,
     lzcr: u32,
     gte: [u32; 32],
+    rotation_translation: [u32; 8],
     pc: u32,
     next: u32,
     load: Option<(usize, u32)>,
@@ -25,6 +26,7 @@ impl Cpu {
             lo: 0,
             lzcr: 0,
             gte: [0; 32],
+            rotation_translation: [0; 8],
             pc: 0,
             next: 0,
             load: None,
@@ -231,6 +233,27 @@ impl Cpu {
             14 => write = Some((rt, a ^ (ins & 0xffff))),
             15 => write = Some((rt, ins << 16)),
             18 => match (rs, rd) {
+                (6, 0..=7) => self.rotation_translation[rd] = b,
+                // PsyQ MulRotMatrix0 uses V0, the rotation matrix and no translation.
+                _ if ins == 0x4a486012 => {
+                    let v = [
+                        self.gte[0] as i16,
+                        (self.gte[0] >> 16) as i16,
+                        self.gte[1] as i16,
+                    ];
+                    for row in 0..3 {
+                        let mut acc = 0i64;
+                        for (col, value) in v.iter().enumerate() {
+                            let k = row * 3 + col;
+                            let packed = self.rotation_translation[k / 2];
+                            let factor = (packed >> (16 * (k % 2))) as i16;
+                            acc += i64::from(factor) * i64::from(*value);
+                        }
+                        let mac = (acc >> 12) as i32;
+                        self.gte[25 + row] = mac as u32;
+                        self.gte[9 + row] = mac.clamp(-32768, 32767) as u32;
+                    }
+                }
                 (4, 30) => {
                     self.lzcr = if (b as i32) < 0 {
                         (!b).leading_zeros()

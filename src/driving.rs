@@ -19,7 +19,7 @@ pub enum VehicleSound {
     Turbo(bool),
     Guns {
         car: Vehicle,
-        position: [i32; 3],
+        channels: [i32; 2],
         firing: bool,
     },
 }
@@ -28,8 +28,7 @@ pub struct BattleSound {
     pub volume_percent: i32,
     pub exclusive: Option<ExclusiveVoice>,
     pub id: usize,
-    pub position: [i32; 3],
-    pub full_range: bool,
+    pub channels: [i32; 2],
 }
 
 pub(crate) fn effect_volume(kind: i32) -> i32 {
@@ -77,6 +76,7 @@ pub struct Drive {
     pub mirror: bool,
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
+    pub listener: tm1_core::drive::SoundListener,
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
     rooftop_passage: RooftopPassage,
@@ -261,12 +261,14 @@ impl Drive {
         opponent_kinds: &[Vehicle],
     ) -> Self {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
+        let camera = tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase);
         Self {
             windshield_holes: player.windshield_holes(),
             opponents,
             contacts,
             deck: Default::default(),
-            camera: tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase),
+            listener: tm1_core::drive::SoundListener::new(&player, &camera, None),
+            camera,
             player,
             sounds: Vec::new(),
             vehicle_sounds: Vec::new(),
@@ -563,6 +565,11 @@ pub fn advance(
                 }
             }
         }
+        state.listener = tm1_core::drive::SoundListener::new(
+            &state.player,
+            &state.camera,
+            state.helicopter_pose(),
+        );
         state.update_rooftop_passage(state.selected_view());
         state
             .player
@@ -573,6 +580,7 @@ pub fn advance(
         if let Some(boosting) = state.contacts.turbo_sound_requests()[0] {
             state.vehicle_sounds.push(VehicleSound::Turbo(boosting));
         }
+        let volume = state.settings.effects_volume();
         let shooters = std::iter::once((state.player.vehicle(), state.player.position())).chain(
             state
                 .opponents
@@ -583,7 +591,7 @@ pub fn advance(
             if let Some(firing) = request {
                 state.vehicle_sounds.push(VehicleSound::Guns {
                     car,
-                    position,
+                    channels: state.listener.channels(position, volume, false),
                     firing,
                 });
             }
@@ -611,8 +619,7 @@ pub fn advance(
                     volume_percent,
                     id: first_contact_sample + voice as usize,
                     exclusive: Some(ExclusiveVoice::Contact(voice)),
-                    position,
-                    full_range: false,
+                    channels: state.listener.channels(position, volume, false),
                 });
             }
         }
@@ -626,12 +633,15 @@ pub fn advance(
                 volume_percent: effect_volume(kind),
                 exclusive: effect_voice(kind),
                 id,
-                position: if kind == 36 {
-                    state.player.position()
-                } else {
-                    [x, y, z]
-                },
-                full_range: matches!(kind, 29 | 30 | 33 | 37),
+                channels: state.listener.channels(
+                    if kind == 36 {
+                        state.player.position()
+                    } else {
+                        [x, y, z]
+                    },
+                    volume,
+                    matches!(kind, 29 | 30 | 33 | 37),
+                ),
             });
         }
         for slot in 0..2 {
@@ -640,8 +650,7 @@ pub fn advance(
                     volume_percent: 99,
                     exclusive: Some(ExclusiveVoice::Hover),
                     id: state.recharge_sound() + 3,
-                    position: [x, y, z],
-                    full_range: false,
+                    channels: state.listener.channels([x, y, z], volume, false),
                 });
             }
         }

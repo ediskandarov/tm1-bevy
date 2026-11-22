@@ -776,6 +776,73 @@ pub struct VehicleCamera {
     pub fixed_pose: Option<[i32; 5]>,
 }
 
+/// World-to-eye transform used by VIEW.c and SOUND.c for positional sound.
+#[derive(Clone, Copy)]
+pub struct SoundListener {
+    eye: [i32; 3],
+    matrix: [[i32; 3]; 3],
+}
+
+impl SoundListener {
+    pub fn new(car: &PlayerVehicle, camera: &VehicleCamera, helicopter: Option<[i32; 5]>) -> Self {
+        let fixed = helicopter.or(camera.fixed_pose);
+        let (origin, offset, pitch, yaw) = match fixed {
+            Some([x, y, z, pitch, yaw]) => ([x, y, z], [0; 3], pitch, yaw),
+            None => (car.position(), camera.offset, camera.pitch, car.heading()),
+        };
+        let [sy, cy] = car.wheel_sin_cos(i64::from(yaw)).map(i32::from);
+        let [sp, cp] = car.wheel_sin_cos(i64::from(pitch)).map(i32::from);
+        let horizontal = [[cy, -sy, 0], [sy, cy, 0], [0, 0, 4096]];
+        let parent = if fixed.is_none() && camera.mode == CarView::Cockpit {
+            car.rotation().map(|row| row.map(i32::from))
+        } else {
+            horizontal
+        };
+        let eye = std::array::from_fn(|j| {
+            origin[j] + (0..3).map(|k| parent[k][j] * offset[k]).sum::<i32>() / 4096
+        });
+        let rotate = |a: [[i32; 3]; 3], b: [[i32; 3]; 3]| {
+            std::array::from_fn(|i| {
+                std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum::<i32>() >> 12)
+            })
+        };
+        let axes = [[4096, 0, 0], [0, 0, -3690], [0, 3690, 0]];
+        let tilt = [[4096, 0, 0], [0, cp, -sp], [0, sp, cp]];
+        let matrix = if fixed.is_some() {
+            rotate(axes, rotate(tilt, parent))
+        } else {
+            rotate(rotate(axes, tilt), parent)
+        };
+        Self { eye, matrix }
+    }
+
+    fn range_and_x(&self, position: [i32; 3]) -> (i32, i32) {
+        let delta: [i32; 3] =
+            std::array::from_fn(|j| position[j].wrapping_sub(self.eye[j]).min(3357));
+        let eye = self.matrix.map(|row| {
+            (0..3)
+                .map(|j| delta[j].wrapping_mul(row[j]) / 8192)
+                .sum::<i32>()
+        });
+        let range = eye
+            .into_iter()
+            .fold(0i32, |sum, axis| sum.wrapping_add(axis.wrapping_mul(axis)));
+        (range.clamp(0, 0x7fffff), eye[0])
+    }
+
+    /// Left and right volume before the VAB program and tone gains.
+    pub fn channels(&self, position: [i32; 3], volume: u8, full_range: bool) -> [i32; 2] {
+        let (range, x) = self.range_and_x(position);
+        // Loud explosion requests zero the range but keep the original horizontal position.
+        let range = if full_range { 0 } else { range };
+        let volume = i32::from(volume);
+        let limit = 3357 * 3357;
+        let centered = ((limit - range) as u32 * volume as u32 / limit as u32) as i32;
+        let pan = (-x).clamp(-160, 160) * volume / 160;
+        [centered + pan.max(0), centered - pan.min(0)]
+    }
+}
+
 impl VehicleCamera {
     pub fn new(player: &PlayerVehicle, mode: CarView) -> Self {
         Self::with_profile(player, mode, false)

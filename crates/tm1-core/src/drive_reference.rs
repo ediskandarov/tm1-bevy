@@ -1481,6 +1481,113 @@ fn vec3_cpu(cpu: &mut Cpu, at: u32, xyz: [i32; 3]) {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn positional_sound_matches_retail() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut car = PlayerVehicle::contest(
+        &exe,
+        Vehicle::RoadKill,
+        Level::Warehouse,
+        1,
+        Difficulty::Medium,
+    )
+    .unwrap();
+    let node = RENDER_SCRATCH;
+    let parent = node + 0x200;
+    let source = node + 0x400;
+    put(&mut cpu, 0x8018c50c, node);
+    put(&mut cpu, 0x8018c51c, 6);
+    put(&mut cpu, 0x8018c4b0, WORLD);
+    put(&mut cpu, node + 0x10, parent);
+    for i in 0..16 {
+        let yaw = i * 257 - 2048;
+        let tilt = i * 23 - 160;
+        let bank = i * 15 - 101;
+        let pos = [600, -300, 7200];
+        vec3(&mut car.state, 0x388, pos);
+        vec3(&mut car.state, 0x3a0, [tilt, bank, yaw]);
+        let angles = [tilt as i16, bank as i16, yaw as i16];
+        cpu.put(parent + 0x54, &angles.map(i16::to_le_bytes).concat());
+        cpu.call(0x8015d8a4, &[parent + 0x54, parent + 0x14]);
+        let mat = ((parent + 0x14) & 0x1fffff) as usize;
+        car.state[0x3d0..0x3e2].copy_from_slice(&cpu.ram[mat..mat + 18]);
+        for (mode, detached) in [
+            (CarView::Chase, false),
+            (CarView::Cockpit, false),
+            (CarView::Far, false),
+            (CarView::Chase, true),
+        ] {
+            let camera = VehicleCamera::new(&car, mode);
+            let fixed = detached.then_some([1500, -120, 8100, tilt, yaw]);
+            let listener = SoundListener::new(&car, &camera, fixed);
+            let (rotation, location, offset, pitch) = if let Some([x, y, z, p, h]) = fixed {
+                ([p as i16, 0, h as i16], [x, y, z], [0; 3], 0)
+            } else {
+                (
+                    if mode == CarView::Cockpit {
+                        angles
+                    } else {
+                        [0, 0, yaw as i16]
+                    },
+                    pos,
+                    camera.offset,
+                    camera.pitch,
+                )
+            };
+            cpu.put(parent + 0x54, &rotation.map(i16::to_le_bytes).concat());
+            vec3_cpu(&mut cpu, parent + 0x5c, location);
+            cpu.put(
+                node + 0x54,
+                &([pitch as i16, 0, 0].map(i16::to_le_bytes)).concat(),
+            );
+            vec3_cpu(&mut cpu, node + 0x5c, offset);
+            cpu.call_until(0x8010a774, &[0], 0x8010a9f4);
+            for d in [
+                [0, 0, 0],
+                [1, -2, 3],
+                [-320, 0, 0],
+                [320, 0, 0],
+                [101, 237, -333],
+                [3358, 9500, 0],
+                [-9000, -6500, -12000],
+            ] {
+                let point = std::array::from_fn(|j| location[j] + d[j]);
+                vec3_cpu(&mut cpu, source, point);
+                cpu.call(0x8010461c, &[source]);
+                let range = cpu.call(0x80104400, &[]) as i32;
+                let x = cpu.call(0x8010440c, &[]) as i32;
+                assert_eq!(
+                    listener.range_and_x(point),
+                    (range, x),
+                    "{mode:?} {yaw} {point:?}"
+                );
+                // Enter the JP mixer with the current request and its division constant.
+                for full_range in [false, true] {
+                    put(
+                        &mut cpu,
+                        0x801984ec,
+                        if full_range { 0 } else { range as u32 },
+                    );
+                    put(&mut cpu, 0x801984f0, (-x) as u32);
+                    put(&mut cpu, 0x801ff048, 0x801984ec);
+                    put(&mut cpu, 0x801ff038, 0x66666667);
+                    for volume in [0u8, 10, 33, 57] {
+                        put(&mut cpu, 0x8016fed0, u32::from(volume));
+                        cpu.call_until(0x801063e0, &[], 0x801065c4);
+                        assert_eq!(
+                            listener.channels(point, volume, full_range),
+                            [cpu.r[20] as i32, cpu.r[18] as i32]
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn turbo_reserve_matches_original_dashboard() {
     let mut r = Reference::new();
     // Supply the player pointer in s6 before entering the retail fuel calculation.

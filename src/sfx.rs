@@ -337,14 +337,16 @@ pub fn update(
             sink.play();
         }
     }
-    let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
-    let listener = drive.player.position();
-    let right = Vec3::new(heading.cos(), -heading.sin(), 0.);
-    let mix_position = |point: [i32; 3]| {
-        let offset = Vec3::from_array(std::array::from_fn(|i| (point[i] - listener[i]) as f32));
-        let distance = offset.length();
-        let pan = (offset.dot(right) / distance.max(100.)).clamp(-1., 1.);
-        (pan, (1. - distance / 6000.).clamp(0., 1.))
+    let volume = drive.settings.effects_volume();
+    let channel_mix = |[left, right]: [i32; 2]| {
+        let peak = left.max(right);
+        if peak == 0 {
+            return (0., 0.);
+        }
+        (
+            (right - left) as f32 / peak as f32,
+            peak as f32 / f32::from(volume),
+        )
     };
     let occupied = shots.iter().count()
         + rivals
@@ -356,7 +358,8 @@ pub fn update(
     for (entity, engine, mut transform, playing, sink) in &mut rivals {
         let audible = drive.opponents.get(engine.slot).and_then(|ai| {
             let rev = ai.engine_rev()?;
-            let (pan, attenuation) = mix_position(ai.position());
+            let (pan, attenuation) =
+                channel_mix(drive.listener.channels(ai.position(), volume, false));
             (attenuation > 0.).then_some((rev, 0.28 * gain * attenuation, pan))
         });
         let Some((rev, volume, pan)) = audible else {
@@ -433,10 +436,10 @@ pub fn update(
             VehicleSound::Turbo(play) => (ExclusiveVoice::Turbo, play, &vehicle_sounds.turbo, 1.),
             VehicleSound::Guns {
                 car,
-                position,
+                channels,
                 firing,
             } => {
-                let (pan, attenuation) = mix_position(position);
+                let (pan, attenuation) = channel_mix(channels);
                 let bin = ((pan * 2.).round() as i32 + 2) as usize;
                 (
                     ExclusiveVoice::MachineGuns(car),
@@ -476,9 +479,8 @@ pub fn update(
     }
     for sound in &drive.sounds {
         let id = sound.id;
-        let (pan, attenuation) = mix_position(sound.position);
+        let (pan, attenuation) = channel_mix(sound.channels);
         let bin = (pan * 2.).round() as i32 + 2;
-        let attenuation = if sound.full_range { 1. } else { attenuation };
         let volume = attenuation * 0.44 * sound.volume_percent.max(0) as f32 / 99.;
         let level = Volume::Linear(volume * gain);
         let playback = || {

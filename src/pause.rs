@@ -45,13 +45,15 @@ impl Settings {
         }) as f32
             / 78.
     }
-    pub fn effects_gain(self) -> f32 {
+    pub fn effects_volume(self) -> u8 {
         (match self.mix {
             0 => 57,
             99 => 0,
             v => 47 * u16::from(99 - v) / 99 + 10,
-        }) as f32
-            / 33.
+        }) as u8
+    }
+    pub fn effects_gain(self) -> f32 {
+        f32::from(self.effects_volume()) / 33.
     }
 }
 #[derive(Clone, Copy)]
