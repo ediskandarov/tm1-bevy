@@ -4,6 +4,7 @@ use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::NoFrustumCulling,
     image::ImageSampler,
+    mesh::Indices,
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
     sprite_render::AlphaMode2d,
@@ -1268,6 +1269,9 @@ fn draw_view(
                 [r * tint[0], g * tint[1], b * tint[2], a],
             );
         }
+        if p.semi_transparent {
+            batch.order_geometry(indices.len(), eye, forward);
+        }
     }
     let mut faces = [[0; 14]; 180];
     let count = contacts.contrail_faces(&mut faces);
@@ -1297,6 +1301,7 @@ fn draw_view(
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
+        texture_blends[0].order_geometry(6, eye, forward);
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(&mut poses);
@@ -1364,6 +1369,9 @@ fn draw_view(
                     arena.uv(slot, v.uv.into()),
                     v.color,
                 );
+            }
+            if p.semi_transparent {
+                batch.order_geometry(indices(p.vertices.len()).len(), eye, forward);
             }
         }
     }
@@ -1505,6 +1513,7 @@ fn draw_view(
                 tint,
             );
         }
+        batch.order_packet(6, particle.ordering_bucket(base[2]), DrawPass::Explosions);
     }
     let mut fragments = [[0; 5]; 20];
     let fragment_count = contacts.fragment_poses(view.secondary, &mut fragments);
@@ -1617,6 +1626,7 @@ fn draw_view(
                         [r, g, b, 1.],
                     );
                 }
+                batch.order_packet(6, bucket, DrawPass::Bullets);
             }
         }
     }
@@ -1624,32 +1634,7 @@ fn draw_view(
         batch.write(meshes, handle);
     }
     solids.write(meshes, &view.solids);
-    // Sort the regular alpha batch back to front.
-    let mut triangles: Vec<_> = transparent
-        .positions
-        .chunks_exact(3)
-        .enumerate()
-        .map(|(i, triangle)| {
-            let depth = triangle
-                .iter()
-                .map(|p| Vec3::from_array(*p).dot(forward))
-                .sum::<f32>();
-            (i * 3, depth)
-        })
-        .collect();
-    triangles.sort_by(|a, b| b.1.total_cmp(&a.1));
-    let mut sorted = Batch::default();
-    for (first, _) in triangles {
-        let range = first..first + 3;
-        sorted
-            .positions
-            .extend_from_slice(&transparent.positions[range.clone()]);
-        sorted
-            .uvs
-            .extend_from_slice(&transparent.uvs[range.clone()]);
-        sorted.colors.extend_from_slice(&transparent.colors[range]);
-    }
-    sorted.write(meshes, &view.transparent);
+    transparent.write(meshes, &view.transparent);
 }
 
 impl Arena {
@@ -1886,11 +1871,26 @@ fn indices(n: usize) -> &'static [usize] {
         &[0, 1, 2]
     }
 }
+// RT submits these passes in this order. AddPrim prepends within each bucket.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum DrawPass {
+    Bullets,
+    Explosions,
+    Hierarchy,
+}
+
+struct DrawPacket {
+    bucket: u32,
+    pass: DrawPass,
+    vertices: std::ops::Range<u32>,
+}
+
 #[derive(Default)]
 struct Batch {
     positions: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
     colors: Vec<[f32; 4]>,
+    packets: Vec<DrawPacket>,
 }
 impl Batch {
     fn push(&mut self, pos: Vec3, uv: [f32; 2], color: [f32; 4]) {
@@ -1898,6 +1898,38 @@ impl Batch {
         self.uvs.push(uv);
         self.colors.push(color);
     }
+    fn order_packet(&mut self, vertex_count: usize, bucket: u32, pass: DrawPass) {
+        let end = self.positions.len() as u32;
+        self.packets.push(DrawPacket {
+            bucket,
+            pass,
+            vertices: end - vertex_count as u32..end,
+        });
+    }
+
+    fn order_geometry(&mut self, vertex_count: usize, eye: Vec3, forward: Vec3) {
+        let vertices = &self.positions[self.positions.len() - vertex_count..];
+        // A quad expands to 0,1,2,2,1,3. Average the four original corners.
+        let corners = vertices[..3].iter().chain(vertices.get(5));
+        let count = corners.clone().count() as f32;
+        let depth = corners
+            .map(|&p| (Vec3::from_array(p) - eye).dot(forward))
+            .sum::<f32>()
+            / count;
+        self.order_packet(vertex_count, depth as u32 >> 3, DrawPass::Hierarchy);
+    }
+
+    fn draw_indices(&mut self) -> Vec<u32> {
+        self.packets
+            .sort_unstable_by_key(|p| std::cmp::Reverse((p.bucket, p.pass, p.vertices.start)));
+        let mut indices = Vec::with_capacity(self.positions.len());
+        for packet in &self.packets {
+            indices.extend(packet.vertices.clone());
+        }
+        debug_assert_eq!(indices.len(), self.positions.len());
+        indices
+    }
+
     fn mesh(self) -> Mesh {
         Mesh::new(
             PrimitiveTopology::TriangleList,
@@ -1907,7 +1939,7 @@ impl Batch {
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
     }
-    fn write(self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
+    fn write(mut self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
         if self.positions.is_empty()
             && meshes
                 .get(handle)
@@ -1916,6 +1948,11 @@ impl Batch {
             return;
         }
         if let Some(mut mesh) = meshes.get_mut(handle) {
+            if self.packets.is_empty() {
+                mesh.remove_indices();
+            } else {
+                mesh.insert_indices(Indices::U32(self.draw_indices()));
+            }
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
@@ -2095,6 +2132,63 @@ pub fn duel_view(
 mod tests {
     use super::*;
     use tm1_core::drive::Vehicle;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn blended_faces_follow_jp_packet_links() {
+        use DrawPass::*;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let ot = 0x80010000;
+        let packets = 0x80011000;
+        cpu.put(ot, &[0xff; 16 * 4]);
+        let mut batch = Batch::default();
+        let mut ranges = Vec::new();
+        // Mesh construction visits the hierarchy first. RT submits it last.
+        let faces = [
+            (Hierarchy, 8, 4),
+            (Hierarchy, 2, 3),
+            (Explosions, 8, 4),
+            (Explosions, 8, 4),
+            (Bullets, 12, 4),
+            (Bullets, 8, 4),
+        ];
+        for (pass, bucket, n) in faces {
+            let start = batch.positions.len() as u32;
+            for &corner in indices(n) {
+                let offset = if n == 4 {
+                    [-12., 0., 0., 12.][corner]
+                } else {
+                    0.
+                };
+                batch.push(Vec3::Z * ((8 * bucket) as f32 + offset), [0.; 2], [1.; 4]);
+            }
+            let len = indices(n).len();
+            if pass == Hierarchy {
+                batch.order_geometry(len, Vec3::ZERO, Vec3::Z);
+            } else {
+                batch.order_packet(len, bucket, pass);
+            }
+            ranges.push(start..start + len as u32);
+        }
+        for pass in [Bullets, Explosions, Hierarchy] {
+            for (i, &(source, bucket, _)) in faces.iter().enumerate() {
+                if source == pass {
+                    cpu.call(0x80161a60, &[ot + 4 * bucket, packets + 4 * i as u32]);
+                }
+            }
+        }
+        let mut expected = Vec::new();
+        for bucket in (0..16).rev() {
+            let mut next = cpu.word(ot + 4 * bucket) & 0xffffff;
+            while next != 0xffffff {
+                let i = (next - (packets & 0xffffff)) / 4;
+                expected.extend(ranges[i as usize].clone());
+                next = cpu.word(next) & 0xffffff;
+            }
+        }
+        assert_eq!(batch.draw_indices(), expected);
+    }
 
     fn draw_jp_font_packets(cpu: &crate::reference_cpu::Cpu, ot: u32, tim: &[u8]) -> Vec<u8> {
         let bitmap = 8 + u32::from_le_bytes(tim[8..12].try_into().unwrap()) as usize;
