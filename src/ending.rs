@@ -19,8 +19,24 @@ use tm1_core::drive::Vehicle;
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Phase {
     Reward,
+    WaitingForCredits,
     Credits,
     Finished,
+}
+
+#[derive(Default, Copy, Clone)]
+struct EndingInput {
+    select: bool,
+    up: bool,
+    down: bool,
+    primary_held: bool,
+    secondary_held: bool,
+}
+
+fn ending_pads<'a>(pads: impl Iterator<Item = (Entity, &'a Gamepad)>) -> [Option<&'a Gamepad>; 2] {
+    let mut pads = pads.collect::<Vec<_>>();
+    pads.sort_unstable_by_key(|(id, _)| *id);
+    std::array::from_fn(|slot| pads.get(slot).map(|(_, p)| *p))
 }
 
 #[derive(Resource)]
@@ -87,7 +103,7 @@ impl Ending {
             waits: 0,
             remainder: Duration::ZERO,
             credits,
-            wait_for_release: false,
+            wait_for_release: true,
             fonts,
             reward,
             backdrop,
@@ -99,24 +115,34 @@ impl Ending {
             track,
         })
     }
-    fn field(&mut self, select: bool, up: bool, down: bool) {
-        self.frame += 1;
+    fn field(&mut self, input: EndingInput) {
         match self.phase {
             Phase::Reward => {
-                if select || self.frame > 120 {
+                if self.wait_for_release && input.primary_held {
+                    return;
+                }
+                self.wait_for_release = false;
+                self.frame += 1;
+                if input.select || self.frame > 120 {
                     self.waits += 1;
                     self.frame = 0;
                     if self.waits == 5 {
-                        self.phase = Phase::Credits;
-                        self.wait_for_release = select;
+                        self.phase = if input.secondary_held {
+                            Phase::WaitingForCredits
+                        } else {
+                            Phase::Credits
+                        };
                     }
                 }
             }
+            Phase::WaitingForCredits => {
+                if !input.secondary_held {
+                    self.phase = Phase::Credits;
+                }
+            }
             Phase::Credits => {
-                self.wait_for_release &= select;
-                if self
-                    .credits
-                    .field(select && !self.wait_for_release, up, down)
+                self.frame += 1;
+                if self.credits.field(input.select, input.up, input.down)
                     != crate::scroll::Outcome::Running
                 {
                     self.phase = Phase::Finished;
@@ -257,6 +283,10 @@ pub(crate) struct EndingScreen;
 #[derive(Component)]
 pub(crate) struct EndingEngine;
 pub fn begin(world: &mut World) -> Result<()> {
+    let mut pads = world.query::<(Entity, &Gamepad)>();
+    if ending_pads(pads.iter(world))[1].is_some_and(|pad| pad.get_pressed().next().is_some()) {
+        return Ok(());
+    }
     let random = world
         .resource_mut::<crate::driving::Drive>()
         .player
@@ -319,7 +349,7 @@ pub fn update(
     mut screen: Single<&mut Sprite, With<EndingScreen>>,
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
-    pads: Query<&Gamepad>,
+    pads: Query<(Entity, &Gamepad)>,
     drive: Res<crate::driving::Drive>,
     sounds: Res<crate::sfx::Sounds>,
     engines: Query<Entity, With<EndingEngine>>,
@@ -348,26 +378,36 @@ pub fn update(
         time.delta()
     };
     let field = Duration::from_nanos(16_666_667);
-    let pad = pads.iter().next();
-    let select =
-        keys.pressed(KeyCode::Enter) || pad.is_some_and(|p| p.pressed(GamepadButton::South));
-    let up =
-        keys.pressed(KeyCode::ArrowUp) || pad.is_some_and(|p| p.pressed(GamepadButton::DPadUp));
-    let down =
-        keys.pressed(KeyCode::ArrowDown) || pad.is_some_and(|p| p.pressed(GamepadButton::DPadDown));
+    let [pad, secondary] = ending_pads(pads.iter());
+    let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
+        || pad.is_some_and(|p| {
+            p.any_pressed([
+                GamepadButton::South,
+                GamepadButton::Start,
+                GamepadButton::Select,
+            ])
+        });
+    let input = EndingInput {
+        select,
+        up: keys.pressed(KeyCode::ArrowUp) || pad.is_some_and(|p| p.pressed(GamepadButton::DPadUp)),
+        down: keys.pressed(KeyCode::ArrowDown)
+            || pad.is_some_and(|p| p.pressed(GamepadButton::DPadDown)),
+        primary_held: crate::pause::campaign_pad_held(&keys, pad),
+        secondary_held: secondary.is_some_and(|p| p.get_pressed().next().is_some()),
+    };
     while ending.remainder >= field {
         ending.remainder -= field;
-        ending.field(select, up, down);
+        ending.field(input);
         if ending.phase != before {
             break;
         }
     }
-    if ending.phase == Phase::Credits {
-        if before == Phase::Reward {
-            for entity in &engines {
-                commands.entity(entity).despawn();
-            }
+    if before == Phase::Reward && ending.phase != Phase::Reward {
+        for entity in &engines {
+            commands.entity(entity).despawn();
         }
+    }
+    if ending.phase == Phase::Credits {
         let signature_field = match ending.vehicle {
             Vehicle::Outlaw => 721,
             Vehicle::RoadKill => 61,
@@ -474,14 +514,72 @@ mod tests {
         world.insert_resource(Campaign(disc));
         crate::campaign::replace(&mut world, stage);
         world.resource_mut::<crate::driving::Drive>().lives = 1;
+        use bevy::ecs::system::RunSystemOnce;
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<Assets<crate::music::CdTrack>>();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world.spawn(Window {
+            focused: true,
+            ..default()
+        });
+        let mut pads = [
+            world.spawn(Gamepad::default()).id(),
+            world.spawn(Gamepad::default()).id(),
+        ];
+        pads.sort();
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::DPadLeft);
         begin(&mut world).unwrap();
-        let mut ending = world.resource_mut::<Ending>();
-        for _ in 0..5 {
-            ending.field(true, false, false);
-        }
-        ending.field(false, false, false);
-        ending.field(true, false, false);
+        assert!(!world.contains_resource::<Ending>());
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .release(GamepadButton::DPadLeft);
+        begin(&mut world).unwrap();
+        let tick = |world: &mut World, fields| {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_nanos(16_666_667) * fields);
+            world.run_system_once(update).unwrap();
+        };
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        tick(&mut world, 8);
+        assert_eq!(world.resource::<Ending>().frame, 0);
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Space);
+        tick(&mut world, 1);
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::Start);
+        tick(&mut world, 5);
+        assert_eq!(world.resource::<Ending>().phase, Phase::WaitingForCredits);
+        tick(&mut world, 5);
+        assert_eq!(world.resource::<Ending>().phase, Phase::WaitingForCredits);
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .release(GamepadButton::Start);
+        tick(&mut world, 1);
+        assert_eq!(world.resource::<Ending>().phase, Phase::Credits);
+        tick(&mut world, 1);
+        assert_eq!(world.resource::<Ending>().phase, Phase::Finished);
         finish(&mut world);
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Space);
         crate::transition::complete(&mut world);
         let drive = world.resource::<crate::driving::Drive>();
         assert_eq!(drive.player.level(), Level::Arena5);
@@ -494,24 +592,31 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn reward_waits_and_credits_require_a_fresh_selection() {
+    fn reward_times_out_and_credits_read_the_primary_pad() {
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let mut ending = Ending::load(&disc, Vehicle::YellowJacket, 1, 0).unwrap();
         for _ in 0..604 {
-            ending.field(false, false, false);
+            ending.field(default());
         }
         assert_eq!(ending.phase, Phase::Reward);
-        ending.field(true, false, false);
+        ending.field(EndingInput {
+            select: true,
+            ..default()
+        });
         assert_eq!(ending.phase, Phase::Credits);
         assert_eq!(ending.credits.lines.len(), 153);
         let mut pixels = ending.backdrop.clone();
         ending.draw_car(&mut pixels);
         assert_ne!(pixels.as_slice(), ending.backdrop.as_slice());
-        ending.field(true, false, false);
-        assert_eq!(ending.phase, Phase::Credits);
-        ending.field(false, true, false);
+        ending.field(EndingInput {
+            up: true,
+            ..default()
+        });
         assert_eq!(ending.credits.speed, 2);
-        ending.field(true, false, false);
+        ending.field(EndingInput {
+            select: true,
+            ..default()
+        });
         assert_eq!(ending.phase, Phase::Finished);
     }
 }

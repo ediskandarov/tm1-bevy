@@ -15,6 +15,10 @@ Single-player stage setup carries the deal sequence through card angles and pede
 
 During the first 30 fields of the loss-of-life fade, holding Enter, Space or P skips to the next life and plays the menu confirmation sound. On the Minion introduction the same keys skip the five-second message. On a controller the accepted buttons are Cross, Select and Start. The retail boss screen initially waits for release on the upper controller halfword before polling confirmation on the lower halfword. An input integration test exercises both ports with virtual controllers, compares the decisions with the retail GetPadStatus and ctlpadAnySelect routines, and checks held Space during the loss-of-life fade.
 
+## Reward and credits input
+
+The campaign ending follows the two controller-port checks in screenPlayCarEnding and screenScrollTextInit. A held second controller button delays entry to the reward and credits screens. The reward waits for player one to release the controls before starting its five confirmation waits. Enter, Space and P map to confirmation. Holding confirmation through the last wait can skip the credits on their first input poll. A Bevy integration test exercises both release gates, holds Space across the transition and continues the hard campaign with the remaining life.
+
 ## Battle radar
 
 The single-player radar collects opponents during their individual updates and active repair stands before regeneration. It displays the previous simulation pass, retaining up to twelve marks and four directional flags while hidden. Repair stands blink with the original radar buffer. A disc-backed test compares the buffered marks, colors, coordinates and edge flags with the JP executable across hide and show transitions, including a full buffer. The Cyburbia Metal capture at `local/cyburbia-radar.png` shows Road Kill at update 40. Framebuffer blending has not been compared pixel by pixel.

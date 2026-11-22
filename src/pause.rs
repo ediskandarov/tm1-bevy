@@ -213,6 +213,16 @@ pub struct ControlInput {
     pub reset_idle: bool,
 }
 
+pub fn campaign_pad_held(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    use KeyCode::*;
+    duel_pad_held(keys, 0)
+        || keys.any_pressed([
+            Enter, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, KeyZ, KeyV, KeyL, KeyB, Digit1,
+            Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8,
+        ])
+        || pad.is_some_and(|p| p.get_pressed().next().is_some())
+}
+
 pub fn duel_pad_held(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
     use KeyCode::*;
     if slot == 0 {
