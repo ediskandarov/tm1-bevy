@@ -1488,6 +1488,15 @@ mod tests {
         for key in [KeyP, KeyS, KeyS, Space, KeyD] {
             step(&mut world, &[key]);
         }
+        for (player, playback, engine) in world.query_filtered::<(&AudioPlayer, &PlaybackSettings, Has<crate::sfx::DuelEngine>), Or<(With<duel::DuelMusic>, With<crate::sfx::DuelEngine>)>>().iter(&world) {
+            assert_eq!(playback.paused, engine);
+            if !engine {
+                let audio = world.resource::<Assets<AudioSource>>().get(&player.0).unwrap();
+                let disc = &world.resource::<Campaign>().0;
+                let track = disc.audio_track(7).unwrap();
+                assert_eq!(&audio.bytes[44..], &track[150 * 2352..]);
+            }
+        }
         assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
         for key in [KeyP, NumpadEnter, ArrowDown, Comma] {
             step(&mut world, &[key]);

@@ -89,9 +89,7 @@ pub fn start(
         vec![second],
         &scene,
     )?;
-    let music = crate::music::Music::level(disc, level)?
-        .opening
-        .ok_or_else(|| anyhow::anyhow!("missing level soundtrack"))?;
+    let music = crate::music::track(disc, crate::music::opening_track(level, true))?;
     let sounds = crate::sfx::Sounds::load(disc, kinds[0], &kinds[1..])?;
     let settings = world
         .get_resource::<Duel>()
@@ -286,7 +284,8 @@ pub fn pause_menu(
                 commands.entity(entity).despawn();
                 continue;
             }
-            playback.paused = duel.pause.is_some();
+            playback.paused =
+                duel.pause.is_some() && !(music && matches!(duel.pause, Some(Page::Audio(_))));
             playback.volume = bevy::audio::Volume::Linear(if music {
                 0.35 * duel.settings.music_gain()
             } else {

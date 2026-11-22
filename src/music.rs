@@ -8,7 +8,7 @@ use tm1_assets::disc::Disc;
 
 #[derive(Resource)]
 pub struct Music {
-    pub(crate) opening: Option<AudioSource>,
+    opening: Option<AudioSource>,
     battle: Option<AudioSource>,
 }
 impl Music {
@@ -16,18 +16,27 @@ impl Music {
         // shellSoundForThisLevel selects the stage track. soundStartPlayDA
         // starts 150 sectors after INDEX 01 and ends before the next pregap.
         use tm1_core::drive::Level::*;
-        let (opening, battle) = match level {
-            Rooftops => (8, None),
-            Cyburbia => (6, Some(7)),
-            Freeway | Arena5 => (2, None),
-            Arena => (3, None),
-            Warehouse => (4, Some(7)),
-            CityPark => (4, Some(5)),
+        let opening = opening_track(level, false);
+        let battle = match level {
+            Warehouse | Cyburbia => Some(7),
+            CityPark => Some(5),
+            _ => None,
         };
         Ok(Self {
             opening: Some(track(disc, opening)?),
             battle: battle.map(|n| track(disc, n)).transpose()?,
         })
+    }
+}
+pub fn opening_track(level: tm1_core::drive::Level, split: bool) -> usize {
+    use tm1_core::drive::Level::*;
+    match level {
+        Arena => 3,
+        Warehouse | Cyburbia if split => 7,
+        Warehouse | CityPark => 4,
+        Freeway | Arena5 => 2,
+        Cyburbia => 6,
+        Rooftops => 8,
     }
 }
 pub fn track(disc: &Disc, number: usize) -> Result<AudioSource> {
