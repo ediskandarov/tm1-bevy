@@ -45,7 +45,7 @@ pub fn capture(
     mut cameras: Query<&mut bevy::camera::RenderTarget, With<Camera>>,
     mut offscreen: Local<Option<bevy::camera::RenderTarget>>,
     sinks: Query<&AudioSink>,
-    rival_engines: Query<&SpatialAudioSink, With<crate::sfx::RivalEngine>>,
+    rival_engines: Query<&AudioSink, With<crate::sfx::RivalEngine>>,
     pads: Query<&Gamepad>,
     engine: Query<&AudioSink, With<crate::sfx::Engine>>,
     music: Query<&AudioSink, With<crate::music::ArenaMusic>>,
@@ -67,7 +67,7 @@ pub fn capture(
         if capture.demo && capture.attempts == 1 {
             eprintln!(
                 "Active audio sinks: {}, connected gamepads: {}",
-                sinks.iter().count() + rival_engines.iter().count(),
+                sinks.iter().count(),
                 pads.iter().count()
             );
             for sink in &rival_engines {

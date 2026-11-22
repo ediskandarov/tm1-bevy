@@ -809,9 +809,11 @@ mod tests {
             );
             assert_eq!(
                 world
-                    .query_filtered::<Entity, With<crate::sfx::RivalEngine>>()
+                    .query::<&crate::sfx::RivalEngine>()
                     .iter(&world)
-                    .count(),
+                    .map(|engine| engine.slot)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
                 count + usize::from(level == Level::Rooftops)
             );
             assert_eq!(
