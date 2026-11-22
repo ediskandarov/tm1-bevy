@@ -25,6 +25,8 @@ pub enum VehicleMesh {
 pub struct BodyStage(usize);
 #[derive(Component)]
 pub struct WorldCamera;
+#[derive(Component)]
+pub struct SkyCamera;
 
 const TILE: usize = 256;
 const COLUMNS: usize = 8;
@@ -32,6 +34,7 @@ const COLUMNS: usize = 8;
 #[derive(Resource)]
 pub struct Arena {
     scene: Scene,
+    sky: Option<Scene>,
     missile_models: [Scene; 2],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
@@ -55,6 +58,7 @@ pub struct Arena {
 impl Arena {
     pub fn new(
         mut scene: Scene,
+        sky: Option<Scene>,
         vehicle: [Scene; 3],
         opponent: [Scene; 3],
         missile_models: [Scene; 2],
@@ -76,6 +80,7 @@ impl Arena {
         for p in scene
             .polygons
             .iter()
+            .chain(sky.iter().flat_map(|s| &s.polygons))
             .chain(missile_models.iter().flat_map(|s| &s.polygons))
         {
             let next = tiles.len();
@@ -115,6 +120,7 @@ impl Arena {
         ensure!(radius.is_finite() && radius > 0., "invalid arena bounds");
         Ok(Self {
             scene,
+            sky,
             missile_models,
             vehicle_start,
             opponent_start,
@@ -181,6 +187,40 @@ pub fn setup(
         alpha_mode: AlphaMode2d::Blend,
         ..default()
     });
+    // The retail sky uses a fixed far ordering-table slot and follows the
+    // player horizontally. A background camera gives it independent depth.
+    if let Some(sky) = &arena.sky {
+        let mut batch = Batch::default();
+        for polygon in &sky.polygons {
+            let slot = arena.tiles[&(polygon.texture, polygon.semi_transparent)];
+            for &i in indices(polygon.vertices.len()) {
+                let v = &polygon.vertices[i];
+                batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
+            }
+        }
+        commands.spawn((
+            Mesh2d(meshes.add(batch.mesh())),
+            MeshMaterial2d(masked.clone()),
+            RenderLayers::layer(2),
+            NoFrustumCulling,
+        ));
+        commands.spawn((
+            WorldCamera,
+            SkyCamera,
+            Camera2d,
+            Camera {
+                order: -1,
+                ..default()
+            },
+            Projection::Perspective(PerspectiveProjection {
+                fov: 2. * (0.5_f32 / 0.85).atan(),
+                near: 1.,
+                far: 100000.,
+                ..default()
+            }),
+            RenderLayers::layer(2),
+        ));
+    }
     for (car, ranges) in arena.body_ranges.iter().enumerate() {
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
@@ -235,6 +275,11 @@ pub fn setup(
         Camera2d,
         Camera {
             order: 0,
+            clear_color: if arena.sky.is_some() {
+                ClearColorConfig::None
+            } else {
+                ClearColorConfig::Default
+            },
 
             ..default()
         },
@@ -350,7 +395,7 @@ pub fn update(
         (&VehicleMesh, &BodyStage, &mut Visibility, &mut Transform),
         Without<WorldCamera>,
     >,
-    mut camera: Single<&mut Transform, With<WorldCamera>>,
+    mut cameras: Query<(&mut Transform, Has<SkyCamera>), With<WorldCamera>>,
     window: Single<&Window>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -392,7 +437,12 @@ pub fn update(
             origin + Vec3::Y * 40.,
         )
     };
-    **camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    for (mut camera, sky) in &mut cameras {
+        *camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+        if sky {
+            camera.translation -= Vec3::new(origin.x, 0., origin.z);
+        }
+    }
     let active = [drive.player.body_stage(), drive.opponent.body_stage()];
     for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
         let (selected, origin, matrix) = match vehicle {

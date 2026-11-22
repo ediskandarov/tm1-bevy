@@ -279,13 +279,13 @@ void tm1_reset_projectiles(CollisionScene* s)
 void tm1_use_scene(CollisionScene* s)
 {
     if (current) {
-        current->temporary_hole = potHoles[4];
-        current->has_temporary_hole = numCheckPotHoles > 4;
+        current->temporary_hole = potHoles[numPotHoles];
+        current->has_temporary_hole = numCheckPotHoles > numPotHoles;
     }
     current = s;
     if (s)
-        potHoles[4] = s->temporary_hole;
-    numCheckPotHoles = 4 + (s && s->has_temporary_hole);
+        potHoles[numPotHoles] = s->temporary_hole;
+    numCheckPotHoles = numPotHoles + (s && s->has_temporary_hole);
 }
 Cs* csGetWorldCs(void)
 {

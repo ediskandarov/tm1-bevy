@@ -6,11 +6,12 @@ The arena includes machine guns, missiles, pickups, contact damage, sound, music
 Initial decision date: 2026-11-22.
 
 The goal is to port the full original game. The first playable milestone is
-the arena encounter. All twelve regular vehicles are selectable there. With
+the arena encounter. Warehouse is also playable as a standalone encounter against one police car. All twelve regular vehicles are selectable on either stage. With
 `TM1_CUE` set to the path of the JP disc cue, run:
 
 ```sh
 cargo run --locked --offline -- "$TM1_CUE" --car sweet-tooth
+cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car road-kill
 ```
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,

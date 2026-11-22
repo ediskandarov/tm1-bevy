@@ -3,6 +3,10 @@
 #include "tm1/TRIGPTS.H"
 #include "tm1/BRIDGES.H"
 #include "tm1/CARUPD.H"
+void InitLevel2TriggerPoints(void);
+void InitLevel2Bridges(void);
+void InitLevel2Curbs(void);
+void InitLevel2PotHoles(void);
 void InitLevel1PotHoles(void);
 void SetFullCarDrift(CarMotion *);
 void SetNoCarDrift(CarMotion *, u8 *);

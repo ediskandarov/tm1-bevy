@@ -9,10 +9,13 @@ use tm1_assets::disc::Disc;
 #[derive(Resource)]
 pub struct Music(Option<AudioSource>);
 impl Music {
-    pub fn arena(disc: &Disc) -> Result<Self> {
-        // shellSoundForThisLevel selects Circus Metallicus. soundStartPlayDA
+    pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
+        // shellSoundForThisLevel selects the stage track. soundStartPlayDA
         // starts 150 sectors after INDEX 01 and ends before the next pregap.
-        let track = disc.audio_track(3)?;
+        let track = disc.audio_track(match level {
+            tm1_core::drive::Level::Arena => 3,
+            tm1_core::drive::Level::Warehouse => 4,
+        })?;
         let pcm = &track[150 * 2352..];
         Ok(Self(Some(stereo_wave(pcm)?)))
     }

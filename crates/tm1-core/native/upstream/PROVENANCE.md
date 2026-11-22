@@ -21,9 +21,10 @@ The driving files use functions from the same pinned source. `car_dynamics.c`
 includes the CAR_INIT stat initializers for the ice cream truck, taxi, semi, monster truck, Lamborghini, Harley, low rider and dune buggy. Their projectile special parameters come from INTERACT.c. It also contains CAR, CAR_INIT, SMOOTH and UA pad functions. The expression
 `t & (t | (s32)sk)` reduces to `t`, avoiding a host pointer truncation.
 `arena_ground.c` uses BRIDGES, POTHOLES, TRIGPTS, CARUPD, CAR and SMOOTH.
+The Warehouse initializers come from TRIGPTS, BRIDGES, CURBS and POTHOLES.
 Its tire-height routine excludes the rooftop-only branch. `ai_driving.c` uses
 AI_CAR, AICARINI, CARUPD, CAR and CAR_INIT for a single police opponent on
-level one. The arena adapters replace sound and presentation calls while retaining gameplay effects and random draws on compared paths. Weapon-profile
+the arena and Warehouse. The arena adapters replace sound and presentation calls while retaining gameplay effects and random draws on compared paths. Weapon-profile
 addresses in the car layout have their original 32-bit width.
 The host supplies the level and player context, copies records across the ABI
 and serializes C globals. The game executable and SDK tables stay on the disc.

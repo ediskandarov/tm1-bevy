@@ -162,6 +162,31 @@ u8 GetCtlPad(s16 button, s16 which)
     return down;
 }
 
+static int current_level = -1;
+
+s32 shellGetCurrentLevel(void)
+{
+    return current_level;
+}
+
+void tm1_bind_level(int level)
+{
+    if (level == current_level) return;
+    current_level = level;
+    if (level == LEVEL2_WAREHOUSE) {
+        InitLevel2TriggerPoints();
+        InitLevel2Bridges();
+        InitLevel2Curbs();
+        InitLevel2PotHoles();
+    } else {
+        InitLevel1TriggerPoints();
+        InitLevel1Bridges();
+        InitLevel1PotHoles();
+        numCurbs = 0;
+    }
+    numSlickSpots = 0;
+}
+
 void tm1_player_init(u8* state, u32* seed, s32 kind)
 {
     PlayerCar car = { 0 };
@@ -171,9 +196,6 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     gFrameCount = 0;
     SetBounce(&car, 2, 2, 0, 1);
     *seed = random_state;
-    InitLevel1TriggerPoints();
-    InitLevel1Bridges();
-    InitLevel1PotHoles();
     InitTireInfo(car.tires);
     InitTireGroup(car.tires, 0);
     uaPadInit(&car, 1);
@@ -238,8 +260,14 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     car.stats.unk40 = car.stats.unk44;
     car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
     car.motion.mat = car.motion.mat2;
-    car.motion.pos.vx = car.motion.pos.vy = 0x460;
-    car.motion.rot.vz = car.motion.rot2.vz = 0x200;
+    if (current_level == LEVEL2_WAREHOUSE) {
+        car.motion.pos.vx = -0x28a0;
+        car.motion.pos.vy = -0x11d0;
+        car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
+    } else {
+        car.motion.pos.vx = car.motion.pos.vy = 0x460;
+        car.motion.rot.vz = car.motion.rot2.vz = 0x200;
+    }
     memcpy(state, &car, sizeof(car));
 }
 

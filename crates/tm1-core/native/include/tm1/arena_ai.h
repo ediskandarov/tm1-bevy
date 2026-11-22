@@ -17,7 +17,8 @@ AICar *GetAICarInfo(s16);
 void GetPlayerPosition(s16,VECTOR3 *);
 static inline s16 GetClosestPlayer(VECTOR3 *p,s16 ignored) { (void)p; (void)ignored; return 0; }
 static inline s32 GetAICarStrength(void) { return 100; }
-static inline u8 uaUsingLanes(void) { return 0; }
-static inline s32 shellGetCurrentLevel(void) { return LEVEL1_ARENA; }
+s32 shellGetCurrentLevel(void);
+static inline u8 uaUsingLanes(void) { return shellGetCurrentLevel() == LEVEL2_WAREHOUSE; }
+
 typedef struct { s32 vx, vy, vz, pad; } VECTOR;
 #define UA_NONE (-1)

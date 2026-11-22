@@ -15,12 +15,25 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
-    use tm1_core::drive::Vehicle;
+    use tm1_core::drive::{Level, Vehicle};
+    let mut level = Level::Arena;
     let mut vehicle = Vehicle::YellowJacket;
-    if flag.as_deref() == Some(std::ffi::OsStr::new("--car")) {
+    while matches!(
+        flag.as_ref().and_then(|s| s.to_str()),
+        Some("--car" | "--level")
+    ) {
+        if flag.as_deref() == Some(std::ffi::OsStr::new("--level")) {
+            level = match args.next().as_ref().and_then(|s| s.to_str()) {
+                Some("warehouse") => Level::Warehouse,
+                Some("arena") => Level::Arena,
+                _ => anyhow::bail!("--level requires arena or warehouse"),
+            };
+            flag = args.next();
+            continue;
+        }
         let name = args.next();
         vehicle = Vehicle::ROSTER
             .into_iter()
@@ -62,18 +75,24 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let data = disc.read("UADMD/XARENA1.DMD")?;
-    let textures = Vram::from_tms(&disc.read("UADMD/XARENA1.TMS")?)?;
+    let stage = match level {
+        Level::Arena => "XARENA1",
+        Level::Warehouse => "WH1",
+    };
+    let data = disc.read(&format!("UADMD/{stage}.DMD"))?;
+    let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
     let dmd = Dmd::parse(&data)?;
     ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
     let mut scene = dmd.extract_kind(1)?;
-    let floor = dmd.extract_kind(3)?;
-    scene.polygons.extend(floor.polygons);
+    if level == Level::Arena {
+        scene.polygons.extend(dmd.extract_kind(3)?.polygons);
+    }
     for issue in &scene.omitted_nodes {
         eprintln!("Preview omission: {issue}");
     }
-    let player = tm1_core::drive::PlayerVehicle::for_vehicle(&disc.read("SIPS_600.07")?, vehicle)
-        .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
+    let player =
+        tm1_core::drive::PlayerVehicle::on_level(&disc.read("SIPS_600.07")?, vehicle, level)
+            .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
     let player_mesh = dmd.vehicle_bodies(vehicle as u16)?;
     let opponent_mesh = dmd.vehicle_bodies(50)?;
     let contacts = tm1_core::drive::CollisionScene::from_dmd(
@@ -85,6 +104,9 @@ fn main() -> Result<()> {
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
     let arena = render::Arena::new(
         scene,
+        (level == Level::Warehouse)
+            .then(|| dmd.extract_kind(2))
+            .transpose()?,
         player_mesh,
         opponent_mesh,
         [dmd.extract_kind(201)?, dmd.extract_kind(312)?],
@@ -99,12 +121,15 @@ fn main() -> Result<()> {
     app.insert_resource(capture)
         .insert_resource(arena)
         .insert_resource(sfx::Sounds::load(&disc, vehicle)?)
-        .insert_resource(music::Music::arena(&disc)?)
+        .insert_resource(music::Music::level(&disc, level)?)
         .insert_resource(driving::Drive::new(player, contacts))
-        .insert_resource(ClearColor(Color::srgb(0.035, 0.045, 0.065)))
+        .insert_resource(ClearColor(match level {
+            Level::Arena => Color::srgb(0.035, 0.045, 0.065),
+            Level::Warehouse => Color::srgb_u8(75, 70, 55),
+        }))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "TM1 • Arena driving test".into(),
+                title: format!("TM1 • {level:?}"),
                 resolution: (1280, 800).into(),
                 ..default()
             }),

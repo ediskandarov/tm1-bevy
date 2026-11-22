@@ -1,6 +1,7 @@
 //! Fixed-step vehicle, terrain, collision and projectile simulation for the JP arena.
 unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
+    fn tm1_bind_level(level: i32);
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
     fn tm1_drive_step(
         state: *mut u8,
@@ -11,6 +12,13 @@ unsafe extern "C" {
         table: *const i16,
         seed: *mut u32,
     );
+}
+
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Level {
+    Arena,
+    Warehouse,
 }
 
 #[repr(i32)]
@@ -79,6 +87,7 @@ impl Vehicle {
 }
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
+    level: Level,
     vehicle: Vehicle,
     trig: Box<[i16]>,
     seed: u32,
@@ -115,6 +124,9 @@ impl PlayerVehicle {
         Self::for_vehicle(exe, Vehicle::YellowJacket)
     }
     pub fn for_vehicle(exe: &[u8], vehicle: Vehicle) -> Option<Self> {
+        Self::on_level(exe, vehicle, Level::Arena)
+    }
+    pub fn on_level(exe: &[u8], vehicle: Vehicle, level: Level) -> Option<Self> {
         if exe.get(..8)? != b"PS-X EXE" {
             return None;
         }
@@ -131,9 +143,13 @@ impl PlayerVehicle {
         let mut seed = 1;
         {
             let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-            unsafe { tm1_player_init(state.as_mut_ptr(), &mut seed, vehicle as i32) };
+            unsafe {
+                tm1_bind_level(level as i32);
+                tm1_player_init(state.as_mut_ptr(), &mut seed, vehicle as i32)
+            };
         }
         Some(Self {
+            level,
             vehicle,
             state,
             frame: 0,
@@ -147,7 +163,10 @@ impl PlayerVehicle {
         self.seed = 1;
         self.frame = 0;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { tm1_player_init(self.state.as_mut_ptr(), &mut self.seed, self.vehicle as i32) }
+        unsafe {
+            tm1_bind_level(self.level as i32);
+            tm1_player_init(self.state.as_mut_ptr(), &mut self.seed, self.vehicle as i32)
+        }
     }
     pub fn vehicle(&self) -> Vehicle {
         self.vehicle
@@ -201,6 +220,7 @@ impl PlayerVehicle {
         self.frame = self.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_level(self.level as i32);
             tm1_use_scene(scene);
             tm1_drive_step(
                 self.state.as_mut_ptr(),
@@ -244,6 +264,7 @@ impl PoliceCar {
     fn update(&mut self, player: &mut Taxi, fields: u8, init: bool, scene: *mut std::ffi::c_void) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_level(player.level as i32);
             tm1_police_step(
                 scene,
                 self.state.as_mut_ptr(),
@@ -323,6 +344,7 @@ impl CollisionScene {
         assert!((1..=5).contains(&fields));
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_level(player.level as i32);
             tm1_contacts(
                 self.0.as_ptr(),
                 player.state.as_mut_ptr(),

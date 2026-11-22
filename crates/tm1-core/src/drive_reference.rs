@@ -5,9 +5,9 @@ use mips::Cpu;
 
 const PLAYER: u32 = 0x8019ee40;
 const POLICE: u32 = 0x8019f7a8;
-const TAXI_CS: u32 = 0x800bd000;
-const POLICE_CS: u32 = 0x800bd200;
-const WORLD: u32 = 0x800bd400;
+const TAXI_CS: u32 = 0x800dc000;
+const POLICE_CS: u32 = 0x800dc200;
+const WORLD: u32 = 0x800dc400;
 fn put(cpu: &mut Cpu, at: u32, v: u32) {
     cpu.put(at, &v.to_le_bytes());
 }
@@ -26,15 +26,23 @@ impl Reference {
         Self::build(vehicle, false)
     }
     fn build(vehicle: Vehicle, retail_particles: bool) -> Self {
+        Self::on_level(vehicle, retail_particles, Level::Arena)
+    }
+    fn on_level(vehicle: Vehicle, retail_particles: bool, level: Level) -> Self {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+        let data = disc
+            .read(match level {
+                Level::Arena => "UADMD/XARENA1.DMD",
+                Level::Warehouse => "UADMD/WH1.DMD",
+            })
+            .unwrap();
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
         let mut cpu = Cpu::new(&exe);
         let scene =
             CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(50)).unwrap();
-        let mut player = PlayerVehicle::for_vehicle(&exe, vehicle).unwrap();
+        let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
         let mut police = PoliceCar::spawn(&mut player);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
@@ -73,8 +81,8 @@ impl Reference {
                 tm1_pickup_address(scene.0.as_ptr(), i as i32)
             });
         }
-        cpu.call(0x80102b48, &[0x800c1000]);
-        cpu.call(0x80103a4c, &[0x800c3000]);
+        cpu.call(0x80102b48, &[0x800e1000]);
+        cpu.call(0x80103a4c, &[0x800e3000]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
             0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
@@ -621,16 +629,21 @@ fn regular_missile_impacts_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn coupled_arena_original() {
-    compare_encounter(Vehicle::YellowJacket, 20);
+    compare_encounter(Vehicle::YellowJacket, 20, Level::Arena);
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn hammerhead_crush_original() {
-    compare_encounter(Vehicle::Hammerhead, 20);
-    compare_encounter(Vehicle::Hammerhead, 5);
+    compare_encounter(Vehicle::Hammerhead, 20, Level::Arena);
+    compare_encounter(Vehicle::Hammerhead, 5, Level::Arena);
 }
-fn compare_encounter(vehicle: Vehicle, charge: i16) {
-    let mut r = Reference::with_vehicle(vehicle);
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_encounter_original() {
+    compare_encounter(Vehicle::YellowJacket, 20, Level::Warehouse);
+}
+fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
+    let mut r = Reference::on_level(vehicle, false, level);
     let crush = vehicle == Vehicle::Hammerhead;
     let mut engaged = false;
     put(&mut r.cpu, 0x8019edd8, vehicle as u32);
@@ -643,7 +656,10 @@ fn compare_encounter(vehicle: Vehicle, charge: i16) {
         r.police.state[0x20c + 0x18..0x20c + 0x1a].copy_from_slice(&1000i16.to_le_bytes());
     }
     r.police.state[0x40] = 0;
-    for entry in [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8] {
+    for entry in match level {
+        Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::Warehouse => [0x801262ec, 0x8012cf58, 0x801307a4, 0x80130a98, 0x80131304],
+    } {
         r.cpu.call(entry, &[]);
     }
     for at in [
@@ -652,8 +668,19 @@ fn compare_encounter(vehicle: Vehicle, charge: i16) {
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
-    r.cpu.put(0x8018c378, &1u16.to_le_bytes());
-    put(&mut r.cpu, 0x8018c3b4, 0);
+    r.cpu.put(0x8018c378, &(level as u16 + 1).to_le_bytes());
+    r.cpu
+        .put(0x8018c374, &[u8::from(level == Level::Warehouse)]);
+    put(&mut r.cpu, 0x8018c3b4, level as u32);
+    r.cpu.put(PLAYER + 0x388, &[0xff; 0x24]);
+    r.cpu.call(0x80122ea4, &[PLAYER, 1]);
+    for (axis, position) in r.player.position().into_iter().enumerate() {
+        assert_eq!(
+            r.cpu.word(PLAYER + 0x388 + 4 * axis as u32) as i32,
+            position
+        );
+    }
+    assert_eq!(r.cpu.word(PLAYER + 0x3a8) as i32, r.player.heading());
     // RT draws drops and tasers between missile and bullet movement. The
     // fixture has no packet space, but those passes still advance game state.
     for at in [
@@ -698,6 +725,8 @@ fn compare_encounter(vehicle: Vehicle, charge: i16) {
         r.cpu.call(0x8010e3d8, &[]);
         r.cpu.call(0x80137d2c, &[]);
         r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
+        // Run the retail PlayGame battle scheduler up to the AI update loop.
+        r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
         r.cpu.call(0x8014ee14, &[POLICE_CS, POLICE]);
         r.cpu.call(0x80135784, &[]);
         r.scene.step(&mut r.player, &mut r.police, input, fields);
