@@ -95,6 +95,17 @@ impl<'a> Dmd<'a> {
         Ok(offset)
     }
     pub fn extract_kind(&self, kind: u16) -> Result<Scene> {
+        self.extract(kind, None)
+    }
+    /// Read the three body-switch branches selected by UA's damage update.
+    pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {
+        Ok([
+            self.extract(kind, Some(0))?,
+            self.extract(kind, Some(1))?,
+            self.extract(kind, Some(2))?,
+        ])
+    }
+    fn extract(&self, kind: u16, body: Option<u8>) -> Result<Scene> {
         let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
         ensure!(
             roots.len() == 1,
@@ -102,6 +113,24 @@ impl<'a> Dmd<'a> {
             roots.len()
         );
         let root_id = roots[0].0;
+        let mut selection = None;
+        if let Some(stage) = body {
+            // uaswInitCarSwitch follows child zero through two groups.
+            let mut node = root_id;
+            for _ in 0..2 {
+                let offset = self.offset(node)?;
+                ensure!(
+                    bytes(self.data, offset, 24)?[0] == 1 && self.data[offset + 20] > 0,
+                    "missing vehicle body group"
+                );
+                node = u32le(self.data, offset + 24)?;
+            }
+            ensure!(
+                self.data[self.offset(node)?] == 9,
+                "missing vehicle body switch"
+            );
+            selection = Some((node, stage));
+        }
         let mut scene = Scene {
             version: self.version,
             root_id,
@@ -112,6 +141,7 @@ impl<'a> Dmd<'a> {
         self.visit(
             root_id,
             Transform::IDENTITY,
+            selection,
             None,
             &mut Vec::new(),
             &mut scene,
@@ -126,6 +156,7 @@ impl<'a> Dmd<'a> {
         &self,
         ptr: u32,
         transform: Transform,
+        selection: Option<(u32, u8)>,
         mut pickup: Option<u8>,
         ancestors: &mut Vec<u32>,
         scene: &mut Scene,
@@ -226,8 +257,11 @@ impl<'a> Dmd<'a> {
             }
             9 => {
                 bytes(d, p, 8)?;
-                ensure!(d[p + 7] < d[p + 6], "switch child out of range");
-                children.push(u32le(d, p + 8 + 4 * d[p + 7] as usize)?);
+                let child = selection
+                    .filter(|(node, _)| *node == ptr)
+                    .map_or(d[p + 7], |(_, stage)| stage);
+                ensure!(child < d[p + 6], "switch child out of range");
+                children.push(u32le(d, p + 8 + 4 * child as usize)?);
             }
             6..=8 | 10 => {}
             11 => {
@@ -238,7 +272,7 @@ impl<'a> Dmd<'a> {
             op => bail!("unsupported DMD opcode {op} at {ptr:#x}"),
         }
         for child in children {
-            self.visit(child, transform, pickup, ancestors, scene)?;
+            self.visit(child, transform, selection, pickup, ancestors, scene)?;
         }
         ancestors.pop();
         Ok(())

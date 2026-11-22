@@ -22,6 +22,8 @@ pub enum VehicleMesh {
     Police,
 }
 #[derive(Component)]
+pub struct BodyStage(usize);
+#[derive(Component)]
 pub struct WorldCamera;
 
 const TILE: usize = 256;
@@ -31,6 +33,7 @@ const COLUMNS: usize = 8;
 pub struct Arena {
     scene: Scene,
     vehicle_start: usize,
+    body_ranges: [[std::ops::Range<usize>; 3]; 2],
     opponent_start: usize,
     overview: bool,
     pixels: Vec<u8>,
@@ -47,11 +50,21 @@ pub struct Arena {
     zoom: f32,
 }
 impl Arena {
-    pub fn new(mut scene: Scene, vehicle: Scene, opponent: Scene, vram: Vram) -> Result<Self> {
+    pub fn new(
+        mut scene: Scene,
+        vehicle: [Scene; 3],
+        opponent: [Scene; 3],
+        vram: Vram,
+    ) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
-        scene.polygons.extend(vehicle.polygons);
-        let opponent_start = scene.polygons.len();
-        scene.polygons.extend(opponent.polygons);
+        let body_ranges = [vehicle, opponent].map(|variants| {
+            variants.map(|variant| {
+                let start = scene.polygons.len();
+                scene.polygons.extend(variant.polygons);
+                start..scene.polygons.len()
+            })
+        });
+        let opponent_start = body_ranges[1][0].start;
         let mut tiles = BTreeMap::new();
         tiles.insert((None, false), 0);
         for p in &scene.polygons {
@@ -90,6 +103,7 @@ impl Arena {
             scene,
             vehicle_start,
             opponent_start,
+            body_ranges,
             overview: false,
             pixels,
             atlas_size: [width, height],
@@ -150,31 +164,37 @@ pub fn setup(
         alpha_mode: AlphaMode2d::Blend,
         ..default()
     });
-    for (vehicle, range) in [
-        (VehicleMesh::Taxi, arena.vehicle_start..arena.opponent_start),
-        (
-            VehicleMesh::Police,
-            arena.opponent_start..arena.scene.polygons.len(),
-        ),
-    ] {
-        let mut batch = Batch::default();
-        for polygon in &arena.scene.polygons[range] {
-            if polygon.billboard.is_some() || polygon.semi_transparent {
-                continue;
+    for (car, ranges) in arena.body_ranges.iter().enumerate() {
+        for (stage, range) in ranges.iter().enumerate() {
+            let mut batch = Batch::default();
+            for polygon in &arena.scene.polygons[range.clone()] {
+                if polygon.billboard.is_some() || polygon.semi_transparent {
+                    continue;
+                }
+                let slot = arena.tiles[&(polygon.texture, false)];
+                for &i in indices(polygon.vertices.len()) {
+                    let v = &polygon.vertices[i];
+                    batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
+                }
             }
-            let slot = arena.tiles[&(polygon.texture, false)];
-            for &i in indices(polygon.vertices.len()) {
-                let v = &polygon.vertices[i];
-                batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
-            }
+            commands.spawn((
+                if car == 0 {
+                    VehicleMesh::Taxi
+                } else {
+                    VehicleMesh::Police
+                },
+                BodyStage(stage),
+                if stage == 0 {
+                    Visibility::Inherited
+                } else {
+                    Visibility::Hidden
+                },
+                Mesh2d(meshes.add(batch.mesh())),
+                MeshMaterial2d(masked.clone()),
+                RenderLayers::layer(1),
+                NoFrustumCulling,
+            ));
         }
-        commands.spawn((
-            vehicle,
-            Mesh2d(meshes.add(batch.mesh())),
-            MeshMaterial2d(masked.clone()),
-            RenderLayers::layer(1),
-            NoFrustumCulling,
-        ));
     }
     for (transparent, material) in [(false, masked), (true, blend.clone())] {
         let mesh = meshes.add(Batch::default().mesh());
@@ -305,7 +325,10 @@ pub fn update(
     drive: Res<crate::driving::Drive>,
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
-    mut vehicles: Query<(&VehicleMesh, &mut Transform), Without<WorldCamera>>,
+    mut vehicles: Query<
+        (&VehicleMesh, &BodyStage, &mut Visibility, &mut Transform),
+        Without<WorldCamera>,
+    >,
     mut camera: Single<&mut Transform, With<WorldCamera>>,
     window: Single<&Window>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -349,11 +372,17 @@ pub fn update(
         )
     };
     **camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
-    for (vehicle, mut entity) in &mut vehicles {
-        let (origin, matrix) = match vehicle {
-            VehicleMesh::Taxi => (origin, matrix),
-            VehicleMesh::Police => (opponent_origin, opponent_matrix),
+    let active = [drive.taxi.body_stage(), drive.opponent.body_stage()];
+    for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
+        let (selected, origin, matrix) = match vehicle {
+            VehicleMesh::Taxi => (active[0], origin, matrix),
+            VehicleMesh::Police => (active[1], opponent_origin, opponent_matrix),
         };
+        if stage.0 != selected {
+            *visibility = Visibility::Hidden;
+            continue;
+        }
+        *visibility = Visibility::Inherited;
         let basis = |p: [f32; 3]| {
             world(std::array::from_fn(|i| {
                 (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
@@ -377,7 +406,11 @@ pub fn update(
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
     let mut additive = Batch::default();
-    for (i, p) in arena.scene.polygons.iter().enumerate() {
+    let visible = (0..arena.vehicle_start)
+        .chain(arena.body_ranges[0][active[0]].clone())
+        .chain(arena.body_ranges[1][active[1]].clone());
+    for i in visible {
+        let p = &arena.scene.polygons[i];
         if i >= arena.vehicle_start && p.billboard.is_none() && !p.semi_transparent {
             continue;
         }

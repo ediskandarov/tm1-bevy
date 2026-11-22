@@ -279,6 +279,9 @@ impl CollisionScene {
 }
 
 impl Taxi {
+    pub fn body_stage(&self) -> usize {
+        body_stage(self.health(), self.state[0x13f] as i8)
+    }
     pub fn health(&self) -> (i32, i32) {
         (self.word(0x178), self.word(0x17c))
     }
@@ -287,6 +290,9 @@ impl Taxi {
     }
 }
 impl PoliceCar {
+    pub fn body_stage(&self) -> usize {
+        body_stage(self.health(), self.state[0x213] as i8)
+    }
     pub fn health(&self) -> (i32, i32) {
         let word = |at: usize| i32::from_le_bytes(self.state[at..at + 4].try_into().unwrap());
         (word(0x24c), word(0x250))
@@ -373,5 +379,32 @@ mod graph_tests {
         data[40..].copy_from_slice(&node.to_le_bytes());
         assert!(CollisionScene::from_dmd(&data, node, node, node).is_none());
         assert!(CollisionScene::from_dmd(&data[..38], node, node, node).is_none());
+    }
+}
+
+// UA.c uses integer health percentages for the body switch on both cars.
+fn body_stage((health, maximum): (i32, i32), threshold: i8) -> usize {
+    let pct = health * 100 / maximum.max(1);
+    if pct > i32::from(threshold) {
+        0
+    } else if pct >= 11 {
+        1
+    } else {
+        2
+    }
+}
+#[test]
+fn vehicle_body_thresholds() {
+    for (hp, max, expected) in [
+        (100, 100, 0),
+        (76, 100, 0),
+        (75, 100, 1),
+        (11, 100, 1),
+        (10, 100, 2),
+        (0, 100, 2),
+        (83, 110, 1),
+        (84, 110, 0),
+    ] {
+        assert_eq!(body_stage((hp, max), 75), expected);
     }
 }

@@ -55,13 +55,13 @@ fn main() -> Result<()> {
     }
     let taxi = tm1_core::drive::Taxi::from_executable(&disc.read("SIPS_600.07")?)
         .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
-    let taxi_mesh = dmd.extract_kind(20)?;
-    let opponent_mesh = dmd.extract_kind(50)?;
+    let taxi_mesh = dmd.vehicle_bodies(20)?;
+    let opponent_mesh = dmd.vehicle_bodies(50)?;
     let contacts = tm1_core::drive::CollisionScene::from_dmd(
         &data,
         scene.root_id,
-        taxi_mesh.root_id,
-        opponent_mesh.root_id,
+        taxi_mesh[0].root_id,
+        opponent_mesh[0].root_id,
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
     let arena = render::Arena::new(scene, taxi_mesh, opponent_mesh, textures)?;

@@ -193,6 +193,7 @@ void tm1_taxi_init(u8* state, u32* seed)
     car.stats.unkFC = 100;
     car.stats.updateRate = 60;
     InitTaxiCab(&car.stats);
+    car.stats.damageThreshold = 75;
     car.stats.unk78 = abs(car.stats.unk80) + abs(car.stats.unk84);
     car.stats.unk40 = car.stats.unk44;
     car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
@@ -310,6 +311,7 @@ void tm1_police_step(struct CollisionScene* scene, u8* state, u8* target, const 
         car.weap.maxAmmo = 28;
         car.weap.unk48 = 6;
         InitPoliceCar(&car.stats);
+        car.stats.damageThreshold = 75;
         car.stats.unkDC = 25;
         car.stats.unkE8 = 3;
         car.stats.unkFC = car.stats.unk100 = GetAICarStrength();

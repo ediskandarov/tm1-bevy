@@ -395,3 +395,33 @@ fn coupled_arena_original() {
         r.compare();
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn damage_body_switch_matches_retail() {
+    let mut r = Reference::new();
+    r.sync();
+    // Keep the original health decision and stage write. Omit the presentation
+    // callbacks for headlights, smoke and the actual DMD switch in this fixture.
+    for entry in [0x8014158c, 0x80141c64, 0x80137140] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    for (car, stats, update, maximum) in [
+        (PLAYER, 0x138, 0x8014e34c, r.player.health().1),
+        (POLICE, 0x20c, 0x8014e6ac, r.police.health().1),
+    ] {
+        for hp in (1..=maximum).rev().chain(1..=maximum) {
+            put(&mut r.cpu, car + stats + 0x40, hp as u32);
+            r.cpu.call(update, &[0]);
+            let expected = ((r.cpu.word(car + stats + 4) >> 16) & 255) as usize;
+            let observed = if car == PLAYER {
+                r.player.state[0x178..0x17c].copy_from_slice(&hp.to_le_bytes());
+                r.player.body_stage()
+            } else {
+                r.police.state[0x24c..0x250].copy_from_slice(&hp.to_le_bytes());
+                r.police.body_stage()
+            };
+            assert_eq!(observed, expected, "car {car:#x} health {hp}");
+        }
+    }
+}
