@@ -10,6 +10,14 @@ pub struct Campaign(pub Disc);
 #[derive(Component)]
 pub struct StageEntity;
 
+#[derive(Default, Clone, Copy)]
+pub struct PasswordModes {
+    pub infinite_weapons: bool,
+    pub god_mode: bool,
+    pub minion: bool,
+    pub helicopter: bool,
+}
+
 pub enum Entry<'a> {
     New(Difficulty),
     Continue(&'a driving::Drive),
@@ -90,6 +98,12 @@ impl Stage {
         )?;
         let mut drive = driving::Drive::new(player, contacts, &opponent_kinds);
         drive.deck = deck;
+        if let Entry::Continue(previous) = entry {
+            drive.helicopter_unlocked = previous.helicopter_unlocked;
+            if previous.helicopter_pose().is_some() {
+                drive.toggle_helicopter();
+            }
+        }
         Ok(Self {
             arena,
             drive,
@@ -105,11 +119,12 @@ impl Stage {
             }),
         })
     }
-    pub fn apply_passwords(&mut self, infinite_weapons: bool, god_mode: bool, minion: bool) {
+    pub fn apply_passwords(&mut self, modes: PasswordModes) {
+        self.drive.helicopter_unlocked = modes.helicopter;
         self.drive
             .player
-            .set_weapon_and_damage_modes(infinite_weapons, god_mode);
-        if minion {
+            .set_weapon_and_damage_modes(modes.infinite_weapons, modes.god_mode);
+        if modes.minion {
             self.drive.start_with_minion();
         }
     }

@@ -45,3 +45,5 @@ Front and rear flamethrowers follow INTERACT.c fireFlameThrower and displayFlame
 Warthog, Spectre and Road Kill use the Humvee, Corvette and Mad Max profiles from CAR_INIT.c. Their launch mounts and ammunition rules follow INTERACT.c. Missile guidance, the post-impact update through life -11 and the contrail ring geometry follow WEAPON.c. Trail widths and UV orientation use the original CONTRAIL_PT and CONTRAIL_UV expressions.
 
 Minion uses UA.c uaInitBossCar, CAR_INIT.c CarInit and InitBossCar, the boss branches in INTERACT.c and WEAPON.c swarm guidance. Wreck motion follows CAR.c UpdateCarDeath and UA.c StartDeathSequence. The damage effects use the disc Flame and Aburst frame sets.
+
+Helicopter View uses AI_CAR.c AICarHeliUpdate and CAR_INIT.c InitHeliCar from fb8f9dd. The host performs UA.c InitHelicoptorPosition and UpdateCamera and the helicopter aiming branch in CAR.c CarViewUpdate. The native arena square-root routine supplies SquareRoot0.

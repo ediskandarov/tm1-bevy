@@ -57,7 +57,7 @@ impl Ending {
                 "Arena with 5 Opponents",
                 tm1_core::drive::Level::Arena5.password().unwrap(),
             ),
-            ("Helicopter View", "@@<> "),
+            ("Helicopter View", crate::contest::HELICOPTER),
         ][draw as usize];
         for (y, line) in [
             (70, "CONGRATULATIONS!"),

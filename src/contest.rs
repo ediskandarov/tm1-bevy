@@ -1,5 +1,5 @@
 //! Keyboard contest selection and five-slot JP stage passwords.
-use crate::campaign::{self, Campaign, Stage};
+use crate::campaign::{self, Campaign, PasswordModes, Stage};
 use anyhow::Result;
 use bevy::prelude::*;
 use tm1_assets::screen::{self, Face, Fonts};
@@ -17,13 +17,8 @@ enum Page {
 }
 pub const INFINITE_WEAPONS: &str = "< =@@";
 pub const MINION_AND_FRIENDS: &str = "<>@=<";
+pub const HELICOPTER: &str = "@@<> ";
 const GOD_MODE: &str = "=<> @";
-#[derive(Default, Clone, Copy)]
-struct PasswordModes {
-    infinite_weapons: bool,
-    god_mode: bool,
-    minion: bool,
-}
 #[derive(Resource)]
 pub struct Contest {
     fonts: Fonts,
@@ -165,6 +160,7 @@ impl Contest {
                     self.page = Page::Contest;
                     match code {
                         INFINITE_WEAPONS => self.modes.infinite_weapons = true,
+                        HELICOPTER => self.modes.helicopter = true,
                         GOD_MODE => self.modes.god_mode = true,
                         "<><<@" => self.page = Page::BossPreview(std::time::Duration::from_secs(5)),
                         MINION_AND_FRIENDS => {
@@ -306,7 +302,7 @@ pub fn update(world: &mut World) {
             campaign::Entry::New(difficulty),
         ) {
             Ok(mut stage) => {
-                stage.apply_passwords(modes.infinite_weapons, modes.god_mode, modes.minion);
+                stage.apply_passwords(modes);
                 world.remove_resource::<Contest>();
                 campaign::replace(world, stage);
             }
@@ -379,6 +375,7 @@ mod tests {
         assert!(matches!(world.resource::<Contest>().page, Page::Contest));
         password(&mut world, &[Digit2, Digit1, Digit3, Space, Digit4]);
         password(&mut world, &[Digit1, Space, Digit2, Digit4, Digit4]);
+        password(&mut world, &[Digit4, Digit4, Digit1, Digit3, Space]);
         password(&mut world, &[Digit1, Digit3, Digit4, Digit2, Digit1]);
         press(&mut world, Enter);
         let drive = world.resource::<crate::driving::Drive>();
@@ -395,7 +392,7 @@ mod tests {
         assert_eq!(drive.opponents.len(), 4);
         assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
         assert!(drive.opponents.iter().all(|ai| ai.health().0 > 0));
-        for key in [Digit1, Digit2, Digit1, Digit5] {
+        for key in [KeyH, Digit1, Digit2, Digit1, Digit5] {
             world
                 .resource_mut::<Time<Real>>()
                 .advance_by(std::time::Duration::from_millis(50));
@@ -405,6 +402,7 @@ mod tests {
             world.run_system_once(crate::driving::advance).unwrap();
         }
         let drive = world.resource::<crate::driving::Drive>();
+        assert!(drive.helicopter_pose().is_some());
         assert_eq!(drive.player.state()[0x184], 1);
         assert_eq!(drive.player.state()[0x4a1], 0);
         world

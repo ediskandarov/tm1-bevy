@@ -78,7 +78,15 @@ fn main() -> Result<()> {
     }
     let realtime = flag.as_deref() == Some(std::ffi::OsStr::new("--realtime-screenshot"));
     let special_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-special-screenshot"));
-    let demo = realtime
+    let helicopter_demo =
+        flag.as_deref() == Some(std::ffi::OsStr::new("--demo-helicopter-screenshot"));
+    ensure!(
+        !helicopter_demo
+            || (!menu && matches!(level, Level::Arena | Level::Arena5 | Level::Rooftops)),
+        "helicopter capture requires Arena, Rooftops or Arena 5"
+    );
+    let demo = helicopter_demo
+        || realtime
         || special_demo
         || flag.as_deref() == Some(std::ffi::OsStr::new("--demo-screenshot"));
     let screenshot = match flag {
@@ -128,6 +136,11 @@ fn main() -> Result<()> {
         }));
     if let Some(stage) = stage {
         stage.install(app.world_mut());
+        if helicopter_demo {
+            let mut drive = app.world_mut().resource_mut::<driving::Drive>();
+            drive.helicopter_unlocked = true;
+            drive.toggle_helicopter();
+        }
         app.add_systems(Startup, (render::setup, music::start, sfx::start));
     } else {
         contest::show(app.world_mut(), vehicle, level, difficulty)?;

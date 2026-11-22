@@ -217,9 +217,47 @@ void tm1_bind_level(int level)
     }
 }
 
+void InitHeliCar(CarStats* stats)
+{
+    stats->unk9C = 5;
+    stats->unkC4 = 5;
+    stats->unk88 = 0x12C;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x67;
+    stats->unk98 = stats->unk88 / 3;
+    stats->unkC8 = 4;
+    stats->unkE0 = 0x19;
+    stats->unkE4 = 5;
+    stats->unkE8 = 4;
+    stats->unk6C = 0xF;
+    stats->unk70 = 0x25;
+    stats->unk74 = 0x30;
+    stats->unk7C = 0x52;
+    stats->unk80 = 0x3F;
+    stats->unk84 = -0x4B;
+    stats->unk110 = -0x1D;
+    stats->unk112 = 0x2B;
+    stats->unk114 = 0xF;
+    stats->dropPower = 0;
+    stats->unk11A = 0;
+    stats->unk11C = 0x2C;
+    stats->unk10C = 0x320;
+    stats->unk108 = 2;
+    stats->unk04 = 2;
+    stats->unk44 = 0x6E;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x1E;
+    stats->unk1E = 0xA;
+    stats->unk5C = 0x1A;
+    stats->unk24 = 0x320;
+}
+
 static void init_vehicle_stats(CarStats* stats, s32 kind)
 {
     switch (kind) {
+    case UA_NONE:
+        InitHeliCar(stats);
+        break;
     case 10:
         InitIceCreamTruck(stats);
         break;
@@ -746,7 +784,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
     if (spawn_points) {
         car.uaIndex = kind;
         car.stats.unk38 = 1;
-        arena_ai_weapon_profile(&car);
+        if (kind != UA_NONE) arena_ai_weapon_profile(&car);
         car.weap.ammo[WEAPON_SPECIAL] = 20;
         car.weap.ammo[0] = car.weap.totalAmmo = 2;
         car.weap.maxAmmo = kind == UA_BOSS_CAR ? 60 : 28;
@@ -766,7 +804,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         car.stats.updateRate = 60;
         AICarInitProfiles(&car);
         car.stats.unk40 = car.stats.unk44;
-        car.unk18 = 0x140;
+        car.unk18 = kind == UA_NONE ? 0x320 : 0x140;
         car.unk1C = 0xa0;
         car.unk20 = 0x258;
         car.unk24 = 0x3e8;
@@ -782,6 +820,11 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         SetBounce(&car, 2, 2, 0, 0);
         AICarOutOfBattle(&car);
         car.driving = 1;
+        if (kind == UA_NONE) {
+            car.stats.triggerPt = GetClosestTriggerPt(&car, 0);
+            InitTriggerPoint(&car);
+            car.unk01 = 0;
+        }
     } else {
         arena_schedule_battle(&car, 1, car.unk41 != 0, fields);
         AICarUpdate(&car);
@@ -793,6 +836,46 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
     trig = NULL;
     arena_player = NULL;
     arena_opponent = NULL;
+}
+
+// UA.c InitHelicoptorPosition / UpdateCamera and CAR.c CarViewUpdate.
+void tm1_heli_camera(u8* state, const u8* target, const s16* table,
+    s16 fields, u32 frame, int enter, s32* pose)
+{
+    PlayerCar player;
+    AICar heli;
+    memcpy(&player, target, sizeof(player));
+    memcpy(&heli, state, sizeof(heli));
+    arena_player = &player;
+    trig = table;
+    gFieldsLastFrame = fields;
+    gUpdateRate = 60 / fields;
+    gFrameCount = frame;
+    VECTOR3 offset = { 0, -640, 320 }, out;
+    if (enter) {
+        mathMulTransVec(&player.motion.mat, &offset, &out);
+        heli.unk01 = 0;
+        heli.heliFlag = 1;
+        setVector(&heli.motion.pos, player.motion.pos.vx + out.vx,
+            player.motion.pos.vy + out.vy, player.motion.pos.vz + out.vz);
+    }
+    setVector(&offset, 0, 100, 0);
+    mathMulTransVec(&player.motion.mat2, &offset, &out);
+    s32 dx = player.motion.pos.vx + out.vx - heli.motion.pos.vx;
+    s32 dy = player.motion.pos.vy + out.vy - heli.motion.pos.vy;
+    s32 dz = player.motion.pos.vz + out.vz - heli.motion.pos.vz;
+    pose[3] = -ratan2(dz, arena_sqrt(dx * dx + dy * dy));
+    pose[4] = ratan2(dx, dy);
+    if (!enter) {
+        AICarHeliUpdate(&heli);
+        heli.motion.pos.vz = SmoothValue(heli.motion.pos.vz, player.motion.pos.vz + 600, 95);
+    }
+    pose[0] = heli.motion.pos.vx;
+    pose[1] = heli.motion.pos.vy;
+    pose[2] = heli.motion.pos.vz;
+    memcpy(state,&heli,sizeof(heli));
+    arena_player = NULL;
+    trig = NULL;
 }
 
 #include "tm1/arena_collision.h"

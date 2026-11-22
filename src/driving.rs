@@ -5,6 +5,9 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
+    pub helicopter_unlocked: bool,
+    helicopter_active: bool,
+    helicopter: Option<tm1_core::drive::Helicopter>,
     pub deck: tm1_core::drive::ArenaDeck,
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
@@ -21,6 +24,30 @@ pub struct Drive {
     lost_life: Option<Duration>,
 }
 impl Drive {
+    pub fn helicopter_pose(&self) -> Option<[i32; 5]> {
+        self.helicopter
+            .as_ref()
+            .filter(|_| self.helicopter_active)
+            .map(|heli| heli.pose)
+    }
+    pub(crate) fn toggle_helicopter(&mut self) {
+        use tm1_core::drive::Level;
+        if !self.helicopter_unlocked
+            || !matches!(
+                self.player.level(),
+                Level::Arena | Level::Rooftops | Level::Arena5
+            )
+        {
+            return;
+        }
+        self.helicopter_active = !self.helicopter_active;
+        if self.helicopter_active {
+            let heli = self
+                .helicopter
+                .get_or_insert_with(|| tm1_core::drive::Helicopter::new(&mut self.player));
+            heli.update(&self.player, 3, true);
+        }
+    }
     pub fn cleared(&self) -> bool {
         !self.awaiting_minion() && self.opponents.iter().all(|ai| ai.health().0 <= 0)
     }
@@ -78,6 +105,11 @@ impl Drive {
             || (selected && elapsed < Duration::from_millis(500))
         {
             self.contacts.respawn_player(&mut self.player);
+            if self.helicopter_active
+                && let Some(heli) = &mut self.helicopter
+            {
+                heli.update(&self.player, 3, true);
+            }
             self.lost_life = None;
             self.restart_count = self.restart_count.wrapping_add(1);
         } else {
@@ -113,6 +145,9 @@ impl Drive {
             sounds: Vec::new(),
             remainder: Duration::ZERO,
             paused: false,
+            helicopter_unlocked: false,
+            helicopter_active: false,
+            helicopter: None,
             restart_count: 0,
             was_focused: false,
             victory_fields: 0,
@@ -147,6 +182,8 @@ pub fn advance(
         drive.contacts.reset_projectiles();
         drive.paused = false;
         drive.player.reset();
+        drive.helicopter = None;
+        drive.helicopter_active = false;
         drive.victory_fields = 0;
         drive.boss_intro = drive.minion_at_start.then(|| Duration::from_secs(5));
         drive.death_fields = 0;
@@ -213,6 +250,9 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
+    if keys.just_pressed(KeyCode::KeyH) {
+        drive.toggle_helicopter();
+    }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE) || pressed(GamepadButton::LeftTrigger2),
         missile: keys.pressed(KeyCode::KeyF) || pressed(GamepadButton::LeftTrigger),
@@ -275,6 +315,11 @@ pub fn advance(
         state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
+        if state.helicopter_active
+            && let Some(heli) = &mut state.helicopter
+        {
+            heli.update(&state.player, 3, false);
+        }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }

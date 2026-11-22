@@ -538,19 +538,31 @@ pub fn update(
             world(p)
         }
     };
-    let (eye, target) = if arena.overview {
+    let (eye, target, camera_up) = if arena.overview {
         (
             arena.center + direction * arena.radius * arena.zoom,
             arena.center,
+            Vec3::Y,
+        )
+    } else if let Some([x, y, z, pitch, yaw]) = drive.helicopter_pose() {
+        let eye = world([x, y, z].map(|v| v as f32));
+        let radians = std::f32::consts::TAU / 4096.;
+        let (sp, cp) = (pitch as f32 * radians).sin_cos();
+        let (sy, cy) = (yaw as f32 * radians).sin_cos();
+        (
+            eye,
+            eye + Vec3::new(sy * cp, -sp, -cy * cp) * 100.,
+            Vec3::new(sy * sp, cp, -cy * sp),
         )
     } else {
         (
             origin + vehicle_rotation * Vec3::new(0., 155., 215.),
             origin + Vec3::Y * 40.,
+            Vec3::Y,
         )
     };
     for (mut camera, sky) in &mut cameras {
-        *camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+        *camera = Transform::from_translation(eye).looking_at(target, camera_up);
         if sky {
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
@@ -579,7 +591,7 @@ pub fn update(
         .normalize();
     }
     let forward = (target - eye).normalize();
-    let right = forward.cross(Vec3::Y).normalize();
+    let right = forward.cross(camera_up).normalize();
     let up = right.cross(forward);
     let focal = window.height() * 0.85;
     let near = arena.radius * 0.005;

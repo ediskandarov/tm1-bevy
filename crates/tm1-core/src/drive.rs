@@ -559,6 +559,65 @@ unsafe extern "C" {
     );
 }
 pub type PoliceCar = Opponent;
+pub struct Helicopter {
+    state: [u8; 0x560],
+    /// World XYZ followed by JP pitch and yaw in 4096 units per turn.
+    pub pose: [i32; 5],
+}
+impl Helicopter {
+    pub fn new(player: &mut PlayerVehicle) -> Self {
+        let mut heli = Self {
+            state: [0; 0x560],
+            pose: [0; 5],
+        };
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
+            tm1_bind_level(player.level as i32);
+            let mut seed = player.initial_seed;
+            tm1_ai_step(
+                std::ptr::null_mut(),
+                heli.state.as_mut_ptr(),
+                player.state.as_mut_ptr(),
+                player.trig.as_ptr(),
+                &mut seed,
+                -1,
+                &mut 0,
+                3,
+                player.frame,
+            );
+        }
+        heli
+    }
+    pub fn update(&mut self, player: &PlayerVehicle, fields: u8, enter: bool) {
+        assert!((1..=5).contains(&fields));
+        unsafe extern "C" {
+            fn tm1_heli_camera(
+                state: *mut u8,
+                target: *const u8,
+                table: *const i16,
+                fields: i16,
+                frame: u32,
+                enter: i32,
+                pose: *mut i32,
+            );
+        }
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
+            tm1_bind_level(player.level as i32);
+            tm1_heli_camera(
+                self.state.as_mut_ptr(),
+                player.state.as_ptr(),
+                player.trig.as_ptr(),
+                fields.into(),
+                player.frame,
+                enter.into(),
+                self.pose.as_mut_ptr(),
+            );
+        }
+    }
+}
 pub struct Opponent {
     vehicle: Vehicle,
     state: [u8; 0x560],

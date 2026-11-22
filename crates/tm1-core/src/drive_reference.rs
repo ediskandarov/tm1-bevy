@@ -543,6 +543,72 @@ fn password_weapon_and_damage_modes_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn helicopter_camera_original() {
+    const HELI: u32 = 0x801a22b8;
+    for (level, points) in [
+        (Level::Arena, 0x80125bc0),
+        (Level::Rooftops, 0x8012b5a4),
+        (Level::Arena5, 0x80125bc0),
+    ] {
+        let mut r = Reference::on_level(Vehicle::YellowJacket, false, level);
+        put(&mut r.cpu, 0x8018c3b4, level as u32);
+        r.cpu.call(points, &[]);
+        r.cpu.random_state = r.player.initial_seed;
+        let mut heli = Helicopter::new(&mut r.player);
+        r.cpu.call(0x80124d34, &[HELI, u32::MAX, 1]);
+        let trigger = r.cpu.call(0x8011c2d0, &[HELI, 0]);
+        put(&mut r.cpu, HELI + 0x20c + 0x64, trigger);
+        r.cpu.call(0x80120f60, &[HELI]);
+        r.cpu.put(HELI + 1, &[0]);
+        for entry in [0x8014fc14, 0x8015060c, 0x801505c4, 0x8010ad84] {
+            r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        let camera = 0x800d8000;
+        put(&mut r.cpu, 0x8018c658, camera);
+
+        for tick in 0..200 {
+            let fields = [3, 4, 5][tick % 3];
+            r.player.step(
+                Input {
+                    accelerate: tick < 150,
+                    left: (25..90).contains(&tick),
+                    reverse: tick >= 150,
+                    ..Default::default()
+                },
+                fields,
+            );
+            r.cpu.put(PLAYER, &r.player.state);
+            put(&mut r.cpu, PLAYER + 0xf4, 4);
+            vec3_cpu(&mut r.cpu, PLAYER + 0x48 + 3 * 12, [0, -640, 320]);
+            r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
+            r.cpu
+                .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
+            put(&mut r.cpu, 0x8017023c, r.player.frame);
+            if matches!(tick, 0 | 113) {
+                heli.update(&r.player, fields, true);
+                r.cpu.call(0x8014f3b4, &[]);
+            }
+            let previous = std::array::from_fn(|i| r.cpu.word(HELI + 0x444 + 4 * i as u32) as i32);
+            vec3_cpu(&mut r.cpu, camera + 0x5c, previous);
+            r.cpu.call(0x80116bcc, &[PLAYER]);
+            r.cpu.call(0x8014ea98, &[0]);
+            heli.update(&r.player, fields, false);
+            let pos: [i32; 3] =
+                std::array::from_fn(|i| r.cpu.word(HELI + 0x444 + 4 * i as u32) as i32);
+            assert_eq!(heli.pose[..3], pos, "{level:?} tick {tick}");
+            assert_eq!(heli.pose[3], r.cpu.word(PLAYER + 4) as i16 as i32);
+            assert_eq!(heli.pose[4], r.cpu.word(PLAYER + 8) as i16 as i32);
+        }
+    }
+}
+fn vec3_cpu(cpu: &mut Cpu, at: u32, xyz: [i32; 3]) {
+    for (i, v) in xyz.into_iter().enumerate() {
+        put(cpu, at + 4 * i as u32, v as u32);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn vehicle_and_wall_contact_original() {
     for opponent in [true, false] {
         let mut r = Reference::new();

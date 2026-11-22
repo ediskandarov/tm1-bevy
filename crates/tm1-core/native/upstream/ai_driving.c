@@ -2100,3 +2100,88 @@ void tm1_store_battle(s16* battle)
     battle[1] = aiCarsInBattle[0];
     battle[2] = aiCarsInBattle[1];
 }
+
+void AICarHeliUpdate(AICar* car)
+{
+    PlayerCar* info;
+    VECTOR3 v;
+    VECTOR3 out;
+    VECTOR w;
+    s32 speed;
+    s32 t;
+    s32 ang;
+
+    info = GetPlayerInfo(car->unk0E);
+    AICarUpdateClosestPlayer(car);
+    AICarUpdatePlayerDir(car);
+    InitControlPad(car->skid);
+    RecomputeCarDeltas(&car->stats);
+    if (car->unk160 != 0) {
+        AICarTurn(car);
+    } else {
+        car->unk161 = 0;
+        SetNoCarDrift(&car->motion, car->flags);
+        v.vx = 0;
+        v.vy = -600;
+        v.vz = 0;
+        mathMulTransVec(&info->motion.mat2, &v, &out);
+        w.vx = out.vx + info->motion.pos.vx;
+        w.vy = out.vy + info->motion.pos.vy;
+        v.vx = w.vx - car->motion.pos.vx;
+        v.vy = w.vy - car->motion.pos.vy;
+        car->unk34 = arena_sqrt((v.vx * v.vx) + (v.vy * v.vy));
+        speed = 0;
+        if (car->unk34 >= 800) {
+            if (car->unk34 < 1600) {
+                s32 t1 = info->motion.vel.vy;
+                t1 = ABS(t1);
+                if (t1 < car->stats.unkAC) {
+                    speed = car->stats.unkAC;
+                } else {
+                    speed = abs(info->motion.vel.vy);
+                }
+            } else {
+                s32 t2 = info->motion.vel.vy;
+                t2 = ABS(t2);
+                if ((t2 * 2) < car->stats.unkAC) {
+                    speed = car->stats.unkAC;
+                } else {
+                    s32 t3 = info->motion.vel.vy;
+                    t3 = ABS(t3);
+                    speed = t3 * 2;
+                }
+            }
+        }
+        if (speed > 0) {
+            s32 cur = abs(car->motion.vel.vy);
+            if (cur < ((GetFieldsLastFrame() * 380) / 100) || car->unk34 > 0x1FFFFF
+                || (car->motion.vel.vy - speed)
+                    < (((car->unk34 << 5) / car->motion.vel.vy) * (car->stats.unkBC / 10))) {
+                car->skid[4] = 1;
+            } else {
+                car->skid[5] = 1;
+            }
+        } else {
+            car->skid[5] = 1;
+        }
+        t = car->unk2C;
+        t = ABS(t);
+        if (t >= 1537) {
+            if (car->motion.vel.vy > car->stats.unkAC) {
+                car->skid[5] = 1;
+                car->skid[4] = 0;
+            }
+            if (car->unk2C > 0) {
+                ang = car->motion.rot.vz + 341;
+            } else {
+                ang = car->motion.rot.vz - 227;
+            }
+        } else {
+            ang = SmoothAngleValue(car->motion.rot.vz, car->unk30, 0x5F);
+        }
+        car->motion.rot.vz = ang;
+    }
+    CarUpdateDeltas(car, 0);
+    CarRotUpdate(car, 0);
+    CarTransUpdate(car, 0);
+}
