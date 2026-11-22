@@ -474,6 +474,23 @@ impl PlayerVehicle {
     pub fn state(&self) -> &[u8] {
         &self.state
     }
+    pub fn hud_opponent<'a>(&self, opponents: &'a [Opponent]) -> Option<&'a Opponent> {
+        let [x, y, _] = self.position();
+        let mut nearest = opponents.first()?;
+        let mut best = 0x7fff;
+        for ai in opponents.iter().filter(|ai| ai.health().0 > 0) {
+            let [ax, ay, _] = ai.position();
+            let distance = x
+                .wrapping_sub(ax)
+                .wrapping_abs()
+                .wrapping_add(y.wrapping_sub(ay).wrapping_abs());
+            if distance < best {
+                nearest = ai;
+                best = distance;
+            }
+        }
+        nearest.is_active().then_some(nearest)
+    }
     pub fn ground_group(&self) -> i16 {
         i16::from_le_bytes(self.state[0xc0..0xc2].try_into().unwrap())
     }
@@ -1001,6 +1018,12 @@ impl CollisionScene {
             );
         }
         unsafe { tm1_continue_stage_state(self.native.as_ptr(), previous.native.as_ptr()) }
+    }
+    pub fn carry_notice_frames(&self) -> i32 {
+        unsafe extern "C" {
+            fn tm1_carry_notice_frames(scene: *const std::ffi::c_void) -> i32;
+        }
+        unsafe { tm1_carry_notice_frames(self.native.as_ptr()) }
     }
     pub fn battle_music_playing(&self) -> bool {
         unsafe extern "C" {

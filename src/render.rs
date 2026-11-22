@@ -596,7 +596,7 @@ pub fn cockpit(
 }
 #[derive(Component, Default)]
 pub struct HudLetters {
-    last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16)>,
+    last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16, bool)>,
 }
 pub fn hud_letters(
     window: Single<&Window>,
@@ -610,8 +610,11 @@ pub fn hud_letters(
     let (state, sprite) = &mut *overlay;
     sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
     let speed = drive.player.speed_mph(3).abs() % 1000;
-    let target = drive.nearest_opponent();
-    let sign = (target.is_active() && target.health().0 > 0).then_some(target.vehicle());
+    let sign = drive
+        .player
+        .hud_opponent(&drive.opponents)
+        .filter(|ai| ai.health().0 > 0)
+        .map(|ai| ai.vehicle());
     let mask = if arena.list_cars {
         drive
             .opponents
@@ -622,10 +625,11 @@ pub fn hud_letters(
     } else {
         0
     };
-    if state.last == Some((speed, sign, mask)) {
+    let at_capacity = drive.contacts.carry_notice_frames() > 0;
+    if state.last == Some((speed, sign, mask, at_capacity)) {
         return;
     }
-    state.last = Some((speed, sign, mask));
+    state.last = Some((speed, sign, mask, at_capacity));
     if let Some(mut image) = images.get_mut(&sprite.image)
         && let Some(pixels) = &mut image.data
     {
@@ -633,17 +637,20 @@ pub fn hud_letters(
         arena
             .fonts
             .at(pixels, Face::Speed, 102, 214, &format!("{speed:3}"));
-        let name = |car: Vehicle| match car {
-            Vehicle::YellowJacket => {
-                "Y\x08ELL\x08\x08O\x08W \x08\x08\x08\x08J\x08A\x08CK\x08ET".to_owned()
-            }
-            Vehicle::CrimsonFury => "CRIMSON \x08\x08FURY".to_owned(),
-            Vehicle::MrGrimm => "MR GRIMM".to_owned(),
-            Vehicle::RoadKill => "ROAD KILL".to_owned(),
-            _ => car.name().to_ascii_uppercase(),
+        if at_capacity {
+            arena
+                .fonts
+                .centered_at(pixels, Face::Control, 159, 155, "Max Carrying Capacity");
+        }
+        let name = |car: Vehicle| {
+            let card = Vehicle::CARD_ORDER
+                .iter()
+                .position(|&v| v == car)
+                .unwrap_or(12);
+            arena.fonts.car_sign(card)
         };
         if let Some(car) = sign {
-            arena.fonts.centered(pixels, Face::Sign, 33, &name(car));
+            arena.fonts.centered(pixels, Face::Sign, 33, name(car));
         }
         for (i, ai) in drive.opponents.iter().enumerate() {
             if mask & (1 << i) != 0 {
@@ -652,7 +659,7 @@ pub fn hud_letters(
                     Face::Sign,
                     220,
                     70 + i as i32 * 12,
-                    &name(ai.vehicle()),
+                    name(ai.vehicle()),
                 );
             }
         }
@@ -1391,8 +1398,7 @@ fn draw_instruments(
         [217, 191, (pct * 88 / 100).clamp(1, 88), 8],
         health_colors(tier),
     );
-    let target = drive.nearest_opponent();
-    if target.is_active() {
+    if let Some(target) = drive.player.hud_opponent(&drive.opponents) {
         let (hp, max) = target.health();
         hud.bar(
             [103, 22, (hp * 86 / max.max(1)).clamp(1, 86), 13],

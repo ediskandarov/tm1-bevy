@@ -32,6 +32,7 @@ typedef struct BattleMusic {
 
 typedef struct CollisionScene {
     BattleMusic music, initial_music;
+    int carry_notice_frames;
     ArenaMerc mercs[2];
     ArenaPed peds[6], initial_peds[6];
     int ped_count, peds_ready;
@@ -679,6 +680,7 @@ void tm1_regenerate_stands(void)
 
 void tm1_new_life(CollisionScene* s)
 {
+    s->carry_notice_frames = 0;
     s->music.playing = false;
     memset(s->drops, 0, sizeof s->drops);
     memset(s->flames, 0, sizeof s->flames);
@@ -1196,8 +1198,10 @@ void carGetPickup(Car* c, u8 player, s32 tag, s32 sub)
     static const s16 amounts[] = { 4, 2, 2, 2, 1, 4, 2, 2, 2, 2, 3 };
     CarWeap* pad = player ? &PLAYER_CAR(c)->weap : &AI_CAR(c)->weap;
     int cap = (s16)pad->maxAmmo - (s16)pad->totalAmmo;
-    if (cap <= 0 && tag != 430 && player)
+    if (cap <= 0 && tag != 430 && player) {
+        current->carry_notice_frames = 30;
         return;
+    }
     int slot = -1;
     if (tag >= 401 && tag <= 404)
         slot = tag - 401;
@@ -1220,6 +1224,13 @@ void carGetPickup(Car* c, u8 player, s32 tag, s32 sub)
     pad->totalAmmo = 0;
     for (int i = 0; i < WEAPON_REGULAR_MAX; i++)
         pad->totalAmmo += pad->ammo[i];
+    if (player && tag != 430 && (s16)pad->totalAmmo == (s16)pad->maxAmmo)
+        current->carry_notice_frames = 30;
+}
+
+int tm1_carry_notice_frames(const CollisionScene* scene)
+{
+    return scene->carry_notice_frames;
 }
 void UAeffectBarricade(s32 tag, s32 sub, s32 bearing)
 {
@@ -1402,6 +1413,8 @@ void arena_effect(VECTOR3* pos, s32 kind)
 }
 void tm1_age_effects(void)
 {
+    if (current->carry_notice_frames > 0)
+        current->carry_notice_frames--;
     for (int i = 0; i < 80; i++) {
         s32* e = current->effects[i];
         if (e[4] <= 0)

@@ -66,6 +66,7 @@ pub struct Fonts {
     width: usize,
     signs: Vec<[u8; 4]>,
     sign_width: usize,
+    car_signs: Vec<String>,
     metrics: [Vec<Glyph>; 4],
 }
 #[derive(Clone, Copy)]
@@ -116,13 +117,27 @@ impl Fonts {
         };
         let (pixels, width, height) = bitmap("UATIM/UAFONT1.TIM")?;
         let (signs, sign_width, sign_height) = bitmap("TIM/CPFONT.TIM")?;
+        let base = u32le(&exe, 24)?;
+        let file_offset = |address: u32| -> Result<usize> {
+            Ok(2048
+                + address
+                    .checked_sub(base)
+                    .ok_or_else(|| anyhow::anyhow!("invalid executable address"))?
+                    as usize)
+        };
+        let table = file_offset(0x801712e0)?;
+        let mut car_signs = Vec::with_capacity(13);
+        for i in 0..13 {
+            let at = file_offset(u32le(&exe, table + 4 * i)?)?;
+            let text = std::ffi::CStr::from_bytes_until_nul(
+                exe.get(at..)
+                    .ok_or_else(|| anyhow::anyhow!("invalid car sign pointer"))?,
+            )?;
+            car_signs.push(text.to_str()?.to_owned());
+        }
         let metrics =
             |address: u32, count: usize, width: usize, height: usize| -> Result<Vec<Glyph>> {
-                let at = 2048
-                    + address
-                        .checked_sub(u32le(&exe, 24)?)
-                        .ok_or_else(|| anyhow::anyhow!("invalid executable base"))?
-                        as usize;
+                let at = file_offset(address)?;
                 bytes(&exe, at, count * 6)?
                     .chunks_exact(6)
                     .map(|g| {
@@ -146,6 +161,7 @@ impl Fonts {
             width,
             signs,
             sign_width,
+            car_signs,
             metrics: [
                 metrics(0x801709b8, 77, width, height)?,
                 metrics(0x801707e8, 77, width, height)?,
@@ -153,6 +169,9 @@ impl Fonts {
                 metrics(0x80170bc4, 77, sign_width, sign_height)?,
             ],
         })
+    }
+    pub fn car_sign(&self, card: usize) -> &str {
+        &self.car_signs[card]
     }
     fn glyph(&self, face: Face, c: u8) -> Glyph {
         let mapped = match c {

@@ -121,7 +121,7 @@ impl Reference {
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
             0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
-            0x80107bc0, 0x80142810,
+            0x80107bc0,
         ] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -204,6 +204,111 @@ impl Reference {
         assert_eq!(self.player.seed, self.cpu.random_state);
     }
 }
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn hud_opponent_matches_disc() {
+    let mut r = Reference::new();
+    let mut opponents = Opponent::spawn_bout(&mut r.player, &[Vehicle::Outlaw, Vehicle::Darkside]);
+    vec3(&mut r.player.state, 0x388, [0; 3]);
+    r.cpu.put(PLAYER, &r.player.state);
+    r.cpu.put(0x8018c338, &2u16.to_le_bytes());
+    for distance in [0, 12, 13, 0x7ffe, 0x7fff, 0x8000] {
+        for flags in 0..16 {
+            for (i, ai) in opponents.iter_mut().enumerate() {
+                let pos = if i == 0 {
+                    [distance, 0, 500]
+                } else {
+                    [5, -7, 100]
+                };
+                vec3(&mut ai.state, 0x444, pos);
+                ai.state[0x41] = u8::from(flags & (1 << i) != 0);
+                ai.state[0x24c..0x250]
+                    .copy_from_slice(&i32::from(flags & (4 << i) != 0).to_le_bytes());
+                r.cpu.put(POLICE + i as u32 * 0x560, &ai.state);
+            }
+            let address = r.cpu.call(0x8011c174, &[0, RENDER_SCRATCH]);
+            let target = r.player.hud_opponent(&opponents);
+            let index = opponents
+                .iter()
+                .position(|ai| target.is_some_and(|t| std::ptr::eq(t, ai)));
+            assert_eq!(
+                address,
+                index.map_or(0, |i| POLICE + i as u32 * 0x560),
+                "distance {distance} flags {flags}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn carrying_capacity_matches_disc() {
+    unsafe extern "C" {
+        fn carGetPickup(car: *mut u8, player: u8, tag: i32, slot: i32);
+        fn tm1_age_effects();
+    }
+    let mut r = Reference::new();
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let fonts = tm1_assets::screen::Fonts::load(&disc).unwrap();
+    for (card, car) in Vehicle::CARD_ORDER
+        .into_iter()
+        .chain([Vehicle::Minion])
+        .enumerate()
+    {
+        let address = r.cpu.call(0x80145d70, &[car as u32]);
+        let name =
+            std::ffi::CStr::from_bytes_until_nul(&r.cpu.ram[(address & 0x1fffff) as usize..])
+                .unwrap();
+        assert_eq!(fonts.car_sign(card).as_bytes(), name.to_bytes());
+    }
+    for address in [0x801419c8, 0x8010b4f4] {
+        // scene switch and sprite submission
+        r.cpu.put(address, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    for (player, tag, before, expected) in [
+        (1, 401, 0, 0),
+        (1, 401, 9, 30),
+        (1, 401, 10, 30),
+        (1, 430, 10, 0),
+        (0, 401, 9, 0),
+    ] {
+        let mut state = if player == 1 {
+            r.player.state.to_vec()
+        } else {
+            r.police.state.to_vec()
+        };
+        let weapon = if player == 1 { 0x458 } else { 0x514 };
+        state[weapon + 12..weapon + 40].fill(0);
+        for (offset, v) in [(12, before), (40, 10u16), (52, before)] {
+            state[weapon + offset..weapon + offset + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        r.cpu.put(PLAYER, &state);
+        r.cpu.call(0x80142820, &[]);
+        r.cpu.call(0x80135840, &[PLAYER, player as u32, tag, 1]);
+        unsafe {
+            tm1_use_scene(r.scene.native.as_ptr());
+            carGetPickup(state.as_mut_ptr(), player, tag as i32, 1);
+            tm1_use_scene(std::ptr::null_mut());
+        }
+        assert_eq!(expected, r.scene.carry_notice_frames());
+        for _ in 0..32 {
+            assert_eq!(r.scene.carry_notice_frames() as u32, r.cpu.word(0x8018c5ec));
+            r.cpu.call_until(0x80142b2c, &[], 0x80142b9c);
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                tm1_age_effects();
+                tm1_use_scene(std::ptr::null_mut());
+            }
+        }
+        let start = (PLAYER & 0x1fffff) as usize + weapon;
+        assert_eq!(
+            &state[weapon..weapon + 0x48],
+            &r.cpu.ram[start..start + 0x48]
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn warehouse_lineups_and_ai_profiles_original() {

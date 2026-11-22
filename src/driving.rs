@@ -193,18 +193,6 @@ impl Drive {
             self.lost_life = Some(elapsed);
         }
     }
-    pub fn nearest_opponent(&self) -> &Opponent {
-        let [x, y, _] = self.player.position();
-        self.opponents
-            .iter()
-            .filter_map(|ai| {
-                let [ax, ay, _] = ai.position();
-                let dist = x.abs_diff(ax) + y.abs_diff(ay);
-                (ai.health().0 > 0 && dist < 0x7fff).then_some((dist, ai))
-            })
-            .min_by_key(|(dist, _)| *dist)
-            .map_or(&self.opponents[0], |(_, ai)| ai)
-    }
     pub fn new(
         mut player: PlayerVehicle,
         contacts: CollisionScene,
@@ -362,12 +350,15 @@ pub fn advance(
     } else {
         drive.player.level().name()
     };
+    let target = drive
+        .player
+        .hud_opponent(&drive.opponents)
+        .map(|ai| format!("   {} {}", ai.vehicle().name(), ai.health().0.max(0)))
+        .unwrap_or_default();
     let title = format!(
-        "TM1 • {status}   |   {} {}   {} {}   |   Fire missiles {}",
+        "TM1 • {status}   |   {} {}{target}   |   Fire missiles {}",
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
-        drive.nearest_opponent().vehicle().name(),
-        drive.nearest_opponent().health().0.max(0),
         drive.player.missiles()
     );
     if window.title != title {
