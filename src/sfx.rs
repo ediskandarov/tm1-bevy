@@ -294,7 +294,7 @@ impl Sounds {
 #[derive(Component)]
 pub struct Engine;
 #[derive(Component)]
-pub struct LostLifeEngine;
+pub struct ShellEngine;
 #[derive(Component)]
 pub struct RivalEngine {
     pub(super) slot: usize,
@@ -416,31 +416,26 @@ pub fn update(
         ),
         Without<OneShot>,
     >,
-    life_engines: Query<
+    shell_engines: Query<
         (Entity, Option<&AudioSink>),
-        (With<LostLifeEngine>, Without<EngineTone>, Without<OneShot>),
+        (With<ShellEngine>, Without<EngineTone>, Without<OneShot>),
     >,
     mut restart: Local<u32>,
     mut sequence: ResMut<VoiceSequence>,
 ) {
-    let reset = *restart != drive.restart_count;
-    let lost_life = drive.lost_life_elapsed().is_some();
-    let stop_battle = drive.lives == 0 || lost_life || drive.pause.is_some();
+    let reset = *restart != drive.audio_restart_count;
+    let shell_rev = drive.lost_life_elapsed().is_some() || drive.showing_boss_intro();
+    let stop_battle = drive.lives == 0 || shell_rev || drive.pause.is_some();
     let pause = !window.focused;
     let gain = drive.settings.effects_gain();
-    if lost_life && life_engines.is_empty() {
+    if shell_rev && shell_engines.is_empty() {
         for (player, mut settings) in sounds.ending_engine(gain) {
             settings.paused = pause;
-            commands.spawn((
-                crate::campaign::StageEntity,
-                LostLifeEngine,
-                player,
-                settings,
-            ));
+            commands.spawn((crate::campaign::StageEntity, ShellEngine, player, settings));
         }
     }
-    for (entity, sink) in &life_engines {
-        if !lost_life {
+    for (entity, sink) in &shell_engines {
+        if !shell_rev {
             commands.entity(entity).despawn();
         } else if let Some(sink) = sink {
             if pause {
@@ -511,7 +506,7 @@ pub fn update(
                 .insert((AudioPlayer(engine.source.clone()), settings));
         }
     }
-    *restart = drive.restart_count;
+    *restart = drive.audio_restart_count;
     for (e, sink, shot) in &mut shots {
         if reset || stop_battle {
             commands.entity(e).despawn();

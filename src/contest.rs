@@ -1307,6 +1307,21 @@ pub fn update(world: &mut World) {
         } else if menu.page == Page::Title {
             menu.idle = Duration::ZERO;
         }
+        let preview_confirmed = if matches!(menu.page, Page::BossPreview(_)) {
+            let mut pads = world.query::<(Entity, &Gamepad)>();
+            let first = pads.iter(world).min_by_key(|(id, _)| *id);
+            if menu.password_wait_release {
+                // screenBossCar polls GetPadStatus(0) before ctlpadAnySelect(0).
+                let second = pads.iter(world).filter(|(id, _)| first.is_some_and(|(first, _)| *id != first)).min_by_key(|(id, _)| *id);
+                if !scripted && second.is_some_and(|(_, p)| p.get_pressed().next().is_some()) {
+                    return;
+                }
+                menu.password_wait_release = false;
+            }
+            !scripted && crate::driving::notice_selected(world.resource::<ButtonInput<KeyCode>>(), first.map(|(_, pad)| pad))
+        } else {
+            false
+        };
         let keys = if scripted { &no_input } else { world.resource::<ButtonInput<KeyCode>>() };
         let duel_slot = match menu.page {
             Page::DuelControls(slot) => Some(slot),
@@ -1324,12 +1339,7 @@ pub fn update(world: &mut World) {
             _ => controls.map_or(held, |input| input.reset_idle),
         };
         let timed_out = menu.tick_setup_timeout(reset_idle, menu_delta(world));
-        let preview_confirmed = matches!(menu.page, Page::BossPreview(_)) && keys.any_pressed([KeyCode::Enter, KeyCode::Space]);
         let preview_finished = if let Page::BossPreview(remaining) = menu.page {
-            if menu.password_wait_release {
-                menu.password_wait_release = crate::pause::campaign_pad_held(keys, None);
-                return;
-            }
             let left = remaining.saturating_sub(menu_delta(world));
             if !preview_confirmed && !left.is_zero() {
                 menu.page = Page::BossPreview(left);
@@ -2711,6 +2721,16 @@ mod tests {
                 .filter(|p| p.0 == reward)
                 .count()
         };
+        let mut pads = [
+            world.spawn(Gamepad::default()).id(),
+            world.spawn(Gamepad::default()).id(),
+        ];
+        pads.sort();
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::DPadUp);
         world.resource_mut::<ButtonInput<KeyCode>>().press(Enter);
         update(&mut world);
         world
@@ -2722,6 +2742,14 @@ mod tests {
             Page::BossPreview(Duration::from_secs(5))
         );
         assert_eq!(rewards(&mut world), 0);
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .reset_all();
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::ZERO);
         world.insert_resource(ButtonInput::<KeyCode>::default());
         update(&mut world);
         world
@@ -2738,6 +2766,19 @@ mod tests {
         press(&mut world, Space);
         assert_eq!(world.resource::<Contest>().page, Page::Contest);
         assert_eq!(rewards(&mut world), 1);
+        for key in [KeyP, Digit1, Digit3, Digit1, Digit1, Digit4] {
+            press(&mut world, key);
+        }
+        world.resource_mut::<ButtonInput<KeyCode>>().press(Enter);
+        update(&mut world);
+        assert!(matches!(
+            world.resource::<Contest>().page,
+            Page::BossPreview(_)
+        ));
+        // The upper halfword is clear, so a held primary confirm already dismisses it.
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Contest);
+        assert_eq!(rewards(&mut world), 2);
     }
 
     #[test]

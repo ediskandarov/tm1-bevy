@@ -176,7 +176,7 @@ pub fn start(
             ArenaMusic {
                 opening,
                 battle: music.battle.take().map(|s| assets.add(s)),
-                restart: drive.restart_count,
+                restart: drive.audio_restart_count,
             },
             player,
             PlaybackSettings::ONCE.with_volume(Volume::Linear(drive.settings.cd_gain())),
@@ -202,11 +202,12 @@ pub fn control(
     let volume = Volume::Linear(drive.settings.cd_gain());
     let pause = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
+        || drive.showing_boss_intro()
         || drive.lost_life_elapsed().is_some()
         || drive.lives == 0
         || !window.focused;
-    let restart = tracks.restart != drive.restart_count;
-    tracks.restart = drive.restart_count;
+    let restart = tracks.restart != drive.audio_restart_count;
+    tracks.restart = drive.audio_restart_count;
     let audio_options = matches!(drive.pause, Some(crate::pause::Page::Audio(_)));
     let desired = if drive.contacts.battle_music_playing() {
         tracks.battle.as_ref().unwrap_or(&tracks.opening)
@@ -219,7 +220,7 @@ pub fn control(
         if let Some(track) = assets.get(desired) {
             track.extend_loop(false);
         }
-        // Stage entry and life restarts open a new decoder at the CD start sector.
+        // Each return to GAME_STATE_PLAY_LEVEL opens a decoder at the CD start sector.
         commands
             .entity(entity)
             .remove::<AudioSink>()

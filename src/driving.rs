@@ -291,7 +291,7 @@ pub struct Drive {
     options_idle: Duration,
     pause_input: PauseInput,
     pub(crate) control_arrows: [bool; 2],
-    pub restart_count: u32,
+    pub audio_restart_count: u32,
     was_focused: bool,
     victory_fields: u16,
     boss_intro: Option<Duration>,
@@ -456,6 +456,7 @@ impl Drive {
         let left = time.saturating_sub(elapsed);
         if selected || left.is_zero() {
             self.boss_intro = None;
+            self.audio_restart_count = self.audio_restart_count.wrapping_add(1);
             self.opponents
                 .push(Opponent::spawn_minion(&mut self.player));
         } else {
@@ -491,7 +492,7 @@ impl Drive {
             self.player.set_rng_state(ticks());
             self.windshield_holes = self.player.windshield_holes();
             self.lost_life = None;
-            self.restart_count = self.restart_count.wrapping_add(1);
+            self.audio_restart_count = self.audio_restart_count.wrapping_add(1);
         } else {
             self.lost_life = Some(elapsed);
         }
@@ -535,7 +536,7 @@ impl Drive {
             helicopter_active: false,
             rooftop_passage: Default::default(),
             helicopter: None,
-            restart_count: 0,
+            audio_restart_count: 0,
             was_focused: false,
             victory_fields: 0,
             boss_intro: None,
@@ -547,6 +548,17 @@ impl Drive {
         }
     }
 }
+pub(crate) fn notice_selected(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>) -> bool {
+    keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
+        || pad.is_some_and(|p| {
+            p.any_pressed([
+                GamepadButton::South,
+                GamepadButton::Select,
+                GamepadButton::Start,
+            ])
+        })
+}
+
 pub fn advance(
     mut drive: ResMut<Drive>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -607,7 +619,7 @@ pub fn advance(
         let seed = drive.battle_seed;
         drive.player.set_rng_state(seed);
         drive.windshield_holes = drive.player.windshield_holes();
-        drive.restart_count = drive.restart_count.wrapping_add(1);
+        drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -721,14 +733,7 @@ pub fn advance(
         } else {
             time.delta()
         };
-        let selected = keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
-            || pad.is_some_and(|p| {
-                p.any_pressed([
-                    GamepadButton::South,
-                    GamepadButton::Select,
-                    GamepadButton::Start,
-                ])
-            });
+        let selected = notice_selected(&keys, pad);
         if drive.showing_boss_intro() {
             if !drive.boss_input_released {
                 // screenBossCar polls GetPadStatus(0), which reads the upper
@@ -964,7 +969,10 @@ mod tests {
             tick(&mut app, 17);
             let drive = app.world().resource::<Drive>();
             assert_eq!(drive.showing_boss_intro(), waiting || !selected);
-            assert_eq!(drive.restart_count, 0);
+            assert_eq!(
+                drive.audio_restart_count,
+                u32::from(!drive.showing_boss_intro())
+            );
         }
         assert_eq!(
             app.world()
@@ -991,29 +999,19 @@ mod tests {
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn lost_life_switches_from_combat_audio_to_shell_rev_and_back() {
+    fn life_loss_and_minion_intro_switch_between_battle_audio_and_shell_rev() {
         use crate::campaign::{Campaign, Entry, Stage};
-        use crate::sfx::{Engine, LostLifeEngine, OneShot, pcm::StereoPcm};
+        use crate::sfx::{Engine, OneShot, ShellEngine, pcm::StereoPcm};
         use bevy::ecs::system::RunSystemOnce;
         let mut world = crate::contest::menu_world();
         let stage = Stage::load(
             &world.resource::<Campaign>().0,
-            tm1_core::drive::Level::Arena,
+            tm1_core::drive::Level::Rooftops,
             Vehicle::RoadKill,
             Entry::New(Default::default()),
         )
         .unwrap();
         crate::campaign::replace(&mut world, stage);
-        world
-            .resource_mut::<Drive>()
-            .sounds
-            .push(BattleRequest::Play(BattleSound {
-                id: 4,
-                exclusive: None,
-                volume_percent: 99,
-                channels: [99; 2],
-                range: 0,
-            }));
         let mix = |world: &mut World| {
             world.run_system_once(crate::sfx::update).unwrap();
             world.run_system_once(crate::music::control).unwrap();
@@ -1026,7 +1024,7 @@ mod tests {
         };
         let shell_engines = |world: &mut World| {
             world
-                .query_filtered::<Entity, With<LostLifeEngine>>()
+                .query_filtered::<Entity, With<ShellEngine>>()
                 .iter(world)
                 .collect::<Vec<_>>()
         };
@@ -1037,26 +1035,71 @@ mod tests {
                 .unwrap()
                 .paused
         };
-        mix(&mut world);
-        assert!(battle_engines(&mut world) >= 2);
-        assert!(world.query::<&OneShot>().iter(&world).count() > 0);
-        world.resource_mut::<Drive>().advance_death(181);
-        mix(&mut world);
-        let motors = shell_engines(&mut world);
-        assert_eq!(motors.len(), 2);
-        assert_eq!(battle_engines(&mut world), 0);
-        assert_eq!(world.query::<&OneShot>().iter(&world).count(), 0);
-        assert!(music_paused(&mut world));
-        mix(&mut world);
-        assert_eq!(shell_engines(&mut world), motors);
-        world.resource_mut::<Drive>().sounds.clear();
-        world
-            .resource_mut::<Drive>()
-            .tick_lost_life(Duration::from_millis(1500), false, || 1);
-        mix(&mut world);
-        assert!(shell_engines(&mut world).is_empty());
-        assert!(battle_engines(&mut world) >= 2);
-        assert!(!music_paused(&mut world));
+        let track = world
+            .query_filtered::<Entity, With<crate::music::ArenaMusic>>()
+            .single(&world)
+            .unwrap();
+        for boss in [false, true] {
+            world
+                .resource_mut::<Drive>()
+                .sounds
+                .push(BattleRequest::Play(BattleSound {
+                    id: 4,
+                    exclusive: None,
+                    volume_percent: 99,
+                    channels: [99; 2],
+                    range: 0,
+                }));
+            mix(&mut world);
+            assert!(battle_engines(&mut world) >= 2);
+            assert!(world.query::<&OneShot>().iter(&world).count() > 0);
+            if boss {
+                world.resource_mut::<Drive>().advance_victory_delay(181);
+            } else {
+                world.resource_mut::<Drive>().advance_death(181);
+            }
+            mix(&mut world);
+            let motors = shell_engines(&mut world);
+            assert_eq!(motors.len(), 2);
+            assert_eq!(battle_engines(&mut world), 0);
+            assert_eq!(world.query::<&OneShot>().iter(&world).count(), 0);
+            assert!(music_paused(&mut world));
+            mix(&mut world);
+            assert_eq!(shell_engines(&mut world), motors);
+            world.resource_mut::<Drive>().sounds.clear();
+            let before = world
+                .entity(track)
+                .get_ref::<AudioPlayer<crate::music::CdTrack>>()
+                .unwrap()
+                .last_changed();
+            if boss {
+                world
+                    .resource_mut::<Drive>()
+                    .tick_boss_intro(Duration::from_secs(5), false);
+                assert_eq!(
+                    world.resource::<Drive>().opponents[3].vehicle(),
+                    Vehicle::Minion
+                );
+            } else {
+                world.resource_mut::<Drive>().tick_lost_life(
+                    Duration::from_millis(1500),
+                    false,
+                    || 1,
+                );
+            }
+            mix(&mut world);
+            assert!(shell_engines(&mut world).is_empty());
+            assert!(battle_engines(&mut world) >= 2);
+            assert!(!music_paused(&mut world));
+            assert_ne!(
+                world
+                    .entity(track)
+                    .get_ref::<AudioPlayer<crate::music::CdTrack>>()
+                    .unwrap()
+                    .last_changed(),
+                before
+            );
+        }
     }
 
     #[test]
