@@ -246,6 +246,8 @@ fn main() -> Result<()> {
             }
         }
     }
+    use bevy::audio::AddAudioSource;
+    app.add_audio_source::<sfx::looping::LoopingPcm>();
     app.add_plugins(additive::AdditivePlugin);
     if demo {
         app.add_plugins((

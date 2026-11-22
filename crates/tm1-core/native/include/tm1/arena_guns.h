@@ -81,6 +81,7 @@ void arena_schedule_battle(AICar *,s16,s16,s16);
 void arena_move_missiles(void);
 void tm1_age_effects(void);
 void arena_effect(VECTOR3 *,s32);
+void arena_player_gun_sound(s32 slot, int firing);
 void arena_special_effect(VECTOR3* pos, s32 owner);
 
 void arena_regenerate_pickups(void);

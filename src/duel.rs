@@ -103,11 +103,7 @@ pub fn start(
     )?;
     let music = crate::music::track(disc, crate::music::opening_track(level, true))?;
     let bank = disc.read("SND/UACORE.VAB")?;
-    let sounds = crate::sfx::duel::DuelBank::load(
-        &bank,
-        kinds,
-        &mut world.resource_mut::<Assets<AudioSource>>(),
-    )?;
+    let sounds = crate::sfx::duel::DuelBank::load(&bank, kinds, world)?;
     let settings = world
         .get_resource::<Duel>()
         .map(|d| d.settings)
@@ -411,11 +407,30 @@ pub fn advance(
             );
         }
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
+        for (car, request) in duel.cars.iter().zip(duel.scene.duel_gun_requests()) {
+            let key = crate::driving::ExclusiveVoice::MachineGuns(car.vehicle());
+            if let Some(firing) = request {
+                duel.sounds.push(if firing {
+                    crate::sfx::duel::Request::Play {
+                        id: 1,
+                        key: Some(key),
+                        volume: 1.,
+                        position: car.position(),
+                    }
+                } else {
+                    crate::sfx::duel::Request::Stop(key)
+                });
+            }
+        }
         let mut effects = [[0; 5]; 122];
         let count = duel.scene.effects(&mut effects);
         for &[x, y, z, kind, life] in &effects[..count] {
+            // Gun sounds come from UpdateGuns. The muzzle flash remains a visual effect.
+            if kind == 0 {
+                continue;
+            }
             if let Some(id) = crate::driving::effect_sample(kind, life, 13) {
-                duel.sounds.push(crate::sfx::duel::Request {
+                duel.sounds.push(crate::sfx::duel::Request::Play {
                     id,
                     key: crate::driving::effect_voice(kind),
                     volume: crate::driving::effect_volume(kind) as f32 / 99.,
@@ -425,7 +440,7 @@ pub fn advance(
         }
         for car in &duel.cars {
             for (voice, volume) in car.contact_sounds().into_iter().flatten() {
-                duel.sounds.push(crate::sfx::duel::Request {
+                duel.sounds.push(crate::sfx::duel::Request::Play {
                     id: 18 + voice as usize,
                     key: Some(crate::driving::ExclusiveVoice::Contact(voice)),
                     volume: volume as f32 / 99.,

@@ -240,6 +240,8 @@ void arena_update_guns(Car* car, u8 isPlayer)
     if (isPlayer && pad->gunOverheat != 0) {
         sk[9] = 0;
     }
+    if (isPlayer)
+        arena_player_gun_sound(PLAYER_CAR(car)->playerIdx, sk[9] != 0);
     if (!sk[9]) {
         if (pad->gunHeat > 0) {
             pad->gunHeat = pad->gunHeat - 1;

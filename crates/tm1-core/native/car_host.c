@@ -1115,9 +1115,20 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
-void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
+// Valid during one serialized split-screen update. Cooldown ticks issue no request.
+static u8* duel_gun_requests;
+
+void arena_player_gun_sound(s32 slot, int firing)
 {
+    if (duel_gun_requests && (unsigned)slot < 2)
+        duel_gun_requests[slot] = firing ? 1 : 2;
+}
+
+void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[2])
+{
+    memset(requests, 0, 2);
+    duel_gun_requests = requests;
     PlayerCar cars[2];
     memcpy(&cars[0], first, sizeof(PlayerCar));
     memcpy(&cars[1], second, sizeof(PlayerCar));
@@ -1149,6 +1160,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
     memcpy(second, &cars[1], sizeof(PlayerCar));
+    duel_gun_requests = NULL;
     tm1_use_scene(NULL);
     arena_player = NULL;
     trig = NULL;

@@ -6,6 +6,7 @@ use tm1_core::drive::{
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExclusiveVoice {
+    MachineGuns(Vehicle),
     Recharge,
     Hover,
     Pickup(i32),

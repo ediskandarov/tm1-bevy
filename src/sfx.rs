@@ -1,4 +1,5 @@
 pub mod duel;
+pub mod looping;
 use anyhow::Result;
 use bevy::{
     audio::{AudioSinkPlayback, Volume},

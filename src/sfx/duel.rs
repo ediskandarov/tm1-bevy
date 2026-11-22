@@ -12,6 +12,7 @@ use tm1_assets::sound::program;
 use tm1_core::drive::Vehicle;
 
 struct Layer {
+    gun_loop: Option<Handle<super::looping::LoopingPcm>>,
     source: Handle<AudioSource>,
     priority: u8,
     range: f32,
@@ -38,23 +39,38 @@ pub struct Voice {
     key: Option<ExclusiveVoice>,
 }
 
-pub struct Request {
-    pub id: usize,
-    pub key: Option<ExclusiveVoice>,
-    pub volume: f32,
-    pub position: [i32; 3],
+pub enum Request {
+    Play {
+        id: usize,
+        key: Option<ExclusiveVoice>,
+        volume: f32,
+        position: [i32; 3],
+    },
+    Stop(ExclusiveVoice),
 }
 
 impl DuelBank {
-    pub fn load(bank: &[u8], cars: [Vehicle; 2], assets: &mut Assets<AudioSource>) -> Result<Self> {
-        let mut layers = |id, engine| -> Result<Vec<Layer>> {
+    pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
+        world.init_resource::<Assets<super::looping::LoopingPcm>>();
+        let mut layers = |id, engine, gun| -> Result<Vec<Layer>> {
             program(bank, id)?
                 .into_iter()
                 .map(|tone| {
                     let priority = tone.priority;
+                    let first_loop_frame = tone.loop_start.map(|frame| {
+                        let rate = 2.0_f32.powf((60. - f32::from(tone.center)) / 12.);
+                        (frame as f64 / f64::from(rate)).ceil() as usize
+                    });
                     let sample = Sample::from_tones(vec![tone], engine);
                     Ok(Layer {
-                        source: assets.add(sample.wave(0.)?),
+                        gun_loop: first_loop_frame.filter(|_| gun).map(|frame| {
+                            world
+                                .resource_mut::<Assets<super::looping::LoopingPcm>>()
+                                .add(super::looping::LoopingPcm::new(&sample.mix, frame))
+                        }),
+                        source: world
+                            .resource_mut::<Assets<AudioSource>>()
+                            .add(sample.wave(0.)?),
                         priority,
                         range: sample.range,
                         loop_start: sample.loop_start,
@@ -64,11 +80,11 @@ impl DuelBank {
         };
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
-            .map(|(i, id)| layers(id, i == 0))
+            .map(|(i, id)| layers(id, i == 0, i == 1))
             .collect::<Result<_>>()?;
         Ok(Self {
             programs,
-            second_engine: layers(cars[1].sound_programs().0, true)?,
+            second_engine: layers(cars[1].sound_programs().0, true, false)?,
         })
     }
 
@@ -149,8 +165,27 @@ pub fn mix(
     let gain = duel.settings.effects_gain();
     let listener = duel.cars[0].position();
     for request in &duel.sounds {
-        let volume = Volume::Linear(0.44 * gain * request.volume);
-        if let Some(key) = request.key
+        let (id, key, volume, position) = match *request {
+            Request::Play {
+                id,
+                key,
+                volume,
+                position,
+            } => (id, key, volume, position),
+            Request::Stop(key) => {
+                groups.retain(|&(group, entity)| {
+                    if group != key {
+                        return true;
+                    }
+                    ranked.retain(|entry| entry.3 != entity);
+                    commands.entity(entity).despawn();
+                    false
+                });
+                continue;
+            }
+        };
+        let volume = Volume::Linear(0.44 * gain * volume);
+        if let Some(key) = key
             && groups.iter().any(|(k, _)| *k == key)
         {
             for &(_, entity) in groups.iter().filter(|(k, _)| *k == key) {
@@ -177,28 +212,32 @@ pub fn mix(
             }
             continue;
         }
-        let distance = request
-            .position
+        let distance = position
             .into_iter()
             .zip(listener)
             .map(|(p, l)| (i64::from(p) - i64::from(l)).pow(2))
             .sum();
-        for layer in &bank.programs[request.id] {
-            let entity = commands
-                .spawn((
-                    StageEntity,
-                    DuelEffect,
-                    Voice {
-                        priority: layer.priority,
-                        distance,
-                        key: request.key,
-                    },
-                    AudioPlayer::new(layer.source.clone()),
-                    PlaybackSettings::DESPAWN.with_volume(volume),
-                ))
-                .id();
+        for layer in &bank.programs[id] {
+            let mut voice = commands.spawn((
+                StageEntity,
+                DuelEffect,
+                Voice {
+                    priority: layer.priority,
+                    distance,
+                    key,
+                },
+                PlaybackSettings::DESPAWN.with_volume(volume),
+            ));
+            if matches!(key, Some(ExclusiveVoice::MachineGuns(_)))
+                && let Some(clip) = &layer.gun_loop
+            {
+                voice.insert(AudioPlayer(clip.clone()));
+            } else {
+                voice.insert(AudioPlayer::new(layer.source.clone()));
+            }
+            let entity = voice.id();
             ranked.push((false, layer.priority, distance, entity, false));
-            if let Some(key) = request.key {
+            if let Some(key) = key {
                 groups.push((key, entity));
             }
         }
@@ -237,6 +276,60 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn machine_guns_stop_independently_after_cooldown() {
+        use KeyCode::*;
+        let mut world = crate::contest::menu_world();
+        let cars = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        crate::duel::start(&mut world, Level::Arena, cars, Difficulty::Medium, [0; 2]).unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let step = |world: &mut World, keys: &[KeyCode]| {
+            let mut input = ButtonInput::default();
+            for &key in keys {
+                input.press(key);
+            }
+            world.insert_resource(input);
+            world.run_system_once(crate::duel::advance).unwrap();
+            world.run_system_once(mix).unwrap();
+            world.resource::<Duel>().scene.duel_gun_requests()
+        };
+        let voices = |world: &mut World, car| {
+            let mut entities = world
+                .query::<(Entity, &Voice)>()
+                .iter(world)
+                .filter(|(_, v)| v.key == Some(ExclusiveVoice::MachineGuns(car)))
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>();
+            entities.sort();
+            entities
+        };
+        assert_eq!(step(&mut world, &[Space, Comma]), [Some(true); 2]);
+        let first = voices(&mut world, cars[0]);
+        let second = voices(&mut world, cars[1]);
+        assert_eq!((first.len(), second.len()), (2, 2));
+        for _ in 0..3 {
+            assert_eq!(step(&mut world, &[Comma]), [None; 2]);
+            assert_eq!(voices(&mut world, cars[0]), first);
+        }
+        assert_eq!(step(&mut world, &[Comma]), [Some(false), Some(true)]);
+        assert!(voices(&mut world, cars[0]).is_empty());
+        assert_eq!(voices(&mut world, cars[1]), second);
+        let mut stopped_hot = false;
+        for _ in 0..200 {
+            let requests = step(&mut world, &[Comma]);
+            if world.resource::<Duel>().cars[1].gun_overheated() && requests[1] == Some(false) {
+                stopped_hot = true;
+                break;
+            }
+        }
+        assert!(stopped_hot);
+        assert!(voices(&mut world, cars[1]).is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn duel_saturation_steals_individual_vab_tones() {
         let mut world = crate::contest::menu_world();
         crate::duel::start(
@@ -259,12 +352,18 @@ mod tests {
             for _ in 0..24 {
                 world.run_system_once(crate::duel::advance).unwrap();
                 let events = &world.resource::<Duel>().sounds;
-                assert!(!events.iter().any(|r| r.id == other));
-                fired |= events.iter().any(|r| r.id == expected);
+                assert!(
+                    !events
+                        .iter()
+                        .any(|r| matches!(r, Request::Play{id,..} if *id == other))
+                );
+                fired |= events
+                    .iter()
+                    .any(|r| matches!(r, Request::Play{id,..} if *id == expected));
             }
             assert!(fired, "{key:?} should use sample {expected}");
         }
-        let request = |id, key, volume| Request {
+        let request = |id, key, volume| Request::Play {
             id,
             key,
             volume,

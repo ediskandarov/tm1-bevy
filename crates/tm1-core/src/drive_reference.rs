@@ -4059,6 +4059,56 @@ fn duel_pad_routing_matches_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn duel_machine_gun_sound_ids_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    // Observe the sound queue calls; projectile geometry and audio hardware aren't used by this trace.
+    for entry in [0x8010461c, 0x80106d60, 0x80106e88, 0x8010c930, 0x801370d0] {
+        cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+    let mut cars =
+        PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+    let data = disc.read("UA2PLAY/XARENA1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |k| roots.iter().find(|r| r.1 == k).unwrap().0;
+    let mut scene =
+        CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+    let mut hot = [false; 2];
+    for tick in 0..300 {
+        let held = [tick >= 8, tick < 7 || tick > 25];
+        let mut expected = [None; 2];
+        for slot in 0..2 {
+            let address = PLAYER + (slot * cars[slot].state.len()) as u32;
+            cpu.put(address, &cars[slot].state);
+            cpu.put(address + 0xd1, &[u8::from(held[slot])]);
+            cpu.call_observed(0x8013199c, &[address, 1], 0x80000080, |cpu| {
+                let firing = match cpu.pc() {
+                    0x80106d60 => true,
+                    0x80106e88 => false,
+                    _ => return,
+                };
+                assert_eq!(cpu.r[4], [91, 94][slot]);
+                expected[slot] = Some(firing);
+            });
+            hot[slot] |= cars[slot].gun_overheated() && expected[slot] == Some(false);
+        }
+        scene.step_duel(
+            &mut cars,
+            held.map(|fire_guns| Input {
+                fire_guns,
+                ..Default::default()
+            }),
+            3,
+        );
+        assert_eq!(scene.duel_gun_requests(), expected, "tick {tick}");
+    }
+    assert_eq!(hot, [true; 2]);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn shared_duel_crossfire() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
