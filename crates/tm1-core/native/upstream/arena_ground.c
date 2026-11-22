@@ -8,7 +8,7 @@ TriggerPtGroups triggerPtGroups;
 TriggerPtStartPts triggerPtStartPts;
 Bridge bridges[59];
 PotHole potHoles[5];
-Curb curbs[8];
+Curb curbs[25];
 SlickSpot slickSpots[1];
 
 void InitLevel2TriggerPoints(void)
@@ -2798,4 +2798,986 @@ void InitLevel3PotHoles(void)
 void InitLevel3Curbs(void)
 {
     numCurbs = 0;
+}
+
+void InitLevel4TriggerPoints(void)
+{
+    s16 i;
+    s16 j;
+
+    numTriggerPoints = 42;
+    for (i = 0; i < numTriggerPoints; i++) {
+        tPoints[i].f1A = 1;
+        tPoints[i].type = 0;
+        tPoints[i].f08 = 0;
+        for (j = 0; j < 4; j++) {
+            tPoints[i].link[j] = 0;
+            tPoints[i].dist[j] = 0xA0;
+        }
+    }
+    triggerPtStartPts.n = 6;
+    for (i = 0; i < 15; i++) {
+        triggerPtStartPts.start[i] = i;
+        triggerPtStartPts.grp[i] = 0;
+    }
+    triggerPtGroups.count = 1;
+    triggerPtGroups.pos[0].vx = -0x1900;
+    triggerPtGroups.pos[0].vy = -0x1F40;
+    triggerPtGroups.pos[0].vz = 0;
+    triggerPtGroups.w[0] = 0x5780;
+    triggerPtGroups.d[0] = 0x3E80;
+    for (i = 0; i < triggerPtGroups.count; i++) {
+        for (j = 0; j < triggerPtGroups.count; j++) {
+            triggerPtGroups.a[i][j] = -1;
+            triggerPtGroups.b[i][j] = 0;
+            triggerPtGroups.minSpeed[i][j] = 0x3C;
+        }
+    }
+    tPoints[0].vx = 0x12C0;
+    tPoints[0].vy = 0x960;
+    tPoints[0].f1A = 4;
+    tPoints[0].link[0] = 0xD;
+    tPoints[0].link[1] = 0x22;
+    tPoints[0].link[2] = 0x15;
+    tPoints[0].link[3] = 0x1B;
+    tPoints[1].vx = 0x2580;
+    tPoints[1].vy = -0x960;
+    tPoints[1].f1A = 3;
+    tPoints[1].link[0] = 0x15;
+    tPoints[1].link[1] = 0x18;
+    tPoints[1].link[2] = 0x19;
+    tPoints[2].vx = 0;
+    tPoints[2].vy = -0x1B90;
+    tPoints[2].f1A = 3;
+    tPoints[2].link[0] = 7;
+    tPoints[2].link[1] = 0x11;
+    tPoints[2].link[2] = 0x12;
+    tPoints[3].vx = -0x1230;
+    tPoints[3].vy = 0x1B90;
+    tPoints[3].f1A = 2;
+    tPoints[3].link[0] = 0xA;
+    tPoints[3].link[1] = 0xB;
+    tPoints[4].vx = 0x37B0;
+    tPoints[4].vy = 0x1B90;
+    tPoints[4].f1A = 2;
+    tPoints[4].link[0] = 0x1D;
+    tPoints[4].link[1] = 0x1E;
+    tPoints[5].vx = 0x37B0;
+    tPoints[5].vy = -0x1B90;
+    tPoints[5].f1A = 2;
+    tPoints[5].link[0] = 0x17;
+    tPoints[5].link[1] = 0x21;
+    tPoints[6].vx = -0x1230;
+    tPoints[6].vy = -0x90;
+    tPoints[6].f1A = 3;
+    tPoints[6].link[0] = 8;
+    tPoints[6].link[1] = 9;
+    tPoints[6].link[2] = 0xF;
+    tPoints[7].vx = -0x1230;
+    tPoints[7].vy = -0x1B90;
+    tPoints[7].f1A = 2;
+    tPoints[7].link[0] = 2;
+    tPoints[7].link[1] = 8;
+    tPoints[8].vx = -0x1230;
+    tPoints[8].vy = -0x1350;
+    tPoints[8].f1A = 3;
+    tPoints[8].link[0] = 6;
+    tPoints[8].link[1] = 7;
+    tPoints[8].link[2] = 0x11;
+    tPoints[9].vx = -0x1230;
+    tPoints[9].vy = 0x528;
+    tPoints[9].f1A = 2;
+    tPoints[9].link[0] = 6;
+    tPoints[9].link[1] = 0xA;
+    tPoints[10].vx = -0x1230;
+    tPoints[10].vy = 0x1230;
+    tPoints[10].f1A = 3;
+    tPoints[10].link[0] = 3;
+    tPoints[10].link[1] = 9;
+    tPoints[10].link[2] = 0xC;
+    tPoints[11].vx = 0;
+    tPoints[11].vy = 0x1B90;
+    tPoints[11].f1A = 3;
+    tPoints[11].link[0] = 3;
+    tPoints[11].link[1] = 0xC;
+    tPoints[11].link[2] = 0x14;
+    tPoints[12].vx = 0;
+    tPoints[12].vy = 0x1230;
+    tPoints[12].f1A = 3;
+    tPoints[12].link[0] = 0xA;
+    tPoints[12].link[1] = 0xB;
+    tPoints[12].link[2] = 0xD;
+    tPoints[13].vx = 0;
+    tPoints[13].vy = 0x960;
+    tPoints[13].f1A = 3;
+    tPoints[13].link[0] = 0;
+    tPoints[13].link[1] = 0xC;
+    tPoints[13].link[2] = 0xE;
+    tPoints[14].vx = 0;
+    tPoints[14].vy = 0x528;
+    tPoints[14].f1A = 2;
+    tPoints[14].link[0] = 0xD;
+    tPoints[14].link[1] = 0xF;
+    tPoints[15].vx = 0;
+    tPoints[15].vy = -0x90;
+    tPoints[15].f1A = 3;
+    tPoints[15].link[0] = 6;
+    tPoints[15].link[1] = 0xE;
+    tPoints[15].link[2] = 0x10;
+    tPoints[16].vx = 0;
+    tPoints[16].vy = -0x960;
+    tPoints[16].f1A = 3;
+    tPoints[16].link[0] = 0xF;
+    tPoints[16].link[1] = 0x11;
+    tPoints[16].link[2] = 0x13;
+    tPoints[17].vx = 0;
+    tPoints[17].vy = -0x1350;
+    tPoints[17].f1A = 3;
+    tPoints[17].link[0] = 2;
+    tPoints[17].link[1] = 8;
+    tPoints[17].link[2] = 0x10;
+    tPoints[18].vx = 0x8D0;
+    tPoints[18].vy = -0x1B90;
+    tPoints[18].f1A = 3;
+    tPoints[18].link[0] = 2;
+    tPoints[18].link[1] = 0x16;
+    tPoints[18].link[2] = 0x25;
+    tPoints[19].vx = 0x8D0;
+    tPoints[19].vy = -0x960;
+    tPoints[19].f1A = 3;
+    tPoints[19].link[0] = 0x10;
+    tPoints[19].link[1] = 0x15;
+    tPoints[19].link[2] = 0x25;
+    tPoints[20].vx = 0x12C0;
+    tPoints[20].vy = 0x1B90;
+    tPoints[20].f1A = 2;
+    tPoints[20].link[0] = 0xB;
+    tPoints[20].link[1] = 0x22;
+    tPoints[21].vx = 0x12C0;
+    tPoints[21].vy = -0x960;
+    tPoints[21].f1A = 3;
+    tPoints[21].link[0] = 0;
+    tPoints[21].link[1] = 1;
+    tPoints[21].link[2] = 0x13;
+    tPoints[21].link[3] = 0x23;
+    tPoints[22].vx = 0x12C0;
+    tPoints[22].vy = -0x1B90;
+    tPoints[22].f1A = 2;
+    tPoints[22].link[0] = 0x12;
+    tPoints[22].link[1] = 0x23;
+    tPoints[23].vx = 0x2580;
+    tPoints[23].vy = -0x1B90;
+    tPoints[23].f1A = 2;
+    tPoints[23].link[0] = 5;
+    tPoints[23].link[1] = 0x18;
+    tPoints[24].vx = 0x2580;
+    tPoints[24].vy = -0x1350;
+    tPoints[24].f1A = 3;
+    tPoints[24].link[0] = 1;
+    tPoints[24].link[1] = 0x17;
+    tPoints[24].link[2] = 0x21;
+    tPoints[25].vx = 0x2580;
+    tPoints[25].vy = -0x90;
+    tPoints[25].f1A = 3;
+    tPoints[25].link[0] = 1;
+    tPoints[25].link[1] = 0x1A;
+    tPoints[25].link[2] = 0x20;
+    tPoints[26].vx = 0x2580;
+    tPoints[26].vy = 0x528;
+    tPoints[26].f1A = 2;
+    tPoints[26].link[0] = 0x19;
+    tPoints[26].link[1] = 0x1B;
+    tPoints[27].vx = 0x2580;
+    tPoints[27].vy = 0x960;
+    tPoints[27].f1A = 3;
+    tPoints[27].link[0] = 0;
+    tPoints[27].link[1] = 0x1A;
+    tPoints[27].link[2] = 0x1C;
+    tPoints[28].vx = 0x2580;
+    tPoints[28].vy = 0x1230;
+    tPoints[28].f1A = 3;
+    tPoints[28].link[0] = 0x1B;
+    tPoints[28].link[1] = 0x1D;
+    tPoints[28].link[2] = 0x1E;
+    tPoints[29].vx = 0x2580;
+    tPoints[29].vy = 0x1B90;
+    tPoints[29].f1A = 2;
+    tPoints[29].link[0] = 4;
+    tPoints[29].link[1] = 0x1C;
+    tPoints[30].vx = 0x37B0;
+    tPoints[30].vy = 0x1230;
+    tPoints[30].f1A = 3;
+    tPoints[30].link[0] = 0x1C;
+    tPoints[30].link[1] = 0x1E;
+    tPoints[30].link[2] = 0x20;
+    tPoints[31].vx = 0x37B0;
+    tPoints[31].vy = 0x528;
+    tPoints[31].f1A = 2;
+    tPoints[31].link[0] = 0x1E;
+    tPoints[31].link[1] = 0x20;
+    tPoints[32].vx = 0x37B0;
+    tPoints[32].vy = -0x90;
+    tPoints[32].f1A = 3;
+    tPoints[32].link[0] = 0x19;
+    tPoints[32].link[1] = 0x1F;
+    tPoints[32].link[2] = 0x21;
+    tPoints[33].vx = 0x37B0;
+    tPoints[33].vy = -0x1350;
+    tPoints[33].f1A = 3;
+    tPoints[33].link[0] = 5;
+    tPoints[33].link[1] = 0x18;
+    tPoints[33].link[2] = 0x20;
+    tPoints[34].vx = 0x12C0;
+    tPoints[34].vy = 0xFC8;
+    tPoints[34].f1A = 3;
+    tPoints[34].link[0] = 0;
+    tPoints[34].link[1] = 0x14;
+    tPoints[34].link[2] = 0x1C;
+    tPoints[35].vx = 0x12C0;
+    tPoints[35].vy = -0x11D0;
+    tPoints[35].f1A = 3;
+    tPoints[35].link[0] = 0x15;
+    tPoints[35].link[1] = 0x16;
+    tPoints[35].link[2] = 0x24;
+    tPoints[36].vx = 0x2580;
+    tPoints[36].vy = -0xF78;
+    tPoints[36].f1A = 3;
+    tPoints[36].link[0] = 1;
+    tPoints[36].link[1] = 0x18;
+    tPoints[36].link[2] = 0x23;
+    tPoints[37].vx = 0x960;
+    tPoints[37].vy = -0x12C0;
+    tPoints[37].f1A = 3;
+    tPoints[37].link[0] = 0x12;
+    tPoints[37].link[1] = 0x13;
+    tPoints[37].link[2] = 0x23;
+    tPoints[38].vx = 0x1D60;
+    tPoints[38].vy = -0x1A90;
+    tPoints[38].f1A = 1;
+    tPoints[38].link[0] = 0x27;
+    tPoints[39].vx = 0x1B80;
+    tPoints[39].vy = -0x1428;
+    tPoints[39].f1A = 2;
+    tPoints[39].link[0] = 0x23;
+    tPoints[39].link[1] = 0x24;
+    tPoints[40].vx = 0x1C20;
+    tPoints[40].vy = 0x1360;
+    tPoints[40].f1A = 2;
+    tPoints[40].link[0] = 0x1C;
+    tPoints[40].link[1] = 0x22;
+    tPoints[41].vx = 0x1CC0;
+    tPoints[41].vy = 0x1A68;
+    tPoints[41].f1A = 1;
+    tPoints[41].link[0] = 0x28;
+}
+
+void InitLevel4Bridges(void)
+{
+    s16 i;
+    s16 j;
+
+    numBridges = 0x36;
+    numCheckBridges = 0x2A;
+
+    for (i = 0; i <= numBridges; i++) {
+        bridges[i].unk08 = 0;
+        bridges[i].unk0A = 10;
+        for (j = 0; j < 4; j++) {
+            bridges[i].obj[j] = -1;
+        }
+    }
+
+    bridges[0].rampDir = 2;
+    bridges[0].minX = 0x1620;
+    bridges[0].minZ = -2688;
+    bridges[0].y0 = 0;
+    bridges[0].y1 = 0x110;
+    bridges[0].extentX = 0x320;
+    bridges[0].extentZ = 0x240;
+    bridges[0].obj[0] = 2;
+
+    bridges[1].rampDir = 3;
+    bridges[1].minX = 0x1F00;
+    bridges[1].minZ = -2688;
+    bridges[1].y0 = 0x110;
+    bridges[1].y1 = 0;
+    bridges[1].extentX = 0x320;
+    bridges[1].extentZ = 0x240;
+    bridges[1].obj[0] = 2;
+
+    bridges[2].rampDir = 2;
+    bridges[2].minX = 0x1940;
+    bridges[2].minZ = -2688;
+    bridges[2].y0 = 0x110;
+    bridges[2].y1 = 0x110;
+    bridges[2].extentX = 0x5C0;
+    bridges[2].extentZ = 0x240;
+    bridges[2].obj[0] = 0;
+    bridges[2].obj[1] = 1;
+
+    bridges[3].rampDir = 2;
+    bridges[3].minX = 0x1620;
+    bridges[3].minZ = 0x840;
+    bridges[3].y0 = 0;
+    bridges[3].y1 = 0x110;
+    bridges[3].extentX = 0x320;
+    bridges[3].extentZ = 0x240;
+    bridges[3].obj[0] = 5;
+
+    bridges[4].rampDir = 3;
+    bridges[4].minX = 0x1F00;
+    bridges[4].minZ = 0x840;
+    bridges[4].y0 = 0x110;
+    bridges[4].y1 = 0;
+    bridges[4].extentX = 0x320;
+    bridges[4].extentZ = 0x240;
+    bridges[4].obj[0] = 5;
+
+    bridges[5].rampDir = 2;
+    bridges[5].minX = 0x1940;
+    bridges[5].minZ = 0x840;
+    bridges[5].y0 = 0x110;
+    bridges[5].y1 = 0x110;
+    bridges[5].extentX = 0x5C0;
+    bridges[5].extentZ = 0x240;
+    bridges[5].obj[0] = 3;
+    bridges[5].obj[1] = 4;
+
+    bridges[6].rampDir = 2;
+    bridges[6].minX = 0x1C20;
+    bridges[6].minZ = -7488;
+    bridges[6].y0 = -80;
+    bridges[6].y1 = -80;
+    bridges[6].extentX = 0x320;
+    bridges[6].extentZ = 0x300;
+    bridges[6].obj[0] = 0x2D;
+    bridges[6].unk0A = 0;
+
+    bridges[7].rampDir = 3;
+    bridges[7].minX = 0x1A90;
+    bridges[7].minZ = -5800;
+    bridges[7].y0 = 8;
+    bridges[7].y1 = -80;
+    bridges[7].extentX = 0xA0;
+    bridges[7].extentZ = 0x898;
+    bridges[7].obj[0] = 0x2A;
+    bridges[7].obj[1] = 0x2D;
+    bridges[7].obj[2] = 0x2E;
+    bridges[7].unk0A = 0x28;
+
+    bridges[8].rampDir = 3;
+    bridges[8].minX = 0x1D10;
+    bridges[8].minZ = -5800;
+    bridges[8].y0 = -80;
+    bridges[8].y1 = 8;
+    bridges[8].extentX = 0xA0;
+    bridges[8].extentZ = 0x898;
+    bridges[8].obj[0] = 0x2A;
+    bridges[8].obj[1] = 0x2D;
+    bridges[8].obj[2] = 0x2E;
+    bridges[8].unk0A = 0x28;
+
+    bridges[9].rampDir = 3;
+    bridges[9].minX = 0x1B58;
+    bridges[9].minZ = -2880;
+    bridges[9].y0 = -80;
+    bridges[9].y1 = -80;
+    bridges[9].extentX = 0x320;
+    bridges[9].extentZ = 0x3C0;
+    bridges[9].obj[0] = 0x2E;
+    bridges[9].obj[1] = 0x2F;
+    bridges[9].unk0A = 0;
+
+    bridges[10].rampDir = 2;
+    bridges[10].minX = 0x1CE8;
+    bridges[10].minZ = -1000;
+    bridges[10].y0 = 8;
+    bridges[10].y1 = -80;
+    bridges[10].extentX = 0xA0;
+    bridges[10].extentZ = 0x898;
+    bridges[10].obj[0] = 0x2B;
+    bridges[10].obj[1] = 0x2F;
+    bridges[10].obj[2] = 0x30;
+    bridges[10].unk0A = 0x28;
+
+    bridges[11].rampDir = 3;
+    bridges[11].minX = 0x1F68;
+    bridges[11].minZ = -1000;
+    bridges[11].y0 = -80;
+    bridges[11].y1 = 8;
+    bridges[11].extentX = 0xA0;
+    bridges[11].extentZ = 0x898;
+    bridges[11].obj[0] = 0x2B;
+    bridges[11].obj[1] = 0x2F;
+    bridges[11].obj[2] = 0x30;
+    bridges[11].unk0A = 0x28;
+
+    bridges[12].rampDir = 2;
+    bridges[12].minX = 0x1C20;
+    bridges[12].minZ = 0x780;
+    bridges[12].y0 = -80;
+    bridges[12].y1 = -80;
+    bridges[12].extentX = 0x320;
+    bridges[12].extentZ = 0x3C0;
+    bridges[12].obj[0] = 0x30;
+    bridges[12].obj[1] = 0x31;
+    bridges[12].unk0A = 0;
+
+    bridges[13].rampDir = 2;
+    bridges[13].minX = 0x1A90;
+    bridges[13].minZ = 0xED8;
+    bridges[13].y0 = 8;
+    bridges[13].y1 = -80;
+    bridges[13].extentX = 0xA0;
+    bridges[13].extentZ = 0x898;
+    bridges[13].obj[0] = 0x2C;
+    bridges[13].obj[1] = 0x31;
+    bridges[13].obj[2] = 0x32;
+    bridges[13].unk0A = 0x28;
+
+    bridges[14].rampDir = 3;
+    bridges[14].minX = 0x1D10;
+    bridges[14].minZ = 0xED8;
+    bridges[14].y0 = -80;
+    bridges[14].y1 = 8;
+    bridges[14].extentX = 0xA0;
+    bridges[14].extentZ = 0x898;
+    bridges[14].obj[0] = 0x2C;
+    bridges[14].obj[1] = 0x31;
+    bridges[14].obj[2] = 0x32;
+    bridges[14].unk0A = 0x28;
+
+    bridges[15].rampDir = 2;
+    bridges[15].minX = 0x1B58;
+    bridges[15].minZ = 0x1A40;
+    bridges[15].y0 = -80;
+    bridges[15].y1 = -80;
+    bridges[15].extentX = 0x320;
+    bridges[15].extentZ = 0x300;
+    bridges[15].obj[0] = 0x32;
+    bridges[15].unk0A = 0;
+
+    bridges[16].rampDir = 2;
+    bridges[16].minX = -1200;
+    bridges[16].minZ = -456;
+    bridges[16].y0 = 8;
+    bridges[16].y1 = 0x20;
+    bridges[16].extentX = 0x48;
+    bridges[16].extentZ = 0x90;
+    bridges[16].obj[0] = 0x33;
+
+    bridges[17].rampDir = 3;
+    bridges[17].minX = -984;
+    bridges[17].minZ = -456;
+    bridges[17].y0 = 0x20;
+    bridges[17].y1 = 8;
+    bridges[17].extentX = 0x48;
+    bridges[17].extentZ = 0x90;
+    bridges[17].obj[0] = 0x33;
+
+    bridges[18].rampDir = 0;
+    bridges[18].minX = 0x10F8;
+    bridges[18].minZ = 0xE70;
+    bridges[18].y0 = 8;
+    bridges[18].y1 = 0x20;
+    bridges[18].extentX = 0x90;
+    bridges[18].extentZ = 0x48;
+    bridges[18].obj[0] = 0x34;
+
+    bridges[19].rampDir = 1;
+    bridges[19].minX = 0x10F8;
+    bridges[19].minZ = 0xF48;
+    bridges[19].y0 = 0x20;
+    bridges[19].y1 = 8;
+    bridges[19].extentX = 0x90;
+    bridges[19].extentZ = 0x48;
+    bridges[19].obj[0] = 0x34;
+
+    bridges[20].rampDir = 2;
+    bridges[20].minX = 0x3210;
+    bridges[20].minZ = -5256;
+    bridges[20].y0 = 8;
+    bridges[20].y1 = 0x20;
+    bridges[20].extentX = 0x48;
+    bridges[20].extentZ = 0x90;
+    bridges[20].obj[0] = 0x35;
+
+    bridges[21].rampDir = 3;
+    bridges[21].minX = 0x32E8;
+    bridges[21].minZ = -5256;
+    bridges[21].y0 = 0x20;
+    bridges[21].y1 = 8;
+    bridges[21].extentX = 0x48;
+    bridges[21].extentZ = 0x90;
+    bridges[21].obj[0] = 0x35;
+
+    bridges[22].rampDir = 0;
+    bridges[22].minX = -9600;
+    bridges[22].minZ = -1516;
+    bridges[22].y0 = 0;
+    bridges[22].y1 = 0x30;
+    bridges[22].extentX = 0x60;
+    bridges[22].extentZ = 0xB0;
+    bridges[22].obj[0] = 0x17;
+    bridges[22].unk0A = 0x1E;
+
+    bridges[23].rampDir = 1;
+    bridges[23].minX = -9600;
+    bridges[23].minZ = -1340;
+    bridges[23].y0 = 0x30;
+    bridges[23].y1 = 0;
+    bridges[23].extentX = 0x60;
+    bridges[23].extentZ = 0xA8;
+    bridges[23].obj[0] = 0x16;
+    bridges[23].unk0A = 0x1E;
+
+    bridges[24].rampDir = 0;
+    bridges[24].minX = -9600;
+    bridges[24].minZ = 0x194;
+    bridges[24].y0 = 0;
+    bridges[24].y1 = 0x30;
+    bridges[24].extentX = 0x60;
+    bridges[24].extentZ = 0xB0;
+    bridges[24].obj[0] = 0x19;
+    bridges[24].unk0A = 0x1E;
+
+    bridges[25].rampDir = 1;
+    bridges[25].minX = -9600;
+    bridges[25].minZ = 0x244;
+    bridges[25].y0 = 0x30;
+    bridges[25].y1 = 0;
+    bridges[25].extentX = 0x60;
+    bridges[25].extentZ = 0xA8;
+    bridges[25].obj[0] = 0x18;
+    bridges[25].unk0A = 0x1E;
+
+    bridges[26].rampDir = 2;
+    bridges[26].minX = -3340;
+    bridges[26].minZ = -288;
+    bridges[26].y0 = 0;
+    bridges[26].y1 = 0x30;
+    bridges[26].extentX = 0xB0;
+    bridges[26].extentZ = 0x60;
+    bridges[26].obj[0] = 0x1B;
+    bridges[26].unk0A = 0x1E;
+
+    bridges[27].rampDir = 3;
+    bridges[27].minX = -3164;
+    bridges[27].minZ = -288;
+    bridges[27].y0 = 0x30;
+    bridges[27].y1 = 0;
+    bridges[27].extentX = 0xA8;
+    bridges[27].extentZ = 0x60;
+    bridges[27].obj[0] = 0x1A;
+    bridges[27].unk0A = 0x1E;
+
+    bridges[28].rampDir = 2;
+    bridges[28].minX = -2188;
+    bridges[28].minZ = -192;
+    bridges[28].y0 = 0;
+    bridges[28].y1 = 0x30;
+    bridges[28].extentX = 0xB0;
+    bridges[28].extentZ = 0x60;
+    bridges[28].obj[0] = 0x1D;
+    bridges[28].unk0A = 0x1E;
+
+    bridges[29].rampDir = 3;
+    bridges[29].minX = -2012;
+    bridges[29].minZ = -192;
+    bridges[29].y0 = 0x30;
+    bridges[29].y1 = 0;
+    bridges[29].extentX = 0xA8;
+    bridges[29].extentZ = 0x60;
+    bridges[29].obj[0] = 0x1C;
+    bridges[29].unk0A = 0x1E;
+
+    bridges[30].rampDir = 0;
+    bridges[30].minX = 0;
+    bridges[30].minZ = -3628;
+    bridges[30].y0 = 0;
+    bridges[30].y1 = 0x30;
+    bridges[30].extentX = 0x60;
+    bridges[30].extentZ = 0xB0;
+    bridges[30].obj[0] = 0x1F;
+    bridges[30].unk0A = 0x1E;
+
+    bridges[31].rampDir = 1;
+    bridges[31].minX = 0;
+    bridges[31].minZ = -3452;
+    bridges[31].y0 = 0x30;
+    bridges[31].y1 = 0;
+    bridges[31].extentX = 0x60;
+    bridges[31].extentZ = 0xA8;
+    bridges[31].obj[0] = 0x1E;
+    bridges[31].unk0A = 0x1E;
+
+    bridges[32].rampDir = 2;
+    bridges[32].minX = 0x374;
+    bridges[32].minZ = -2400;
+    bridges[32].y0 = 0;
+    bridges[32].y1 = 0x30;
+    bridges[32].extentX = 0xB0;
+    bridges[32].extentZ = 0x60;
+    bridges[32].obj[0] = 0x21;
+    bridges[32].unk0A = 0x1E;
+
+    bridges[33].rampDir = 3;
+    bridges[33].minX = 0x424;
+    bridges[33].minZ = -2400;
+    bridges[33].y0 = 0x30;
+    bridges[33].y1 = 0;
+    bridges[33].extentX = 0xA8;
+    bridges[33].extentZ = 0x60;
+    bridges[33].obj[0] = 0x20;
+    bridges[33].unk0A = 0x1E;
+
+    bridges[34].rampDir = 2;
+    bridges[34].minX = 0x4F4;
+    bridges[34].minZ = 0x960;
+    bridges[34].y0 = 0;
+    bridges[34].y1 = 0x30;
+    bridges[34].extentX = 0xB0;
+    bridges[34].extentZ = 0x60;
+    bridges[34].obj[0] = 0x23;
+    bridges[34].unk0A = 0x1E;
+
+    bridges[35].rampDir = 3;
+    bridges[35].minX = 0x5A4;
+    bridges[35].minZ = 0x960;
+    bridges[35].y0 = 0x30;
+    bridges[35].y1 = 0;
+    bridges[35].extentX = 0xA8;
+    bridges[35].extentZ = 0x60;
+    bridges[35].obj[0] = 0x22;
+    bridges[35].unk0A = 0x1E;
+
+    bridges[36].rampDir = 2;
+    bridges[36].minX = -8332;
+    bridges[36].minZ = 0x8A0;
+    bridges[36].y0 = 0;
+    bridges[36].y1 = 0x30;
+    bridges[36].extentX = 0xB0;
+    bridges[36].extentZ = 0x60;
+    bridges[36].obj[0] = 0x25;
+    bridges[36].unk0A = 0x1E;
+
+    bridges[37].rampDir = 3;
+    bridges[37].minX = -8156;
+    bridges[37].minZ = 0x8A0;
+    bridges[37].y0 = 0x30;
+    bridges[37].y1 = 0;
+    bridges[37].extentX = 0xA8;
+    bridges[37].extentZ = 0x60;
+    bridges[37].obj[0] = 0x24;
+    bridges[37].unk0A = 0x1E;
+
+    bridges[38].rampDir = 2;
+    bridges[38].minX = 0x1AB8;
+    bridges[38].minZ = -7200;
+    bridges[38].y0 = 0;
+    bridges[38].y1 = 0x58;
+    bridges[38].extentX = 0x140;
+    bridges[38].extentZ = 0xA0;
+    bridges[38].obj[0] = 0x27;
+    bridges[38].unk0A = 0x1E;
+
+    bridges[39].rampDir = 3;
+    bridges[39].minX = 0x1F68;
+    bridges[39].minZ = -7200;
+    bridges[39].y0 = 0x58;
+    bridges[39].y1 = 0;
+    bridges[39].extentX = 0x140;
+    bridges[39].extentZ = 0xA0;
+    bridges[39].obj[0] = 0x26;
+    bridges[39].unk0A = 0x1E;
+
+    bridges[40].rampDir = 2;
+    bridges[40].minX = 0x19F0;
+    bridges[40].minZ = 0x1B80;
+    bridges[40].y0 = 0;
+    bridges[40].y1 = 0x58;
+    bridges[40].extentX = 0x140;
+    bridges[40].extentZ = 0xA0;
+    bridges[40].obj[0] = 0x29;
+    bridges[40].unk0A = 0x1E;
+
+    bridges[41].rampDir = 3;
+    bridges[41].minX = 0x1EA0;
+    bridges[41].minZ = 0x1B80;
+    bridges[41].y0 = 0x58;
+    bridges[41].y1 = 0;
+    bridges[41].extentX = 0x140;
+    bridges[41].extentZ = 0xA0;
+    bridges[41].obj[0] = 0x28;
+    bridges[41].unk0A = 0x1E;
+
+    bridges[42].rampDir = 2;
+    bridges[42].minX = 0x1B30;
+    bridges[42].minZ = -5800;
+    bridges[42].y0 = -80;
+    bridges[42].y1 = -80;
+    bridges[42].extentX = 0x1E0;
+    bridges[42].extentZ = 0x898;
+    bridges[42].obj[0] = 7;
+    bridges[42].obj[1] = 8;
+    bridges[42].obj[2] = 0x2D;
+    bridges[42].obj[3] = 0x2E;
+
+    bridges[43].rampDir = 2;
+    bridges[43].minX = 0x1D88;
+    bridges[43].minZ = -1000;
+    bridges[43].y0 = -80;
+    bridges[43].y1 = -80;
+    bridges[43].extentX = 0x1E0;
+    bridges[43].extentZ = 0x898;
+    bridges[43].obj[0] = 0xA;
+    bridges[43].obj[1] = 0xB;
+    bridges[43].obj[2] = 0x2F;
+    bridges[43].obj[3] = 0x30;
+
+    bridges[44].rampDir = 2;
+    bridges[44].minX = 0x1B30;
+    bridges[44].minZ = 0xED8;
+    bridges[44].y0 = -80;
+    bridges[44].y1 = -80;
+    bridges[44].extentX = 0x1E0;
+    bridges[44].extentZ = 0x898;
+    bridges[44].obj[0] = 0xD;
+    bridges[44].obj[1] = 0xE;
+    bridges[44].obj[2] = 0x31;
+    bridges[44].obj[3] = 0x32;
+
+    bridges[45].rampDir = 2;
+    bridges[45].minX = 0x1A90;
+    bridges[45].minZ = -6720;
+    bridges[45].y0 = -80;
+    bridges[45].y1 = -80;
+    bridges[45].extentX = 0x4B0;
+    bridges[45].extentZ = 0x398;
+    bridges[45].obj[0] = 6;
+    bridges[45].obj[1] = 0x2A;
+    bridges[45].unk0A = 0;
+
+    bridges[46].rampDir = 2;
+    bridges[46].minX = 0x1A90;
+    bridges[46].minZ = -3600;
+    bridges[46].y0 = -80;
+    bridges[46].y1 = -80;
+    bridges[46].extentX = 0x3E8;
+    bridges[46].extentZ = 0x370;
+    bridges[46].obj[0] = 9;
+    bridges[46].obj[1] = 0x2A;
+    bridges[46].unk0A = 0;
+
+    bridges[47].rampDir = 2;
+    bridges[47].minX = 0x1B58;
+    bridges[47].minZ = -1920;
+    bridges[47].y0 = -80;
+    bridges[47].y1 = -80;
+    bridges[47].extentX = 0x4B0;
+    bridges[47].extentZ = 0x398;
+    bridges[47].obj[0] = 9;
+    bridges[47].obj[1] = 0x2B;
+    bridges[47].unk0A = 0;
+
+    bridges[48].rampDir = 2;
+    bridges[48].minX = 0x1C20;
+    bridges[48].minZ = 0x4B0;
+    bridges[48].y0 = -80;
+    bridges[48].y1 = -80;
+    bridges[48].extentX = 0x3E8;
+    bridges[48].extentZ = 0x2D0;
+    bridges[48].obj[0] = 0xC;
+    bridges[48].obj[1] = 0x2B;
+    bridges[48].unk0A = 0;
+
+    bridges[49].rampDir = 2;
+    bridges[49].minX = 0x1A90;
+    bridges[49].minZ = 0xB40;
+    bridges[49].y0 = -80;
+    bridges[49].y1 = -80;
+    bridges[49].extentX = 0x4B0;
+    bridges[49].extentZ = 0x398;
+    bridges[49].obj[0] = 0xC;
+    bridges[49].obj[1] = 0x2C;
+    bridges[49].unk0A = 0;
+
+    bridges[50].rampDir = 2;
+    bridges[50].minX = 0x1A90;
+    bridges[50].minZ = 0x1770;
+    bridges[50].y0 = -80;
+    bridges[50].y1 = -80;
+    bridges[50].extentX = 0x3E8;
+    bridges[50].extentZ = 0x4B0;
+    bridges[50].obj[0] = 0xF;
+    bridges[50].obj[1] = 0x2C;
+    bridges[50].unk0A = 0;
+
+    bridges[51].rampDir = 2;
+    bridges[51].minX = -1128;
+    bridges[51].minZ = -456;
+    bridges[51].y0 = 0x20;
+    bridges[51].y1 = 0x20;
+    bridges[51].extentX = 0x90;
+    bridges[51].extentZ = 0x90;
+    bridges[51].obj[0] = 0x10;
+    bridges[51].obj[1] = 0x11;
+    bridges[51].unk08 = 1;
+
+    bridges[52].rampDir = 0;
+    bridges[52].minX = 0x10F8;
+    bridges[52].minZ = 0xEB8;
+    bridges[52].y0 = 0x20;
+    bridges[52].y1 = 0x20;
+    bridges[52].extentX = 0x90;
+    bridges[52].extentZ = 0x90;
+    bridges[52].obj[0] = 0x12;
+    bridges[52].obj[1] = 0x13;
+    bridges[52].unk08 = 2;
+
+    bridges[53].rampDir = 2;
+    bridges[53].minX = 0x3258;
+    bridges[53].minZ = -5256;
+    bridges[53].y0 = 0x20;
+    bridges[53].y1 = 0x20;
+    bridges[53].extentX = 0x90;
+    bridges[53].extentZ = 0x90;
+    bridges[53].obj[0] = 0x14;
+    bridges[53].obj[1] = 0x15;
+    bridges[53].unk08 = 3;
+}
+
+void InitLevel4Curbs(void)
+{
+    numCurbs = 16;
+    curbs[0].x = -4512;
+    curbs[0].z = -6912;
+    curbs[0].w = 4224;
+    curbs[0].h = 1824;
+    curbs[0].t = 8;
+
+    curbs[1].x = -4512;
+    curbs[1].z = -4800;
+    curbs[1].w = 4224;
+    curbs[1].h = 2400;
+    curbs[1].t = 8;
+
+    curbs[2].x = -4512;
+    curbs[2].z = -2112;
+    curbs[2].w = 4224;
+    curbs[2].h = 1824;
+    curbs[2].t = 8;
+
+    curbs[3].x = -4512;
+    curbs[3].z = 0;
+    curbs[3].w = 4224;
+    curbs[3].h = 4800;
+    curbs[3].t = 8;
+
+    curbs[4].x = -4512;
+    curbs[4].z = 5088;
+    curbs[4].w = 4224;
+    curbs[4].h = 1824;
+    curbs[4].t = 8;
+
+    curbs[5].x = 288;
+    curbs[5].z = 2688;
+    curbs[5].w = 4224;
+    curbs[5].h = 4224;
+    curbs[5].t = 8;
+
+    curbs[6].x = 288;
+    curbs[6].z = -2112;
+    curbs[6].w = 4224;
+    curbs[6].h = 4224;
+    curbs[6].t = 8;
+
+    curbs[7].x = 288;
+    curbs[7].z = -6912;
+    curbs[7].w = 4224;
+    curbs[7].h = 4224;
+    curbs[7].t = 8;
+
+    curbs[8].x = 5088;
+    curbs[8].z = -6912;
+    curbs[8].w = 4224;
+    curbs[8].h = 4224;
+    curbs[8].t = 8;
+
+    curbs[9].x = 5088;
+    curbs[9].z = -2112;
+    curbs[9].w = 4224;
+    curbs[9].h = 4224;
+    curbs[9].t = 8;
+
+    curbs[10].x = 5088;
+    curbs[10].z = 2688;
+    curbs[10].w = 4224;
+    curbs[10].h = 4224;
+    curbs[10].t = 8;
+
+    curbs[11].x = 9888;
+    curbs[11].z = 5088;
+    curbs[11].w = 4224;
+    curbs[11].h = 1824;
+    curbs[11].t = 8;
+
+    curbs[12].x = 9888;
+    curbs[12].z = 0;
+    curbs[12].w = 4224;
+    curbs[12].h = 4800;
+    curbs[12].t = 8;
+
+    curbs[13].x = 9888;
+    curbs[13].z = -2112;
+    curbs[13].w = 4224;
+    curbs[13].h = 1824;
+    curbs[13].t = 8;
+
+    curbs[14].x = 9888;
+    curbs[14].z = -4800;
+    curbs[14].w = 4224;
+    curbs[14].h = 2400;
+    curbs[14].t = 8;
+
+    curbs[15].x = 9888;
+    curbs[15].z = -6912;
+    curbs[15].w = 4224;
+    curbs[15].h = 1824;
+    curbs[15].t = 8;
+}
+
+void InitLevel4PotHoles(void)
+{
+    s16 i;
+    s16 t;
+    s32 n;
+
+    numPotHoles = 1;
+    numCheckPotHoles = 1;
+    i = 0;
+    do {
+        potHoles[i].active = 0;
+        t = i + 1;
+        do {
+        } while (0);
+        n = numPotHoles;
+        i = t;
+    } while (t < n);
+
+    potHoles[0].x = 0xC0;
+    potHoles[0].z = 0xC0;
+    potHoles[0].a = 0x1140;
+    potHoles[0].b = 0x840;
+    potHoles[0].c = 8;
+    potHoles[0].active = 1;
+}
+
+void InitLevel4SlickSpots(void)
+{
+    numSlickSpots = 1;
+    slickSpots[0].x = 0x16A8;
+    slickSpots[0].z = -768;
+    slickSpots[0].w = 0x3F8;
+    slickSpots[0].h = 0x6F8;
 }

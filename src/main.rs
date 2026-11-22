@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway] [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
     use tm1_core::drive::{Level, Vehicle};
@@ -28,9 +28,10 @@ fn main() -> Result<()> {
         if flag.as_deref() == Some(std::ffi::OsStr::new("--level")) {
             level = match args.next().as_ref().and_then(|s| s.to_str()) {
                 Some("warehouse") => Level::Warehouse,
+                Some("city-park") => Level::CityPark,
                 Some("freeway") => Level::Freeway,
                 Some("arena") => Level::Arena,
-                _ => anyhow::bail!("--level requires arena, warehouse or freeway"),
+                _ => anyhow::bail!("--level requires arena, warehouse, freeway or city-park"),
             };
             flag = args.next();
             continue;
@@ -89,11 +90,11 @@ fn main() -> Result<()> {
         eprintln!("Preview omission: {issue}");
     }
     let mut seed = 1;
-    let opponent_kinds = match level {
-        Level::Arena => vec![tm1_core::drive::ArenaDeck::default().draw(vehicle, &mut seed)],
-        Level::Warehouse => vehicle.warehouse_opponents(),
-        Level::Freeway => vehicle.freeway_opponents(),
-    };
+    let opponent_kinds = level.opponents(
+        vehicle,
+        &mut tm1_core::drive::ArenaDeck::default(),
+        &mut seed,
+    );
     let player =
         tm1_core::drive::PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
             .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
@@ -143,6 +144,7 @@ fn main() -> Result<()> {
         .insert_resource(driving::Drive::new(player, contacts, &opponent_kinds))
         .insert_resource(ClearColor(match level {
             Level::Arena => Color::srgb(0.035, 0.045, 0.065),
+            Level::CityPark => Color::srgb_u8(75, 60, 30),
             Level::Freeway => Color::srgb_u8(60, 45, 20),
             Level::Warehouse => Color::srgb_u8(75, 70, 55),
         }))

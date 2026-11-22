@@ -173,6 +173,7 @@ void tm1_bind_level(int level)
 {
     if (level == current_level) return;
     current_level = level;
+    numSlickSpots = 0;
     if (level == LEVEL2_WAREHOUSE) {
         InitLevel2TriggerPoints();
         InitLevel2Bridges();
@@ -183,13 +184,18 @@ void tm1_bind_level(int level)
         InitLevel3Bridges();
         InitLevel3Curbs();
         InitLevel3PotHoles();
+    } else if (level == LEVEL4_CITY_PARK) {
+        InitLevel4TriggerPoints();
+        InitLevel4Bridges();
+        InitLevel4Curbs();
+        InitLevel4PotHoles();
+        InitLevel4SlickSpots();
     } else {
         InitLevel1TriggerPoints();
         InitLevel1Bridges();
         InitLevel1PotHoles();
         numCurbs = 0;
     }
-    numSlickSpots = 0;
 }
 
 static void init_vehicle_stats(CarStats* stats, s32 kind)
@@ -274,6 +280,9 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
         car.motion.pos.vx = -0x28a0;
         car.motion.pos.vy = -0x11d0;
         car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
+    } else if (current_level == LEVEL4_CITY_PARK) {
+        car.motion.pos.vx = 0x12c0;
+        car.motion.pos.vy = -0x12c0;
     } else if (current_level == LEVEL3_FREEWAY) {
         car.motion.pos.vx = 0x1c20;
         car.motion.pos.vy = -0x2390;

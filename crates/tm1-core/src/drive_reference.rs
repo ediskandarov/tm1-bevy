@@ -37,7 +37,9 @@ impl Reference {
         let opponent = match level {
             Level::Arena => Vehicle::Outlaw,
             Level::Warehouse => vehicle.warehouse_opponents()[0],
-            Level::Freeway => vehicle.freeway_opponents()[0],
+            Level::Freeway | Level::CityPark => {
+                level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1)[0]
+            }
         };
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
@@ -212,15 +214,15 @@ fn group_spawn_original() {
 
     cpu.put(0x80170238, &3u16.to_le_bytes());
     cpu.put(0x8017023a, &20u16.to_le_bytes());
-    for (level, init_points) in [(Level::Warehouse, 0x801262ec), (Level::Freeway, 0x801268f8)] {
+    for (level, init_points) in [
+        (Level::Warehouse, 0x801262ec),
+        (Level::Freeway, 0x801268f8),
+        (Level::CityPark, 0x80127694),
+    ] {
         put(&mut cpu, 0x8018c3b4, level as u32);
         for vehicle in Vehicle::ROSTER {
             let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
-            let cards = if level == Level::Freeway {
-                vehicle.freeway_opponents()
-            } else {
-                vehicle.warehouse_opponents()
-            };
+            let cards = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
             cpu.call(init_points, &[]);
             cpu.random_state = player.seed;
             let opponents = Opponent::spawn_bout(&mut player, &cards);
@@ -917,6 +919,65 @@ fn warehouse_encounter_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn city_park_slick_drive_matches_retail() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::CityPark);
+    // Approach the south edge of the rectangular slick along its long axis.
+    vec3(&mut r.player.state, 0x388, [6300, -1400, 0]);
+    r.sync();
+    put(&mut r.cpu, 0x8018c3b4, Level::CityPark as u32);
+    for entry in [0x80127694, 0x8012da2c, 0x80130938, 0x80130c20, 0x8013131c] {
+        r.cpu.call(entry, &[]);
+    }
+    for entry in [0x80108378, 0x801083b0, 0x801417d0, 0x801466b0, 0x80146930] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let mut entered = false;
+    let mut left = false;
+    for step in 1..=150 {
+        let input = Input {
+            accelerate: true,
+            left: (30..36).contains(&step),
+            ..Default::default()
+        };
+        let fields = [3u8, 4, 5][step % 3];
+        r.cpu.call(0x800ffb98, &[2, u32::from(input.ps1_buttons())]);
+        r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
+        r.cpu
+            .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
+        put(&mut r.cpu, 0x8017023c, step as u32);
+        r.cpu.call(0x801125ac, &[PLAYER]);
+        r.cpu.call_until(0x8011125c, &[PLAYER], 0x801115c0);
+        r.player.step(input, fields);
+        let start = (PLAYER & 0x1fffff) as usize;
+        assert_eq!(
+            &r.player.state[..],
+            &r.cpu.ram[start..start + r.player.state.len()],
+            "slick drive step {step}"
+        );
+        let slick = r.player.state[0xa0 + 13] != 0;
+        if entered && !slick {
+            left = true;
+        }
+        entered |= slick;
+    }
+    assert!(
+        entered && left,
+        "expected to cross slick, ended at {:?}",
+        r.player.position()
+    );
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn city_park_encounter_original() {
+    for player in Vehicle::ROSTER {
+        println!("City Park retail encounter with {player:?}");
+        compare_encounter(player, 20, Level::CityPark);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn freeway_encounter_original() {
     for player in Vehicle::ROSTER {
         println!("Freeway retail encounter with {player:?}");
@@ -931,6 +992,7 @@ fn database_and_opponents_match_retail_shell() {
     for (level, masks) in [
         (Level::Warehouse, 0x8017179cusize),
         (Level::Freeway, 0x801717b4),
+        (Level::CityPark, 0x801717cc),
     ] {
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         let start = (r.cpu.word(0x8017187c + 4 * level as u32) & 0x1fffff) as usize;
@@ -938,11 +1000,7 @@ fn database_and_opponents_match_retail_shell() {
             r.cpu.call(0x80152518, &[vehicle as u32]);
             let db = level.database(vehicle);
             assert_eq!(&r.cpu.ram[start..start + db.len()], db.as_bytes());
-            let ids = if level == Level::Freeway {
-                vehicle.freeway_opponents()
-            } else {
-                vehicle.warehouse_opponents()
-            };
+            let ids = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
             let mask = Vehicle::CARD_ORDER
                 .iter()
                 .enumerate()
@@ -1045,6 +1103,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     r.police.state[0x40] = 0;
     for entry in match level {
         Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::CityPark => [0x80127694, 0x8012da2c, 0x80130938, 0x80130c20, 0x8013131c],
         Level::Freeway => [0x801268f8, 0x8012d3e0, 0x80130884, 0x80130c14, 0x80131310],
         Level::Warehouse => [0x801262ec, 0x8012cf58, 0x801307a4, 0x80130a98, 0x80131304],
     } {
@@ -1101,11 +1160,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
             .unwrap();
         register_retail_stands(&mut r.cpu, &data);
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
-        let kinds = if level == Level::Freeway {
-            vehicle.freeway_opponents()
-        } else {
-            vehicle.warehouse_opponents()
-        };
+        let kinds = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
         let root = |v| roots.iter().find(|r| r.1 == v).unwrap().0;
         r.scene = CollisionScene::for_opponents(
             &data,

@@ -20,13 +20,28 @@ pub enum Level {
     Arena,
     Warehouse,
     Freeway,
+    CityPark,
 }
 
 impl Level {
+    pub fn opponents(self, player: Vehicle, deck: &mut ArenaDeck, seed: &mut u32) -> Vec<Vehicle> {
+        match self {
+            Self::Arena => vec![deck.draw(player, seed)],
+            Self::Warehouse => player.warehouse_opponents(),
+            Self::Freeway => player.freeway_opponents(),
+            Self::CityPark => player.opponents_from_masks([
+                0xe32, 0x1cd, 0x1cb, 0x1c7, 0xe23, 0xe13, 0x18f, 0x14f, 0xcf, 0xc33, 0xa33, 0x633,
+            ]),
+        }
+    }
     pub fn database(self, vehicle: Vehicle) -> &'static str {
         use Vehicle::*;
         match self {
             Self::Arena => "XARENA1",
+            Self::CityPark => match vehicle {
+                SweetTooth | Hammerhead | CrimsonFury | Thumper | Spectre | RoadKill => "PARK1",
+                _ => "PARK2",
+            },
             Self::Freeway => match vehicle {
                 SweetTooth | YellowJacket | Darkside | Hammerhead | Spectre | RoadKill => "XFWY1",
                 _ => "XFWY2",

@@ -15,7 +15,7 @@ impl Music {
         let track = disc.audio_track(match level {
             tm1_core::drive::Level::Freeway => 2,
             tm1_core::drive::Level::Arena => 3,
-            tm1_core::drive::Level::Warehouse => 4,
+            tm1_core::drive::Level::Warehouse | tm1_core::drive::Level::CityPark => 4,
         })?;
         let pcm = &track[150 * 2352..];
         Ok(Self(Some(stereo_wave(pcm)?)))
