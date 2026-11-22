@@ -1270,7 +1270,7 @@ fn draw_view(
             );
         }
         if p.semi_transparent {
-            batch.order_geometry(indices.len(), eye, forward);
+            batch.order_geometry(indices.len(), eye, forward, p.fixed_ot);
         }
     }
     let mut faces = [[0; 14]; 180];
@@ -1301,7 +1301,7 @@ fn draw_view(
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
-        texture_blends[0].order_geometry(6, eye, forward);
+        texture_blends[0].order_geometry(6, eye, forward, 0);
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(&mut poses);
@@ -1371,7 +1371,7 @@ fn draw_view(
                 );
             }
             if p.semi_transparent {
-                batch.order_geometry(indices(p.vertices.len()).len(), eye, forward);
+                batch.order_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
             }
         }
     }
@@ -1907,16 +1907,28 @@ impl Batch {
         });
     }
 
-    fn order_geometry(&mut self, vertex_count: usize, eye: Vec3, forward: Vec3) {
-        let vertices = &self.positions[self.positions.len() - vertex_count..];
-        // A quad expands to 0,1,2,2,1,3. Average the four original corners.
-        let corners = vertices[..3].iter().chain(vertices.get(5));
-        let count = corners.clone().count() as f32;
-        let depth = corners
-            .map(|&p| (Vec3::from_array(p) - eye).dot(forward))
-            .sum::<f32>()
-            / count;
-        self.order_packet(vertex_count, depth as u32 >> 3, DrawPass::Hierarchy);
+    fn order_geometry(&mut self, vertex_count: usize, eye: Vec3, forward: Vec3, fixed_ot: u32) {
+        let start = self.positions.len() - vertex_count;
+        let vertices = &self.positions[start..];
+        let depth = |i: usize| (Vec3::from_array(vertices[i]) - eye).dot(forward) as u32;
+        // geomProc's triangle path compares SZ1 and SZ3, then SZ3 again.
+        // The quad path includes all four GTE depths (expanded indices 0,1,2,2,1,3).
+        let mut farthest = depth(0).max(depth(2));
+        if vertex_count == 6 {
+            farthest = farthest.max(depth(1)).max(depth(5));
+        }
+        let bucket = farthest >> 3;
+        if !(2..=4095).contains(&bucket) {
+            self.positions.truncate(start);
+            self.uvs.truncate(start);
+            self.colors.truncate(start);
+            return;
+        }
+        self.order_packet(
+            vertex_count,
+            if fixed_ot == 0 { bucket } else { fixed_ot },
+            DrawPass::Hierarchy,
+        );
     }
 
     fn draw_indices(&mut self) -> Vec<u32> {
@@ -2157,7 +2169,7 @@ mod tests {
             let start = batch.positions.len() as u32;
             for &corner in indices(n) {
                 let offset = if n == 4 {
-                    [-12., 0., 0., 12.][corner]
+                    [-12., -8., -4., 0.][corner]
                 } else {
                     0.
                 };
@@ -2165,7 +2177,7 @@ mod tests {
             }
             let len = indices(n).len();
             if pass == Hierarchy {
-                batch.order_geometry(len, Vec3::ZERO, Vec3::Z);
+                batch.order_geometry(len, Vec3::ZERO, Vec3::Z, 0);
             } else {
                 batch.order_packet(len, bucket, pass);
             }
@@ -2188,6 +2200,66 @@ mod tests {
             }
         }
         assert_eq!(batch.draw_indices(), expected);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn blended_geometry_matches_jp_depth_selection() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let jump = |address: u32| 0x08000000 | ((address >> 2) & 0x03ffffff);
+        let words = |cpu: &mut crate::reference_cpu::Cpu, addr, code: &[u32]| {
+            for (i, word) in code.iter().enumerate() {
+                cpu.put(addr + 4 * i as u32, &word.to_le_bytes());
+            }
+        };
+        // Run the JP instructions after the GTE depth reads. Skip color/UV
+        // emission and return the selected bucket, or zero at geomNextPrim.
+        words(&mut cpu, 0x800f7e64, &[jump(0x800f7fec), 0]);
+        words(&mut cpu, 0x800f8014, &[0x03e00008, 0x01e01021]);
+        words(&mut cpu, 0x800f8154, &[0x03e00008, 0x00001021]);
+        for (n, entry) in [(3, 0x800f7c18), (4, 0x800f7d0c)] {
+            // Copy the four input depths into s4..s7 and set t0 to the scratchpad.
+            words(
+                &mut cpu,
+                0x80010000,
+                &[
+                    0x0080a021,
+                    0x00a0a821,
+                    0x00c0b021,
+                    0x00e0b821,
+                    0x3c081f80,
+                    jump(entry),
+                    0,
+                ],
+            );
+            for depths in [
+                [15; 4],
+                [16; 4],
+                [32767; 4],
+                [32768; 4],
+                [60, 240, 70, 40],
+                [10, 9, 8, 255],
+                [65, 2, 12, 0],
+                [8, 2, 72, 0],
+            ] {
+                for fixed in [0u32, 1, 2047, 4095] {
+                    cpu.put(0x1f80007c, &fixed.to_le_bytes());
+                    let expected = cpu.call(0x80010000, &depths);
+                    let mut batch = Batch::default();
+                    for &i in indices(n) {
+                        batch.push(Vec3::Z * depths[i] as f32, [0.; 2], [1.; 4]);
+                    }
+                    batch.order_geometry(indices(n).len(), Vec3::ZERO, Vec3::Z, fixed);
+                    assert_eq!(
+                        batch.packets.first().map_or(0, |p| p.bucket),
+                        expected,
+                        "{n} corners, depths {depths:?}, fixed {fixed}"
+                    );
+                    assert_eq!(batch.draw_indices().len(), batch.positions.len());
+                }
+            }
+        }
     }
 
     fn draw_jp_font_packets(cpu: &crate::reference_cpu::Cpu, ot: u32, tim: &[u8]) -> Vec<u8> {

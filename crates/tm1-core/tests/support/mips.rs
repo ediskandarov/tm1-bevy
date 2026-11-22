@@ -231,6 +231,12 @@ impl Cpu {
                 }
             }
             8 => write = Some((rt, (a as i32).checked_add(imm as i32).unwrap() as u32)),
+            8 => {
+                write = Some((
+                    rt,
+                    (a as i32).checked_add(imm as i32).expect("ADDI overflow") as u32,
+                ))
+            }
             9 => write = Some((rt, addr)),
             10 => write = Some((rt, ((a as i32) < (imm as i32)) as u32)),
             11 => write = Some((rt, (a < imm) as u32)),
