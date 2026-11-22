@@ -71,8 +71,6 @@ pub struct Arena {
     vehicle_start: usize,
     body_ranges: Vec<[std::ops::Range<usize>; 3]>,
     overview: bool,
-    radar: bool,
-    list_cars: bool,
     icons: tm1_assets::scene::DashboardIcons,
     arrows: [SpriteFrame; 4],
     pixels: Vec<u8>,
@@ -217,8 +215,6 @@ impl Arena {
             drop_sprites,
             contrail_frames,
             overview: false,
-            radar: true,
-            list_cars: false,
             icons,
             arrows,
             pixels,
@@ -709,7 +705,7 @@ pub fn hud_letters(
         .hud_opponent(&drive.opponents)
         .filter(|ai| ai.health().0 > 0)
         .map(|ai| ai.vehicle());
-    let mask = if arena.list_cars {
+    let mask = if drive.list_cars {
         drive
             .opponents
             .iter()
@@ -798,12 +794,6 @@ pub fn controls(
 ) {
     if drive.pause.is_some() {
         return;
-    }
-    if keys.just_pressed(KeyCode::KeyL) {
-        arena.list_cars = !arena.list_cars;
-    }
-    if keys.just_pressed(KeyCode::KeyV) {
-        arena.radar = !arena.radar;
     }
     if keys.just_pressed(KeyCode::Tab) {
         arena.overview = !arena.overview;
@@ -987,7 +977,7 @@ pub fn update(
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
     windshield.write(&mut meshes, &arena.windshield_mesh);
-    if arena.radar {
+    if drive.radar {
         draw_radar(&mut screen_batch, &arena, &drive, &window);
     }
     screen_batch.write(&mut meshes, &arena.mesh);

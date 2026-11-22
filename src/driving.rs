@@ -266,6 +266,9 @@ pub struct Drive {
     battle_seed: u32,
     pub player: PlayerVehicle,
     pub mirror: bool,
+    pub radar: bool,
+    pub list_cars: bool,
+    view_input_held: bool,
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
     pub listener: tm1_core::drive::SoundListener,
@@ -340,6 +343,27 @@ impl Drive {
             }
             _ => {}
         }
+    }
+    fn check_view_keys(&mut self, keys: &ButtonInput<KeyCode>) {
+        if !self.player.accepts_view_input() {
+            return;
+        }
+        use KeyCode::*;
+        // CheckVRMode shares one latch across the five controls, in this order.
+        let selected = [KeyC, KeyZ, KeyV, KeyL, KeyB]
+            .into_iter()
+            .find(|&k| keys.pressed(k));
+        if !self.view_input_held {
+            match selected {
+                Some(KeyC) => self.cycle_camera(true),
+                Some(KeyZ) => self.cycle_camera(false),
+                Some(KeyV) => self.radar = !self.radar,
+                Some(KeyL) => self.list_cars = !self.list_cars,
+                Some(KeyB) if !self.helicopter_active => self.mirror = !self.mirror,
+                _ => {}
+            }
+        }
+        self.view_input_held = selected.is_some();
     }
     fn cycle_camera(&mut self, forward: bool) {
         use tm1_core::drive::CarView;
@@ -477,6 +501,9 @@ impl Drive {
             abort_delay: Duration::ZERO,
             options_idle: Duration::ZERO,
             mirror: false,
+            radar: true,
+            list_cars: false,
+            view_input_held: false,
             helicopter_unlocked: false,
             helicopter_active: false,
             rooftop_passage: Default::default(),
@@ -661,20 +688,8 @@ pub fn advance(
         return;
     }
     let previous_view = drive.selected_view();
-    if drive.player.accepts_view_input() {
-        if keys.just_pressed(KeyCode::KeyH) {
-            drive.toggle_helicopter();
-        }
-        if keys.just_pressed(KeyCode::KeyB) && !drive.helicopter_active {
-            drive.mirror = !drive.mirror;
-        }
-        if keys.just_pressed(KeyCode::KeyC) {
-            drive.cycle_camera(true);
-        } else if keys.just_pressed(KeyCode::KeyZ) {
-            drive.cycle_camera(false);
-        }
-    }
-    if previous_view != drive.selected_view() {
+    if drive.player.accepts_view_input() && keys.just_pressed(KeyCode::KeyH) {
+        drive.toggle_helicopter();
         drive.update_rooftop_passage(previous_view);
     }
     let input = Input {
@@ -767,7 +782,9 @@ pub fn advance(
             &state.camera,
             state.helicopter_pose(),
         );
-        state.update_rooftop_passage(state.selected_view());
+        let before = state.selected_view();
+        state.check_view_keys(&keys);
+        state.update_rooftop_passage(before);
         state
             .player
             .set_battle_view(state.selected_view(), state.camera.fixed_pose.is_some());
@@ -816,6 +833,11 @@ pub fn advance(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
+#[path = "../crates/tm1-core/tests/support/mips.rs"]
+mod reference_cpu;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     fn tick(app: &mut App, milliseconds: u64) {
@@ -826,6 +848,68 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn keyboard_view_combinations_match_jp_check_vr_mode() {
+        use crate::campaign::{Entry, Stage};
+        use KeyCode::*;
+        use tm1_core::drive::Level;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut drive = Stage::load(
+            &disc,
+            Level::Arena,
+            Vehicle::YellowJacket,
+            Entry::New(Default::default()),
+        )
+        .unwrap()
+        .drive;
+        let mut cpu = reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        const PLAYER: u32 = 0x8019ee40;
+        cpu.put(PLAYER, drive.player.state());
+        cpu.put(PLAYER + 0xf4, &(drive.camera.mode as u32).to_le_bytes());
+        cpu.put(0x8018bf24, &1u32.to_le_bytes()); // rear view enabled by viewInit
+        // Stop after the view-input branches, before polling the cheat controller.
+        for mask in 0u8..32 {
+            for bits in [0, mask, mask, mask ^ 31] {
+                let mut keys = ButtonInput::default();
+                for (bit, (key, offset)) in [
+                    (KeyC, 0xda),
+                    (KeyZ, 0xd9),
+                    (KeyV, 0xdc),
+                    (KeyL, 0xdf),
+                    (KeyB, 0xdb),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let down = (bits >> bit) & 1;
+                    if down != 0 {
+                        keys.press(key);
+                    }
+                    cpu.put(PLAYER + offset, &[down]);
+                }
+                cpu.call_until(0x8014eff4, &[PLAYER], 0x8014f278);
+                drive.check_view_keys(&keys);
+                assert_eq!(
+                    (
+                        drive.camera.mode as u32,
+                        drive.radar,
+                        drive.list_cars,
+                        drive.mirror,
+                        drive.view_input_held
+                    ),
+                    (
+                        cpu.word(PLAYER + 0xf4),
+                        cpu.word(0x8018c30c) != 0,
+                        cpu.word(0x8018c5e8) != 0,
+                        cpu.word(0x8018bf20) != 0,
+                        cpu.word(0x8018c3ac) & 0xffff == 0
+                    ),
+                    "keys {bits:05b}"
+                );
+            }
+        }
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -929,6 +1013,8 @@ mod tests {
                 .iter(&world)
                 .collect::<Vec<_>>();
             let mut drive = world.resource_mut::<Drive>();
+            drive.radar = false;
+            drive.list_cars = true;
             // Inject the shell victory event at the end of its return delay.
             drive.lives = 2;
             drive.opponents.clear();
@@ -937,6 +1023,7 @@ mod tests {
             crate::transition::complete(&mut world);
             let drive = world.resource::<Drive>();
             assert_eq!(drive.player.level(), level);
+            assert!(!drive.radar && drive.list_cars);
             assert_eq!(drive.lives, 2);
             assert_eq!(drive.opponents.len(), count);
             assert!(old.iter().all(|&entity| world.get_entity(entity).is_err()));
@@ -1149,12 +1236,33 @@ mod tests {
                 d.contacts.hidden_pickups(),
             )
         };
-        let (mut app, window) = build();
+        let (mut app, _) = build();
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyB);
-        tick(&mut app, 0);
+        tick(&mut app, 50);
         assert!(app.world().resource::<Drive>().mirror);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyV);
+        tick(&mut app, 50);
+        assert!(app.world().resource::<Drive>().radar);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        tick(&mut app, 50);
+        for key in [KeyCode::KeyB, KeyCode::KeyL, KeyCode::KeyV] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+        }
+        tick(&mut app, 50);
+        let drive = app.world().resource::<Drive>();
+        assert!(!drive.radar && !drive.list_cars && drive.mirror);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        tick(&mut app, 50);
         {
             let mut drive = app.world_mut().resource_mut::<Drive>();
             drive.helicopter_unlocked = true;
@@ -1175,7 +1283,7 @@ mod tests {
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .press(key);
-            tick(&mut app, 0);
+            tick(&mut app, 50);
             let drive = app.world().resource::<Drive>();
             assert_eq!(
                 (drive.camera.mode, drive.helicopter_active),
@@ -1184,7 +1292,9 @@ mod tests {
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .release(key);
+            tick(&mut app, 50);
         }
+        let (mut app, window) = build();
         let start = snapshot(&app);
         let mut pad = Gamepad::default();
         pad.digital_mut().press(GamepadButton::West);

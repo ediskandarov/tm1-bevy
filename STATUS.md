@@ -11,6 +11,10 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 Single-player stage setup carries the deal sequence through card angles and pedestrian setup. It samples the counter again before placing vehicles and when entering combat, following the reseeds in uaInitDB and InitLevel. The shell then consumes twelve BIOS random values for six windshield marks in both game modes. A new life samples a fresh combat seed and regenerates the marks. Keyboard restart restores the original stage combat seed and spawn layout. The host counter models the JP counter frequency and wraparound. Exact boot and disc-load timings are platform dependent.
 
+## Camera and HUD controls
+
+Single-player battle samples C, Z, V, L and B on simulation updates. The JP CheckVRMode routine gives priority to forward camera, reverse camera, radar, remaining cars and mirror, in that order. Holding any of the five controls keeps the group latched until an update sees all five released. A 128-update comparison executes the JP input branches for all 32 key combinations, including holds and overlapping changes. It checks camera mode, radar, remaining cars, mirror and latch state on every update. A separate keyboard integration test cycles the camera with the helicopter unlocked. Radar and remaining-car visibility carry into the next campaign stage.
+
 ## Cockpit steering
 
 The cockpit reads the steering quad and texture coordinates from each stage DMD. It transforms the wheel and both motorcycle grips with the JP executable's fixed-point rotation table. The two steering routines retain their separate angles while hidden and between stage loads. A disc-backed replay checks all twelve projected corners and their texture coordinates against the original drawing routines over fifteen steering updates, including hard turns, opposite inputs and release. The Warehouse capture at `local/warehouse-handlebars.png` shows Mr. Grimm's cockpit on Metal.
