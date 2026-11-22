@@ -207,6 +207,7 @@ pub fn start(
         car.set_pad_layout(layout);
     }
     let cameras = cars.each_ref().map(VehicleCamera::duel);
+    crate::contest::remember_battle_cars(world, &kinds);
     campaign::clear_stage(world);
     world.remove_resource::<crate::contest::Contest>();
     world.insert_resource(arena);

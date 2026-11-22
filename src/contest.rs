@@ -49,6 +49,24 @@ pub const INFINITE_WEAPONS: &str = "< =@@";
 pub const MINION_AND_FRIENDS: &str = "<>@=<";
 pub const HELICOPTER: &str = "@@<> ";
 const GOD_MODE: &str = "=<> @";
+#[derive(Resource, Clone, Copy, PartialEq, Eq)]
+struct PlayerCars([Option<usize>; 2]);
+
+impl Default for PlayerCars {
+    fn default() -> Self {
+        Self([Some(Vehicle::YellowJacket.card_index()), None])
+    }
+}
+
+pub(crate) fn remember_battle_cars(world: &mut World, vehicles: &[Vehicle]) {
+    let mut cars = world.get_resource_or_init::<PlayerCars>();
+    for (slot, &vehicle) in cars.0.iter_mut().zip(vehicles) {
+        if vehicle != Vehicle::Minion {
+            *slot = Some(vehicle.card_index());
+        }
+    }
+}
+
 #[derive(Resource)]
 pub struct Contest {
     cinema: Option<Cinema>,
@@ -57,6 +75,8 @@ pub struct Contest {
     title: Vec<u8>,
     title_row: usize,
     duel_cars: [usize; 2],
+    hidden_pick: Option<usize>,
+    player_cars: PlayerCars,
     duel_stage: usize,
     pub(crate) duel_layouts: [u8; 2],
     battlegrounds: Vec<Vec<u8>>,
@@ -214,9 +234,13 @@ impl Contest {
             | Page::Wrong(_) => Some(GarageSound::Vehicle(self.vehicle)),
             // The title clears gVehicleID. The fallback sound ID 0x52
             // plays the same engine as Crimson Fury.
-            Page::DuelJoin(_) => Some(GarageSound::Engine(Vehicle::CrimsonFury.card_index())),
+            Page::DuelJoin(_) => Some(GarageSound::Engine(Vehicle::CrimsonFury)),
             Page::Duel(_) | Page::DuelOptions(_) | Page::DuelStage | Page::DuelControls(_) => {
-                Some(GarageSound::Engine(self.duel_cars[0]))
+                Some(GarageSound::Engine(if self.hidden_pick == Some(0) {
+                    Vehicle::Minion
+                } else {
+                    Vehicle::CARD_ORDER[self.duel_cars[0]]
+                }))
             }
             Page::DuelGarage { slot, .. } => Some(GarageSound::Vehicle(self.duel_cars[slot])),
             Page::Showcase(i) => Some(GarageSound::Vehicle(i)),
@@ -384,7 +408,7 @@ impl Contest {
                     &self.fonts,
                     self.duel_cars[slot],
                     slot,
-                    second.then_some(self.duel_cars[1 - slot]),
+                    (second && self.hidden_pick.is_none()).then_some(self.duel_cars[1 - slot]),
                 );
             }
             Page::DuelControls(slot) => {
@@ -635,7 +659,7 @@ impl Contest {
         let index = match before {
             Page::DuelJoin(Some(_)) if matches!(self.page, Page::DuelGarage { .. }) => 1,
             Page::DuelJoin(_) => return None,
-            Page::DuelGarage { slot, second, bio } => {
+            Page::DuelGarage { slot, bio, .. } => {
                 let (select, vertical, horizontal) = if slot == 0 {
                     (Space, [KeyW, KeyS], [KeyA, KeyD])
                 } else {
@@ -643,7 +667,7 @@ impl Contest {
                 };
                 if !bio && keys.any_just_pressed(vertical) {
                     0
-                } else if second && !bio && horizontal.into_iter().all(|key| keys.pressed(key)) {
+                } else if !bio && horizontal.into_iter().all(|key| keys.pressed(key)) {
                     return None;
                 } else if keys.just_pressed(select) {
                     1
@@ -693,6 +717,7 @@ impl Contest {
                         1 => {
                             self.duel_stage = 0;
                             self.duel_cars = [0, 0];
+                            self.hidden_pick = None;
                             self.idle = Duration::ZERO;
                             self.field_fraction = 0;
                             Page::DuelJoin(None)
@@ -740,8 +765,16 @@ impl Contest {
                     }
                 } else if !key(Escape) && (key(up) || key(down)) {
                     self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
-                } else if second && !key(Escape) && keys.pressed(left) && keys.pressed(right) {
-                    // After the first pick this chord consumes Select too.
+                } else if !key(Escape) && keys.pressed(left) && keys.pressed(right) {
+                    if !second {
+                        self.hidden_pick = Some(slot);
+                        self.duel_cars[1 - slot] = self.duel_cars[slot];
+                        self.page = Page::DuelGarage {
+                            slot: 1 - slot,
+                            second: true,
+                            bio: false,
+                        };
+                    }
                     return false;
                 } else if key(Escape) || (key(select) && self.garage.row == 2) {
                     self.leave_battle();
@@ -753,6 +786,17 @@ impl Contest {
                             bio: true,
                         };
                     } else if second {
+                        for player in 0..2 {
+                            if self.hidden_pick != Some(player) {
+                                self.player_cars.0[player] = Some(self.duel_cars[player]);
+                            }
+                        }
+                        let [Some(first), Some(other)] = self.player_cars.0 else {
+                            // The retail card lookup reads past its table for an unassigned slot.
+                            self.leave_battle();
+                            return false;
+                        };
+                        self.duel_cars = [first, other];
                         self.page = Page::Duel(0);
                         self.idle = Duration::ZERO;
                     } else {
@@ -768,7 +812,7 @@ impl Contest {
                     let n = Vehicle::CARD_ORDER.len();
                     let step = if key(left) { n - 1 } else { 1 };
                     let mut next = (self.duel_cars[slot] + step) % n;
-                    if second && next == self.duel_cars[1 - slot] {
+                    if second && self.hidden_pick.is_none() && next == self.duel_cars[1 - slot] {
                         next = (next + step) % n;
                     }
                     self.duel_cars[slot] = next;
@@ -887,6 +931,7 @@ impl Contest {
             }
             Page::Contest => {
                 if key(KeyCode::Enter) && self.garage.row == 0 {
+                    self.player_cars.0[0] = Some(self.vehicle);
                     self.page = Page::Battle(0);
                     self.idle = Duration::ZERO;
                     return false;
@@ -1040,6 +1085,7 @@ pub fn show(
     difficulty: Difficulty,
     first_clip: Option<Clip>,
 ) -> Result<()> {
+    let player_cars = *world.get_resource_or_init::<PlayerCars>();
     let disc = &world.resource::<Campaign>().0;
     let theme = crate::music::CdTrack::load(disc, 2)?;
     let fonts = Fonts::load(disc)?;
@@ -1049,6 +1095,8 @@ pub fn show(
         history: crate::scroll::Scroll::load(disc.read("UATEXT/HISTORY.TXT")?, &fonts)?,
         title_row: 0,
         duel_cars: [0, 1],
+        hidden_pick: None,
+        player_cars,
         duel_stage: 0,
         duel_layouts: [1; 2],
         battlegrounds: (1..=6)
@@ -1276,6 +1324,9 @@ pub fn update(world: &mut World) {
             let start = menu.input(keys);
             (start, menu.input_sound(previous, keys))
         };
+        if menu.player_cars != *world.resource::<PlayerCars>() {
+            world.insert_resource(menu.player_cars);
+        }
         if previous != menu.page && matches!(menu.page, Page::DuelControls(_)) {
             menu.controls_view = Default::default();
         }
@@ -1531,6 +1582,95 @@ mod tests {
         assert!(world.resource::<Contest>().page == Page::Title);
         assert!(!world.contains_resource::<crate::duel::Duel>());
     }
+    fn hidden_pick(world: &mut World, slot: usize) {
+        use KeyCode::*;
+        let mut keys = ButtonInput::default();
+        let chord = if slot == 0 {
+            [KeyA, KeyD]
+        } else {
+            [ArrowLeft, ArrowRight]
+        };
+        for key in chord {
+            keys.press(key);
+        }
+        let before = world.resource::<Contest>().page;
+        let displayed = world.resource::<Contest>().duel_cars[slot];
+        world.insert_resource(keys);
+        update(world);
+        let menu = world.resource::<Contest>();
+        assert_eq!(
+            menu.page,
+            Page::DuelGarage {
+                slot: 1 - slot,
+                second: true,
+                bio: false
+            }
+        );
+        assert!(
+            menu.input_sound(before, world.resource::<ButtonInput<KeyCode>>())
+                .is_none()
+        );
+        assert_eq!(
+            menu.frame(),
+            menu.garage
+                .duel_frame(&menu.fonts, displayed, 1 - slot, None)
+        );
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn hidden_duel_pick_uses_the_retained_slot_across_battles() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [ArrowDown, Enter, Space] {
+            press(&mut world, key);
+        }
+        hidden_pick(&mut world, 0);
+        press(&mut world, Comma);
+        assert_menu_engine(&world, Vehicle::Minion);
+        press(&mut world, Enter);
+        let kinds = |world: &World| {
+            world
+                .resource::<crate::duel::Duel>()
+                .cars
+                .each_ref()
+                .map(|car| car.vehicle())
+        };
+        assert_eq!(kinds(&world), [Vehicle::YellowJacket, Vehicle::SweetTooth]);
+
+        world.resource_mut::<ButtonInput<KeyCode>>().press(Escape);
+        crate::duel::round_menu(&mut world);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        update(&mut world);
+        for key in [ArrowDown, Enter, Comma, ArrowRight] {
+            press(&mut world, key);
+        }
+        hidden_pick(&mut world, 1);
+        press(&mut world, Space);
+        assert_menu_engine(&world, Vehicle::YellowJacket);
+        press(&mut world, Enter);
+        assert_eq!(kinds(&world), [Vehicle::YellowJacket, Vehicle::SweetTooth]);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn hidden_duel_pick_with_a_cold_second_slot_returns_to_title() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [ArrowDown, Enter, Comma] {
+            press(&mut world, key);
+        }
+        hidden_pick(&mut world, 1);
+        press(&mut world, Space);
+        assert_eq!(world.resource::<Contest>().page, Page::Title);
+        assert_eq!(
+            world.resource::<PlayerCars>().0,
+            [Some(Vehicle::SweetTooth.card_index()), None]
+        );
+        assert!(!world.contains_resource::<crate::duel::Duel>());
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn jp_hidden_duel_card_retains_the_previously_registered_vehicle() {

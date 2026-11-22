@@ -278,6 +278,7 @@ impl Stage {
             self.drive.player.set_pad_layout(prev.settings.layout);
         }
         self.drive.begin_battle(round_ticks(world));
+        crate::contest::remember_battle_cars(world, &[self.drive.player.vehicle()]);
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);
         world.init_resource::<Assets<music::CdTrack>>();

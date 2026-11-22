@@ -11,7 +11,7 @@ use tm1_core::drive::Vehicle;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GarageSound {
-    Engine(usize),
+    Engine(Vehicle),
     Vehicle(usize),
 }
 
@@ -19,6 +19,7 @@ pub struct Garage {
     backdrop: Vec<u8>,
     demo_backdrop: Vec<u8>,
     audio: Vec<(Vec<crate::sfx::EngineSample>, AudioSource)>,
+    boss_engine: Vec<crate::sfx::EngineSample>,
     voices: Option<(GarageSound, Vec<Entity>)>,
     cars: Vec<Scene>,
     bios: Vec<Vec<u8>>,
@@ -61,6 +62,7 @@ impl Garage {
             backdrop: screen::background(&disc.read("UASCREEN/SCRND.TIM")?)?,
             cars,
             audio,
+            boss_engine: crate::sfx::EngineSample::load(&bank, Vehicle::Minion)?,
             voices: None,
             bios,
             portraits: dmd.occupant_portraits(&textures)?,
@@ -90,10 +92,11 @@ impl Garage {
             }
         }
         if let Some(sound) = sound {
-            let index = match sound {
-                GarageSound::Engine(i) | GarageSound::Vehicle(i) => i,
+            let engine = match sound {
+                GarageSound::Engine(Vehicle::Minion) => &self.boss_engine,
+                GarageSound::Engine(vehicle) => &self.audio[vehicle.card_index()].0,
+                GarageSound::Vehicle(index) => &self.audio[index].0,
             };
-            let (engine, signature) = &self.audio[index];
             use bevy::audio::Volume;
             world.init_resource::<Assets<crate::sfx::pcm::StereoPcm>>();
             let mut voices = Vec::with_capacity(engine.len() + 1);
@@ -111,10 +114,10 @@ impl Garage {
                         .id(),
                 );
             }
-            if matches!(sound, GarageSound::Vehicle(_)) {
+            if let GarageSound::Vehicle(index) = sound {
                 let handle = world
                     .resource_mut::<Assets<AudioSource>>()
-                    .add(signature.clone());
+                    .add(self.audio[index].1.clone());
                 voices.push(
                     world
                         .spawn((
