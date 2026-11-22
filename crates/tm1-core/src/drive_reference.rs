@@ -1151,3 +1151,73 @@ fn arena_animation_matches_retail() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn radar_signals_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut player = PlayerVehicle::from_executable(&exe).unwrap();
+    let mut cpu = Cpu::new(&exe);
+    const RADAR: u32 = 0x8019e648;
+    const OFFSET: u32 = 0x80030000;
+    cpu.call(0x8014728c, &[]);
+    for heading in [0i32, 193, 512, 1024, -1536, 2048, 3737] {
+        player.state[0x3a8..0x3ac].copy_from_slice(&heading.to_le_bytes());
+        for vehicle in Vehicle::ROSTER {
+            for [dx, dy] in [
+                [0i32, 0],
+                [1, 2],
+                [-4020, 3021],
+                [12000, 0],
+                [-12000, 0],
+                [12300, 0],
+                [-12300, 0],
+                [0, 7334],
+                [0, -7334],
+                [0, 7700],
+                [0, -7700],
+                [17000, 17000],
+                [-17200, -17000],
+                [-15000, 17000],
+            ] {
+                let [x, y, z] = player.position();
+                let sig = player.radar_signal([x + dx, y + dy, z], vehicle);
+                for (i, v) in [dx, dy, 0].into_iter().enumerate() {
+                    put(&mut cpu, OFFSET + 4 * i as u32, v as u32);
+                }
+                cpu.call(0x80146bd4, &[]);
+                cpu.call(0x80147508, &[vehicle as u32, OFFSET, heading as u32]);
+                let edges = cpu.word(RADAR + 0x35c);
+                match sig {
+                    RadarSignal::Contact { x, y, rgb } => {
+                        assert_eq!(edges, 0);
+                        assert_eq!(cpu.word(RADAR + 0x360), 2);
+                        let prim = RADAR + 0x30 + cpu.word(RADAR + 0x36c) * 16;
+                        assert_eq!(
+                            cpu.word(prim + 4) & 0xffffff,
+                            u32::from_le_bytes([rgb[0], rgb[1], rgb[2], 0])
+                        );
+                        assert_eq!(
+                            cpu.word(prim + 8),
+                            (x + 53) as u32 | (((y + 55) as u32) << 16)
+                        );
+                    }
+                    edge => {
+                        assert_eq!(cpu.word(RADAR + 0x360), 0);
+                        assert_eq!(
+                            edges,
+                            match edge {
+                                RadarSignal::Up => 1,
+                                RadarSignal::Down => 1 << 8,
+                                RadarSignal::Right => 1 << 16,
+                                RadarSignal::Left => 1 << 24,
+                                _ => unreachable!(),
+                            }
+                        );
+                    }
+                }
+            }
+        }
+    }
+}

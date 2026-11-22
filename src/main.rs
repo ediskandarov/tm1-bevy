@@ -123,10 +123,11 @@ fn main() -> Result<()> {
         [dmd.extract_kind(201)?, dmd.extract_kind(312)?],
         dmd.explosion_frames()?,
         dmd.contrail_frames()?,
+        dmd.radar_arrows()?,
         textures,
     )?;
     eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview."
+        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview, V radar."
     );
     let mut app = App::new();
     app.insert_resource(capture)

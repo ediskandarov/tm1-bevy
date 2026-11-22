@@ -127,12 +127,17 @@ impl<'a> Dmd<'a> {
     }
     /// Read the 16 Aburst frames used by explodeStoreExplosionAnimation.
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
-        self.sprite_frames(654)
+        self.sprite_frames(654, true)
     }
     pub fn contrail_frames(&self) -> Result<[SpriteFrame; 8]> {
-        self.sprite_frames(652)
+        self.sprite_frames(652, true)
     }
-    fn sprite_frames<const N: usize>(&self, kind: u16) -> Result<[SpriteFrame; N]> {
+    /// HUD.c uses four individual 2D sprites in up, down, right, left order.
+    pub fn radar_arrows(&self) -> Result<[SpriteFrame; 4]> {
+        let icon = |kind| self.sprite_frames::<1>(kind, false).map(|[frame]| frame);
+        Ok([icon(1290)?, icon(1292)?, icon(1291)?, icon(1293)?])
+    }
+    fn sprite_frames<const N: usize>(&self, kind: u16, additive: bool) -> Result<[SpriteFrame; N]> {
         let mut pending: Vec<_> = self
             .roots
             .iter()
@@ -164,9 +169,10 @@ impl<'a> Dmd<'a> {
                         let width = uv[12].wrapping_sub(uv[8]);
                         let height = uv[13].wrapping_sub(uv[5]);
                         let (u, v) = (uv[0], uv[1]);
+                        let page = u16le(uv, 6)?;
                         frames.push(SpriteFrame {
                             texture: TextureKey {
-                                page: (u16le(uv, 6)? & 31) | 32,
+                                page: if additive { (page & 31) | 32 } else { page },
                                 clut: u16le(uv, 2)?,
                                 window: 0,
                             },

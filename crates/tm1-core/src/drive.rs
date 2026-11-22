@@ -138,6 +138,15 @@ impl ArenaDeck {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum RadarSignal {
+    Contact { x: i32, y: i32, rgb: [u8; 3] },
+    Up,
+    Down,
+    Right,
+    Left,
+}
+
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
     level: Level,
@@ -260,6 +269,54 @@ impl PlayerVehicle {
     }
     pub fn frame(&self) -> u32 {
         self.frame
+    }
+    /// HUD.c projects horizontal world offsets into the 72 by 44 radar field.
+    pub fn radar_signal(&self, position: [i32; 3], vehicle: Vehicle) -> RadarSignal {
+        let origin = self.position();
+        let dx = position[0].wrapping_sub(origin[0]);
+        let dy = position[1].wrapping_sub(origin[1]);
+        let sin = |angle: i32| {
+            let phase = (angle & 4095) as usize;
+            let i = phase & 1023;
+            let v = i32::from(self.trig[if phase & 1024 == 0 { i } else { 1024 - i }]);
+            if phase & 2048 == 0 { v } else { -v }
+        };
+        let s = sin(self.heading());
+        let c = sin(self.heading().wrapping_add(1024));
+        let x = dx.wrapping_mul(c).wrapping_sub(dy.wrapping_mul(s)) / 0x14d555;
+        let y = dx
+            .wrapping_mul(s)
+            .wrapping_add(dy.wrapping_mul(c))
+            .wrapping_neg()
+            / 0x14d555;
+        if (-36..36).contains(&x) && (-22..22).contains(&y) {
+            use Vehicle::*;
+            let rgb = match vehicle {
+                SweetTooth => [255, 144, 186],
+                YellowJacket => [255, 255, 0],
+                Darkside => [0, 0, 0],
+                Hammerhead => [0, 233, 0],
+                Outlaw => [0, 0, 255],
+                CrimsonFury => [255, 0, 0],
+                Warthog => [130, 202, 54],
+                MrGrimm => [255, 102, 0],
+                PitViper => [199, 113, 0],
+                Thumper => [255, 0, 255],
+                Spectre => [255, 255, 255],
+                RoadKill => [155, 155, 50],
+            };
+            RadarSignal::Contact { x, y, rgb }
+        } else if !(-36..36).contains(&x) && x.abs() > y.abs() {
+            if x < 0 {
+                RadarSignal::Left
+            } else {
+                RadarSignal::Right
+            }
+        } else if y > 0 {
+            RadarSignal::Down
+        } else {
+            RadarSignal::Up
+        }
     }
     pub fn heading(&self) -> i32 {
         self.word(0x3a8)

@@ -38,6 +38,8 @@ pub struct Arena {
     vehicle_start: usize,
     body_ranges: Vec<[std::ops::Range<usize>; 3]>,
     overview: bool,
+    radar: bool,
+    arrows: [SpriteFrame; 4],
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
@@ -60,6 +62,7 @@ impl Arena {
         missile_models: [Scene; 2],
         explosion_frames: [SpriteFrame; 16],
         contrail_frames: [SpriteFrame; 8],
+        arrows: [SpriteFrame; 4],
         vram: Vram,
     ) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
@@ -84,7 +87,11 @@ impl Arena {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
         }
-        for frame in explosion_frames.iter().chain(&contrail_frames) {
+        for frame in explosion_frames
+            .iter()
+            .chain(&contrail_frames)
+            .chain(&arrows)
+        {
             let next = tiles.len();
             tiles.entry((Some(frame.texture), true)).or_insert(next);
         }
@@ -125,6 +132,8 @@ impl Arena {
             explosion_frames,
             contrail_frames,
             overview: false,
+            radar: true,
+            arrows,
             pixels,
             atlas_size: [width, height],
             tiles,
@@ -366,6 +375,9 @@ pub fn controls(
     mut arena: ResMut<Arena>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    if keys.just_pressed(KeyCode::KeyV) {
+        arena.radar = !arena.radar;
+    }
     if keys.just_pressed(KeyCode::Tab) {
         arena.overview = !arena.overview;
     }
@@ -723,6 +735,9 @@ pub fn update(
         bar(y, 150. * scale, 8. * scale, [0.05, 0.05, 0.05, 0.85]);
         bar(y, 150. * scale * value.clamp(0., 1.), 8. * scale, tint);
     }
+    if arena.radar {
+        draw_radar(&mut screen_batch, &arena, &drive, &window);
+    }
     screen_batch.write(&mut meshes, &arena.mesh);
     additive.write(&mut meshes, &arena.additive);
     solids.write(&mut meshes, &arena.solids);
@@ -763,6 +778,70 @@ impl Arena {
             ((slot % COLUMNS * TILE) as f32 + uv.x + 0.5) / self.atlas_size[0] as f32,
             ((slot / COLUMNS * TILE) as f32 + uv.y + 0.5) / self.atlas_size[1] as f32,
         ]
+    }
+}
+fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, window: &Window) {
+    use tm1_core::drive::RadarSignal;
+    let scale = window.height() / 240.;
+    let origin = Vec2::new(-window.width() / 2., window.height() / 2.);
+    let white = arena.uv(0, Vec2::ZERO);
+    let mut rect = |x: i32, y: i32, w: i32, h: i32, uv: [[f32; 2]; 4], color: [f32; 4]| {
+        let points = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]];
+        for &i in indices(4) {
+            let [px, py] = points[i];
+            batch.push(
+                (origin + scale * Vec2::new(px as f32, -(py as f32))).extend(0.),
+                uv[i],
+                color,
+            );
+        }
+    };
+    rect(16, 32, 73, 45, [white; 4], [0.204, 0.443, 0.067, 0.60]);
+    rect(51, 55, 5, 1, [white; 4], [0., 0.188, 0., 1.]);
+    rect(53, 54, 1, 3, [white; 4], [0., 0.188, 0., 1.]);
+    let mut edges = [false; 4];
+    for ai in drive.opponents.iter().filter(|ai| ai.health().0 > 0) {
+        match drive.player.radar_signal(ai.position(), ai.vehicle()) {
+            RadarSignal::Contact { x, y, rgb } => rect(
+                53 + x,
+                55 + y,
+                2,
+                2,
+                [white; 4],
+                [
+                    rgb[0] as f32 / 255.,
+                    rgb[1] as f32 / 255.,
+                    rgb[2] as f32 / 255.,
+                    1.,
+                ],
+            ),
+            RadarSignal::Up => edges[0] = true,
+            RadarSignal::Down => edges[1] = true,
+            RadarSignal::Right => edges[2] = true,
+            RadarSignal::Left => edges[3] = true,
+        }
+    }
+    for (i, (x, y)) in [(47, 26), (47, 77), (89, 49), (10, 49)]
+        .into_iter()
+        .enumerate()
+    {
+        if edges[i] {
+            let f = arena.arrows[i];
+            let [u, v] = f.uv[0];
+            let w = i32::from(f.width) + 1;
+            let h = i32::from(f.uv[2][1].wrapping_sub(v)) + 1;
+            let u = i32::from(u) + i32::from(i != 3);
+            let v = i32::from(v);
+            let slot = arena.tiles[&(Some(f.texture), true)];
+            let uv = [
+                [u, v],
+                [u + w - 1, v],
+                [u, v + h - 1],
+                [u + w - 1, v + h - 1],
+            ]
+            .map(|[u, v]| arena.uv(slot, Vec2::new((u as u8) as f32, (v as u8) as f32)));
+            rect(x, y, w, h, uv, [1.; 4]);
+        }
     }
 }
 fn indices(n: usize) -> &'static [usize] {
