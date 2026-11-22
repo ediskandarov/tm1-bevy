@@ -311,11 +311,13 @@ pub fn begin(world: &mut World) -> Result<()> {
         i32::from_le_bytes(player.state()[0x138 + 0x6c..0x138 + 0x70].try_into()?),
     )?;
     crate::campaign::clear_stage(world);
-    let gain = world
+    let volume = world
         .resource::<crate::driving::Drive>()
         .settings
-        .effects_gain();
-    let engine = world.resource::<crate::sfx::Sounds>().ending_engine(gain);
+        .effects_volume();
+    let sounds = world.resource::<crate::sfx::Sounds>();
+    sounds.set_screen_volume(volume);
+    let engine = sounds.ending_engine();
     for tone in engine {
         world.spawn((StageEntity, EndingEngine, tone));
     }
@@ -429,15 +431,17 @@ pub fn update(
             && first_frame < signature_field
             && ending.frame >= signature_field
         {
-            for tone in sounds.ending_engine(drive.settings.effects_gain()) {
+            sounds.set_screen_volume(drive.settings.effects_volume());
+            for tone in sounds.ending_engine() {
                 commands.spawn((StageEntity, EndingEngine, tone));
             }
-            commands.spawn((
-                StageEntity,
-                sounds.signature(),
-                PlaybackSettings::DESPAWN
-                    .with_volume(bevy::audio::Volume::Linear(drive.settings.effects_gain())),
-            ));
+            for tone in sounds.signature() {
+                commands.spawn((
+                    StageEntity,
+                    AudioPlayer(tone.clone()),
+                    PlaybackSettings::DESPAWN,
+                ));
+            }
         }
         if let Some(track) = ending.track.take() {
             commands.spawn((

@@ -296,7 +296,7 @@ struct LostGame {
     load_remaining: Duration,
 }
 
-fn defeat(world: &mut World, gain: f32) -> Result<()> {
+fn defeat(world: &mut World, volume: u8) -> Result<()> {
     let delta = world.resource::<Time<Real>>().delta();
     if let Ok(mut screen) = world.query::<&mut LostGame>().single_mut(world) {
         screen.load_remaining = screen.load_remaining.saturating_sub(delta);
@@ -325,25 +325,28 @@ fn defeat(world: &mut World, gain: f32) -> Result<()> {
     }
     let load_remaining = Duration::from_secs_f64(f64::from(sectors) / 150.);
     let sounds = world.resource::<sfx::Sounds>();
-    let engine = sounds.ending_engine(gain);
-    let signature = sounds.lost_game_signature();
+    sounds.set_screen_volume(volume);
+    let engine = sounds.ending_engine();
+    let signature = sounds.lost_game_signature().to_vec();
     for tone in engine {
         world.spawn((StageEntity, tone));
     }
     world.spawn((StageEntity, LostGame { load_remaining }));
-    world.spawn((
-        StageEntity,
-        signature,
-        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
-    ));
+    for tone in signature {
+        world.spawn((
+            StageEntity,
+            AudioPlayer(tone),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44)),
+        ));
+    }
     Ok(())
 }
 
 pub fn advance(world: &mut World) {
     let drive = world.resource::<driving::Drive>();
     if drive.lives == 0 {
-        let gain = drive.settings.effects_gain();
-        if let Err(err) = defeat(world, gain) {
+        let volume = drive.settings.effects_volume();
+        if let Err(err) = defeat(world, volume) {
             error!("Returning to the title after defeat failed: {err:#}");
             world.write_message(AppExit::error());
         }

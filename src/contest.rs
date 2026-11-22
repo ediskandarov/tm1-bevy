@@ -2854,16 +2854,17 @@ mod tests {
         let signature = world
             .resource::<crate::sfx::Sounds>()
             .lost_game_signature()
-            .0;
+            .to_vec();
         let defeat_voices = |world: &mut World| {
             world
-                .query::<(Entity, &AudioPlayer)>()
+                .query::<(Entity, &AudioPlayer<crate::sfx::pcm::StereoPcm>)>()
                 .iter(world)
-                .filter_map(|(entity, voice)| (voice.0 == signature).then_some(entity))
+                .filter_map(|(entity, voice)| signature.contains(&voice.0).then_some(entity))
                 .collect::<Vec<_>>()
         };
         let voices = defeat_voices(&mut world);
-        assert_eq!(voices.len(), 1);
+        assert!(!voices.is_empty());
+        assert_eq!(voices.len(), signature.len());
         // Six separately rounded file transfers, 522 sectors at double speed.
         for millis in [0, 1000, 2479] {
             world

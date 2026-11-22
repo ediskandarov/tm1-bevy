@@ -121,6 +121,8 @@ The JP soundPlayId routine accepts an in-range request independently of its chan
 
 Looping machine-gun, turbo and program 38 effects retain fractional pitch through each ADPCM repeat in campaign and duel. Their PCM test checks both channels through three repeats of every looping tone in those programs. Non-repeating turbo layers end after their original samples.
 
+Campaign life loss, boss introduction, defeat, reward and credits apply the selected centered effects level to each engine tone. Defeat plays Sweet Tooth’s signature. Credits use the selected driver’s signature. A disc-backed test checks the complete stereo output and duration of each RoadKill and Sweet Tooth signature tone against the programs in the retail sound table.
+
 In a duel, both cars and the score-screen engine use the selected effects level in each VAB tone’s integer volume calculation. A disc-backed keyboard test checks the decoded stereo samples at round entry and after changing the mix in the pause menu.
 
 Campaign and duel engines stream at 44,100 stereo frames per second. Each tone reads its live SPU pitch register at a stereo frame boundary, interpolates the original decoded samples and carries the twelve fractional phase bits through rev changes and loops. Garage, score and ending engines use the same decoder at rev 30. A disc-backed replay checks both channels of every engine tone at all 100 rev settings and across repeated loop crossings, including register writes between the left and right samples.
