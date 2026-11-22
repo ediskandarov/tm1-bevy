@@ -692,6 +692,57 @@ fn windshield_damage_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn rooftops_fall_camera_original() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
+    let cs = 0x800d8000;
+    put(&mut r.cpu, 0x8018c658, cs);
+    put(&mut r.cpu, 0x8018c378, Level::Rooftops as u32 + 1);
+    for entry in [0x8015060c, 0x801505c4, 0x8010ad84, 0x8010add4, 0x80144be8] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    r.cpu.put(0x8010a690, &[8, 0, 224, 3, 60, 0, 2, 36]);
+    for (mode, heading) in [
+        (CarView::Chase, 523),
+        (CarView::Cockpit, 1230),
+        (CarView::Far, -343),
+    ] {
+        r.player.state[0x390..0x394].copy_from_slice(&6801i32.to_le_bytes());
+        r.player.state[0x3a8..0x3ac].copy_from_slice(&i32::to_le_bytes(heading));
+        let mut view = VehicleCamera::new(&r.player, mode);
+        assert!(view.fixed_pose.is_none());
+        r.cpu.put(PLAYER, &r.player.state);
+        r.cpu.call(0x80124474, &[PLAYER]);
+        put(&mut r.cpu, PLAYER + 0xf4, mode as u32);
+        vec3_cpu(&mut r.cpu, PLAYER + 0xc, view.offset);
+        put(&mut r.cpu, PLAYER + 4, view.pitch as u32);
+        for i in 0..35 {
+            let pos = [321 + i * 12, 208 - i * 6, 6799 - i * i];
+            for (j, value) in pos.into_iter().enumerate() {
+                let at = 0x388 + j * 4;
+                r.player.state[at..at + 4].copy_from_slice(&i32::to_le_bytes(value));
+            }
+            vec3_cpu(&mut r.cpu, PLAYER + 0x388, pos);
+            r.cpu.call(0x80116bcc, &[PLAYER]);
+            r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, 0x800d7000]);
+            view.update(&r.player, false);
+            let pose = view.fixed_pose.unwrap();
+            let expected: [i32; 3] =
+                std::array::from_fn(|j| r.cpu.word(cs + 0x5c + 4 * j as u32) as i32);
+            assert_eq!(pose[..3], expected);
+            assert_eq!(pose[3], r.cpu.word(cs + 0x54) as i16 as i32);
+            assert_eq!(pose[4], r.cpu.word(cs + 0x58) as i16 as i32);
+            assert_eq!(r.cpu.word(PLAYER + 0xf4), 5);
+        }
+        r.player.state[0x390..0x394].copy_from_slice(&6800i32.to_le_bytes());
+        put(&mut r.cpu, PLAYER + 0x390, 6800);
+        r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, 0x800d7000]);
+        view.update(&r.player, false);
+        assert!(view.fixed_pose.is_none());
+        assert_eq!(view.mode as u32, r.cpu.word(PLAYER + 0xf4));
+    }
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn vehicle_and_wall_contact_original() {
     for opponent in [true, false] {
         let mut r = Reference::new();
@@ -1249,6 +1300,8 @@ fn rooftop_edge_fall_matches_retail() {
         r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     let mut airborne = false;
+    let mut camera = VehicleCamera::new(&r.player, CarView::Chase);
+    let mut anchor = None;
     for step in 1..=300 {
         compare_drive_step(
             &mut r,
@@ -1260,6 +1313,11 @@ fn rooftop_edge_fall_matches_retail() {
             3,
         );
         let h = r.player.position()[2];
+        camera.update(&r.player, false);
+        assert_eq!(camera.fixed_pose.is_some(), h < 6800);
+        if let Some([x, y, z, _, _]) = camera.fixed_pose {
+            assert_eq!(*anchor.get_or_insert([x, y, z]), [x, y, z]);
+        }
         airborne |= h < 7000 && h >= 160 && r.player.health().0 > 0;
         if r.player.health().0 <= 0 {
             assert!(airborne && h < 160);

@@ -746,7 +746,8 @@ pub fn update(
             arena.center,
             Vec3::Y,
         )
-    } else if let Some([x, y, z, pitch, yaw]) = drive.helicopter_pose() {
+    } else if let Some([x, y, z, pitch, yaw]) = drive.helicopter_pose().or(drive.camera.fixed_pose)
+    {
         let eye = world([x, y, z].map(|v| v as f32));
         let radians = std::f32::consts::TAU / 4096.;
         let (sp, cp) = (pitch as f32 * radians).sin_cos();
@@ -770,8 +771,18 @@ pub fn update(
     // reverses local yaw and subtracts 56 PS1 angle units from local pitch.
     let angle = (drive.camera.pitch - 56) as f32 * std::f32::consts::TAU / 4096.;
     let (sin, cos) = angle.sin_cos();
-    let rear_forward = rotate(Vec3::new(0., -sin, cos)).normalize();
-    let rear_up = rotate(Vec3::new(0., cos, sin)).normalize();
+    let (rear_forward, rear_up) = if drive.camera.fixed_pose.is_some() {
+        let forward = (target - eye).normalize();
+        (
+            -forward * cos - camera_up * sin,
+            camera_up * cos - forward * sin,
+        )
+    } else {
+        (
+            rotate(Vec3::new(0., -sin, cos)).normalize(),
+            rotate(Vec3::new(0., cos, sin)).normalize(),
+        )
+    };
     let mirror = drive.mirror && !arena.overview;
     for (mut camera, mut settings, sky, rear) in &mut cameras {
         if rear {

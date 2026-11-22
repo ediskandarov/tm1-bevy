@@ -861,6 +861,27 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
     arena_opponent = NULL;
 }
 
+// UA.c UASetCameraPosition, when a Rooftops car drops below the buildings.
+void tm1_rooftop_camera(const s32* pos, s32 heading, s32 pitch, const s32* offset,
+    const s16* table, int enter, s32* pose)
+{
+    trig = table;
+    if (enter) {
+        SVECTOR rot = { pitch, 0, heading, 0 };
+        VECTOR3 local = { offset[0], offset[1], offset[2] }, out;
+        MATRIX matrix;
+        RotMatrixYXZ(&rot, &matrix);
+        mathMulTransVec(&matrix, &local, &out);
+        pose[0] = pos[0] + out.vx;
+        pose[1] = pos[1] + out.vy;
+        pose[2] = pos[2] + out.vz;
+    }
+    s32 dx = pos[0] - pose[0], dy = pos[1] - pose[1], dz = pos[2] - pose[2];
+    pose[3] = -ratan2(dz, arena_sqrt(dx * dx + dy * dy));
+    pose[4] = ratan2(dx, dy);
+    trig = NULL;
+}
+
 // UA.c InitHelicoptorPosition / UpdateCamera and CAR.c CarViewUpdate.
 void tm1_heli_camera(u8* state, const u8* target, const s16* table,
     s16 fields, u32 frame, int enter, s32* pose)

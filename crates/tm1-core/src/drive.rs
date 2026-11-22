@@ -594,6 +594,7 @@ pub struct VehicleCamera {
     pub offset: [i32; 3],
     pub pitch: i32,
     pub show_body: bool,
+    pub fixed_pose: Option<[i32; 5]>,
 }
 
 impl VehicleCamera {
@@ -603,6 +604,7 @@ impl VehicleCamera {
             offset: [0; 3],
             pitch: 0,
             show_body: true,
+            fixed_pose: None,
         };
         view.update(player, true);
         view
@@ -626,15 +628,53 @@ impl VehicleCamera {
                 pitch: *mut i32,
             ) -> i32;
         }
-        self.show_body = unsafe {
-            tm1_update_car_view(
-                player.state.as_ptr(),
-                self.mode as i32,
-                snap.into(),
-                self.offset.as_mut_ptr(),
-                &mut self.pitch,
-            ) != 0
-        };
+        let position = player.position();
+        let falling = player.level() == Level::Rooftops && position[2] < 6800;
+        let leaving_fixed = !falling && self.fixed_pose.take().is_some();
+        if leaving_fixed {
+            self.mode = CarView::Chase;
+        }
+        if !falling || self.fixed_pose.is_none() {
+            self.show_body = unsafe {
+                tm1_update_car_view(
+                    player.state.as_ptr(),
+                    self.mode as i32,
+                    (snap || leaving_fixed).into(),
+                    self.offset.as_mut_ptr(),
+                    &mut self.pitch,
+                ) != 0
+            };
+        }
+        if falling {
+            unsafe extern "C" {
+                fn tm1_rooftop_camera(
+                    pos: *const i32,
+                    heading: i32,
+                    pitch: i32,
+                    offset: *const i32,
+                    table: *const i16,
+                    enter: i32,
+                    pose: *mut i32,
+                );
+            }
+            let enter = self.fixed_pose.is_none();
+            let pose = self.fixed_pose.get_or_insert([0; 5]);
+            let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                tm1_rooftop_camera(
+                    position.as_ptr(),
+                    player.heading(),
+                    self.pitch,
+                    self.offset.as_ptr(),
+                    player.trig.as_ptr(),
+                    enter.into(),
+                    pose.as_mut_ptr(),
+                );
+            }
+            self.offset = [0; 3];
+            self.pitch = 0;
+            self.show_body = player.dashboard_enabled();
+        }
     }
 }
 
