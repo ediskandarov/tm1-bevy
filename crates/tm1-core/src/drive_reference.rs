@@ -679,7 +679,13 @@ fn compare_car_hits(duel: bool) {
         fn uaIsCarMatID(id: i16, player: &mut i8, slot: &mut u16) -> i32;
     }
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let data = disc.read("UADMD/WH1.DMD").unwrap();
+    let data = disc
+        .read(if duel {
+            "UA2PLAY/2PWH.DMD"
+        } else {
+            "UADMD/WH1.DMD"
+        })
+        .unwrap();
     let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
     let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
     cpu.put(0x800188b8, &data);
@@ -4048,5 +4054,144 @@ fn duel_pad_routing_matches_original() {
             let pad = (PLAYER & 0x1fffff) as usize + 0xc8;
             assert_eq!(&car.state[0xc8..0xc8 + 44], &cpu.ram[pad..pad + 44]);
         }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn shared_duel_crossfire() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let data = disc
+        .read(&format!(
+            "UA2PLAY/{}.DMD",
+            Level::Arena.duel_database().unwrap()
+        ))
+        .unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    for shooter in 0..2 {
+        let mut cars = PlayerVehicle::duel_players(
+            &exe,
+            [Vehicle::YellowJacket, Vehicle::Outlaw],
+            Level::Arena,
+            1,
+            Difficulty::Medium,
+        )
+        .unwrap();
+        let mut scene = CollisionScene::for_duel(
+            &data,
+            root(1),
+            [
+                root(Vehicle::YellowJacket as u16),
+                root(Vehicle::Outlaw as u16),
+            ],
+        )
+        .unwrap();
+        let target = 1 - shooter;
+        for (slot, car) in cars.iter_mut().enumerate() {
+            vec3(
+                &mut car.state,
+                0x388,
+                [2700, if slot == shooter { 2000 } else { 2600 }, 0],
+            );
+            vec3(&mut car.state, 0x3a0, [0; 3]);
+            vec3(&mut car.state, 0x3b8, [0; 3]);
+        }
+        let before = cars[target].health().0;
+        let shooter_health = cars[shooter].health().0;
+        let mut input = [Input::default(); 2];
+        input[shooter].fire_guns = true;
+        for _ in 0..60 {
+            scene.step_duel(&mut cars, input, 3);
+        }
+        assert!(
+            cars[target].health().0 < before,
+            "shots from slot {shooter} missed"
+        );
+        assert_eq!(cars[shooter].health().0, shooter_health);
+        assert_eq!(cars[0].seed, cars[1].seed);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn duel_stages_from_disc() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    for level in [
+        Level::Arena,
+        Level::Warehouse,
+        Level::Freeway,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Rooftops,
+    ] {
+        let stem = level.duel_database().unwrap();
+        let data = disc.read(&format!("UA2PLAY/{stem}.DMD")).unwrap();
+        let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let root = |kind| dmd.roots.iter().find(|r| r.1 == kind).unwrap().0;
+        let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        let mut scene =
+            CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, kinds, level, 1, Difficulty::Medium).unwrap();
+        let initial = cars.each_ref().map(PlayerVehicle::position);
+        let inputs = [Input {
+            accelerate: true,
+            ..Default::default()
+        }; 2];
+        for _ in 0..20 {
+            scene.step_duel(&mut cars, inputs, 3);
+        }
+        for (slot, car) in cars.iter().enumerate() {
+            assert_ne!(
+                initial[slot][..2],
+                car.position()[..2],
+                "{stem} slot {slot}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn duel_winner_and_return_delay_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let data = disc.read("UA2PLAY/XARENA1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+    for death_ticks in [[0, 200], [200, 0], [0, 0], [2, 0]] {
+        let mut cpu = Cpu::new(&exe);
+        cpu.call(0x800ff718, &[]);
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+        let mut scene =
+            CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+        let mut winner = None;
+        for tick in 0..100 {
+            let fields = [1u8, 5, 3][tick % 3];
+            cpu.put(0x80170238, &u16::from(fields).to_le_bytes());
+            for (slot, car) in cars.iter_mut().enumerate() {
+                if tick == death_ticks[slot] {
+                    car.state[0x178..0x17c].fill(0);
+                    cpu.call(0x800ff6dc, &[if slot == 0 { 4 } else { 3 }, 180]);
+                }
+            }
+            winner = scene.step_duel(&mut cars, [Input::default(); 2], fields);
+            let returned = cpu.call(0x800ff760, &[]) != 0;
+            assert_eq!(
+                winner.is_some(),
+                returned,
+                "deaths {death_ticks:?}, tick {tick}"
+            );
+            if returned {
+                assert_eq!(winner, Some((cpu.word(0x8018bf1c) - 3) as usize));
+                break;
+            }
+        }
+        assert!(winner.is_some());
     }
 }

@@ -11,7 +11,7 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 ## Two-player battle
 
-The core initializes two human players and reads both halves of the PS1 pad word. Disc-backed tests compare the starting position and heading of each player on all seven stages and compare simultaneous inputs against the JP executable. A shared collision scene gives the two cars material IDs 1 and 2. Warehouse tests exercise projectile queries against separated and overlapping cars, including shots that exclude their owner. The two-player match loop, keyboard bindings and split-screen presentation are still in development.
+The core initializes two human players and reads both halves of the PS1 pad word. Disc-backed tests compare the starting position and heading of each player on all seven stages and compare simultaneous inputs against the JP executable. A shared collision scene gives the two cars material IDs 1 and 2. Warehouse tests exercise projectile queries against separated and overlapping cars, including shots that exclude their owner. Both human actors now advance against that scene in slot order, with one RNG, projectile pass and arena update per frame. Drive tests load all six retail UA2PLAY databases, including Canal, and advance both cars in each. An Arena integration test fires each car’s machine guns at the other for sixty updates and checks damage in both directions. The winner becomes available after the original 180-field return delay. A replay checks both winners and simultaneous deaths against the executable’s return queue. The Bevy match flow, keyboard bindings and split-screen presentation are still in development.
 
 ## Title options
 

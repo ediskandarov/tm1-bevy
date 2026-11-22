@@ -109,6 +109,18 @@ impl Level {
             ]),
         }
     }
+    /// Names in the JP shell's UA2PLAY database table, in level-select order.
+    pub fn duel_database(self) -> Option<&'static str> {
+        match self {
+            Self::Arena => Some("XARENA1"),
+            Self::Warehouse => Some("2PWH"),
+            Self::Freeway => Some("2PFWY"),
+            Self::CityPark => Some("2PPARK"),
+            Self::Cyburbia => Some("2PCANALS"),
+            Self::Rooftops => Some("2PROOF"),
+            Self::Arena5 => None,
+        }
+    }
     pub fn database(self, vehicle: Vehicle) -> &'static str {
         use Vehicle::*;
         match self {
@@ -1051,6 +1063,8 @@ pub struct CollisionScene {
     native: std::ptr::NonNull<std::ffi::c_void>,
     opponent_count: usize,
     battle: [i16; 3],
+    duel_returns: Vec<(usize, i16)>,
+    duel_winner: Option<usize>,
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
@@ -1090,6 +1104,8 @@ impl CollisionScene {
             native,
             opponent_count: if duel { 0 } else { opponents.len() },
             battle: [0; 3],
+            duel_returns: Vec::new(),
+            duel_winner: None,
         })
     }
     pub fn continue_stage_state(&mut self, previous: &Self) {
@@ -1253,6 +1269,71 @@ impl CollisionScene {
         fields: u8,
     ) {
         self.step_bout_with_pads(player, opponents, u32::from(input.ps1_buttons()), fields)
+    }
+
+    /// Step both human actors and the arena using one clock and one RNG.
+    pub fn step_duel(
+        &mut self,
+        players: &mut [PlayerVehicle; 2],
+        inputs: [Input; 2],
+        fields: u8,
+    ) -> Option<usize> {
+        unsafe extern "C" {
+            fn tm1_duel_step(
+                scene: *mut std::ffi::c_void,
+                first: *mut u8,
+                second: *mut u8,
+                buttons: u32,
+                fields: i16,
+                frame: u32,
+                table: *const i16,
+                seed: *mut u32,
+            );
+        }
+        assert_eq!(self.opponent_count, 0);
+        assert!((1..=5).contains(&fields));
+        if self.duel_winner.is_some() {
+            return self.duel_winner;
+        }
+        let was_dead = players.each_ref().map(|car| car.state[0xa0] != 0);
+        let [first, second] = players;
+        assert_eq!(first.state[2..4], [0, 0]);
+        assert_eq!(second.state[2..4], [1, 0]);
+        assert_eq!(first.level, second.level);
+        let buttons = u32::from(first.keyboard_buttons(inputs[0]))
+            | (u32::from(second.keyboard_buttons(inputs[1])) << 16);
+        first.frame = first.frame.wrapping_add(1);
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_difficulty(first.difficulty as i32);
+            tm1_bind_level(first.level as i32);
+            tm1_duel_step(
+                self.native.as_ptr(),
+                first.state.as_mut_ptr(),
+                second.state.as_mut_ptr(),
+                buttons,
+                fields.into(),
+                first.frame,
+                first.trig.as_ptr(),
+                &mut first.seed,
+            );
+        }
+        second.frame = first.frame;
+        second.seed = first.seed;
+        // UpdatePlayerDamageModel queues returns in slot order. RT chooses the
+        // last expired entry, including when both cars die in the same frame.
+        for (slot, car) in players.iter().enumerate() {
+            if !was_dead[slot] && car.state[0xa0] != 0 {
+                self.duel_returns.push((1 - slot, 180));
+            }
+        }
+        for (winner, delay) in &mut self.duel_returns {
+            *delay -= i16::from(fields);
+            if *delay < 0 {
+                self.duel_winner = Some(*winner);
+            }
+        }
+        self.duel_winner
     }
 
     pub fn step_bout_with_pads(

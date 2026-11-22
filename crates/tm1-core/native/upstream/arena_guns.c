@@ -453,8 +453,9 @@ static int launch_taser(int player, int slot)
         VECTOR3* origin = player ? &GetPlayerInfo(slot)->motion.pos : &GetAICarInfo(slot)->motion.pos;
         int best = 81;
         tasers[i].target = -1;
-        for (int j = -1; j < GetNumAICars(); j++) {
-            Cs* other = j < 0 ? GetPlayerCs3D(0) : GetAICs3D(j);
+        int players = GetNumPlayers();
+        for (int j = -players; j < GetNumAICars(); j++) {
+            Cs* other = j < 0 ? GetPlayerCs3D(j + players) : GetAICs3D(j);
             if (other == owner || (j >= 0 && GetAICarInfo(j)->stats.unk40 <= 0))
                 continue;
             int distance = abs(BIGGER(origin->vx - other->pos.vx,
@@ -513,10 +514,10 @@ void arena_move_tasers(void)
         if (!tasers[i].visible)
             continue;
         VECTOR3 origin
-            = tasers[i].owner == 1 ? GetPlayerInfo(0)->motion.pos : GetAICarInfo(tasers[i].owner - 50)->motion.pos,
+            = tasers[i].owner < 50 ? GetPlayerInfo(tasers[i].owner - 1)->motion.pos : GetAICarInfo(tasers[i].owner - 50)->motion.pos,
             end;
-        if (tasers[i].target == 1)
-            end = GetPlayerInfo(0)->motion.pos;
+        if (tasers[i].target == 1 || tasers[i].target == 2)
+            end = GetPlayerInfo(tasers[i].target - 1)->motion.pos;
         else if (tasers[i].target >= 50)
             end = GetAICarInfo(tasers[i].target - 50)->motion.pos;
         else {

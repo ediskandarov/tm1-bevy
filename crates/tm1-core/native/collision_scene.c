@@ -1195,6 +1195,15 @@ static void check_smash(CarStats* st, CarMotion* motion, CarTire* tires, u8* fla
 }
 void tm1_check_player_smash(PlayerCar* car, AICar* other)
 {
+    if (GetNumPlayers() == 2) {
+        int slot = 1 - car->playerIdx;
+        PlayerCar* rival = GetPlayerInfo(slot);
+        if (rival->uaIndex == car->stats.unk30) {
+            check_smash(&car->stats, &car->motion, car->tires, car->flags,
+                GetPlayerCs3D(slot), &rival->stats, rival->flags);
+            return;
+        }
+    }
     if (other && car->stats.unk30 != other->uaIndex)
         other = NULL;
     check_smash(&car->stats, &car->motion, car->tires, car->flags,

@@ -518,8 +518,7 @@ static PlayerCar* arena_player;
 static AICar* arena_opponent;
 PlayerCar* GetPlayerInfo(s16 idx)
 {
-    (void)idx;
-    return arena_player;
+    return idx == 1 && GetNumPlayers() == 2 ? &arena_player[1] : arena_player;
 }
 AICar* GetAICarInfo(s16 idx)
 {
@@ -988,7 +987,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
     }
     if (is_player != 2)
         tm1_contact_setup(
-            is_player ? GetPlayerCs3D(0) : GetAICs3D(ai->playerIdx), m, is_player ? &player->stats : &ai->stats);
+            is_player ? GetPlayerCs3D(player->playerIdx) : GetAICs3D(ai->playerIdx), m, is_player ? &player->stats : &ai->stats);
 }
 
 void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, u8 is_player,
@@ -1037,6 +1036,17 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     trig = NULL;
 }
 
+
+static void move_arena_targets(VECTOR3* position)
+{
+    if (current_level == LEVEL6_ROOFTOPS)
+        tm1_move_rooftop_targets();
+    if (current_level >= LEVEL2_WAREHOUSE) {
+        tm1_move_mercs(current_level, position);
+        tm1_move_pedestrians(current_level, position);
+        tm1_move_static_cops(position);
+    }
+}
 
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
@@ -1089,13 +1099,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     arena_regenerate_pickups();
     tm1_regenerate_stands();
     tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
-    if (current_level == LEVEL6_ROOFTOPS)
-        tm1_move_rooftop_targets();
-    if (current_level >= LEVEL2_WAREHOUSE) {
-        tm1_move_mercs(current_level, &player.motion.pos);
-        tm1_move_pedestrians(current_level, &player.motion.pos);
-        tm1_move_static_cops(&player.motion.pos);
-    }
+    move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
     tm1_store_battle(battle);
     *seed = random_state;
@@ -1104,6 +1108,48 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         memcpy(opponents[i], &cars[i], sizeof(cars[i]));
     tm1_use_scene(NULL);
     arena_opponent = NULL;
+    arena_player = NULL;
+    trig = NULL;
+}
+
+
+// Both human actors update in slot order against the same collision graph.
+// The projectile and arena passes run once per frame.
+void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
+{
+    PlayerCar cars[2];
+    memcpy(&cars[0], first, sizeof(PlayerCar));
+    memcpy(&cars[1], second, sizeof(PlayerCar));
+    arena_player = cars;
+    trig = table;
+    random_state = *seed;
+    gFrameCount = frame;
+    gFieldsLastFrame = fields;
+    gUpdateRate = 60 / fields;
+    tm1_use_scene(scene);
+    for (int i = 0; i < 2; i++)
+        tm1_contact_setup(GetPlayerCs3D(i), &cars[i].motion, &cars[i].stats);
+    contact_phase(cars, NULL, 2, fields);
+    for (int i = 0; i < 2; i++) {
+        PlayerCar* car = &cars[i];
+        if (!tm1_recharge_player(car)) {
+            *seed = random_state;
+            tm1_drive_step((u8*)car, NULL, buttons, fields, frame, table, seed);
+            trig = table;
+            tm1_contact_setup(GetPlayerCs3D(i), &car->motion, &car->stats);
+            contact_phase(car, NULL, 1, fields);
+        }
+        tm1_start_death(car, 1);
+    }
+    arena_regenerate_pickups();
+    tm1_regenerate_stands();
+    move_arena_targets(&cars[0].motion.pos);
+    UpdateNumPotHoles();
+    *seed = random_state;
+    memcpy(first, &cars[0], sizeof(PlayerCar));
+    memcpy(second, &cars[1], sizeof(PlayerCar));
+    tm1_use_scene(NULL);
     arena_player = NULL;
     trig = NULL;
 }

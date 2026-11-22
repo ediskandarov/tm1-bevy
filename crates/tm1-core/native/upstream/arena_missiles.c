@@ -123,25 +123,34 @@ static void car_lockon(u8 who, int rear, VECTOR3** out)
     p = &GetPlayerCs3D((s16)(who - 1))->pos;
     n = GetNumAICars();
     *out = 0;
-    for (i = 0; i < n; i++) {
-        cs = GetAICs3D(i);
+    // Retail checks the other human when no AI car was in the aiming cone.
+    for (i = 0; i < n + GetNumPlayers(); i++) {
+        if (i >= n) {
+            if (best > 0)
+                break;
+            if (i - n == who - 1)
+                continue;
+            cs = GetPlayerCs3D(i - n);
+        } else {
+            if (GetAICarInfo(i)->stats.unk40 <= 0)
+                continue;
+            cs = GetAICs3D(i);
+        }
         q = &cs->pos;
-        if (q != 0 && GetAICarInfo(i)->stats.unk40 > 0) {
-            d.vx = cs->pos.vx - p->vx;
-            d.vy = cs->pos.vy - p->vy;
-            d.vz = cs->pos.vz - p->vz;
-            mathMulVec(&GetPlayerCs3D((s16)(who - 1))->mat, &d, &r);
-            z = rear ? -r.vy : r.vy;
-            if (z >= 12) {
-                ax = r.vx;
-                az = ABS(z);
-                if (ax < 0) {
-                    ax = -ax;
-                }
-                if (az >= ax && az < 8001 && (best <= 0 || z < best)) {
-                    best = z;
-                    *out = q;
-                }
+        d.vx = cs->pos.vx - p->vx;
+        d.vy = cs->pos.vy - p->vy;
+        d.vz = cs->pos.vz - p->vz;
+        mathMulVec(&GetPlayerCs3D((s16)(who - 1))->mat, &d, &r);
+        z = rear ? -r.vy : r.vy;
+        if (z >= 12) {
+            ax = r.vx;
+            az = ABS(z);
+            if (ax < 0) {
+                ax = -ax;
+            }
+            if (az >= ax && az < 8001 && (best <= 0 || z < best)) {
+                best = z;
+                *out = q;
             }
         }
     }
