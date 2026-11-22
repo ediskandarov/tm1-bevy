@@ -12,6 +12,8 @@ struct Card {
 }
 #[derive(Component)]
 struct Overlay;
+#[derive(Component)]
+struct CardThrow;
 #[derive(Resource)]
 pub struct Transition {
     stage: Stage,
@@ -27,8 +29,7 @@ pub struct Transition {
     letterbox: bool,
     settings: Option<crate::pause::Settings>,
     image: Handle<Image>,
-    throw: Handle<AudioSource>,
-    gain: f32,
+    throw: Vec<Handle<crate::sfx::pcm::StereoPcm>>,
 }
 fn layout(level: Level) -> (&'static [&'static str], &'static [[i32; 2]], [i32; 2]) {
     match level {
@@ -218,16 +219,23 @@ pub fn begin(
         .map(|s| Transition::intro_fields(&fonts, s))
         .sum::<u32>()
         + 1;
-    let sound = crate::sfx::Sample::load(&disc.read("SND/UACORE.VAB")?, 57, false)?.wave()?;
-    let throw = world.resource_mut::<Assets<AudioSource>>().add(sound);
-    let gain = settings_override
+    let tones = tm1_assets::sound::program(&disc.read("SND/UACORE.VAB")?, 57)?;
+    let volume = settings_override
         .or_else(|| {
             world
                 .get_resource::<crate::driving::Drive>()
                 .map(|d| d.settings)
         })
         .unwrap_or_default()
-        .effects_gain();
+        .effects_volume();
+    let levels = crate::sfx::pcm::Levels::new([i32::from(volume); 2], 99);
+    let mut clips = world.get_resource_or_init::<Assets<crate::sfx::pcm::StereoPcm>>();
+    let throw = tones
+        .iter()
+        .map(|tone| {
+            clips.add(crate::sfx::pcm::StereoPcm::one_shot(tone).with_levels(levels.clone()))
+        })
+        .collect();
     let mut transition = Transition {
         stage,
         fonts,
@@ -243,7 +251,6 @@ pub fn begin(
         settings: settings_override,
         image: default(),
         throw,
-        gain,
     };
     let width = transition.fonts.width(Face::Text, transition.meet());
     transition.finish = deal + centers.len() as u32 * 11 + 2 + ((335 + width + 19) / 20) as u32;
@@ -258,12 +265,29 @@ pub fn begin(
         sprite,
         Transform::from_xyz(0., 0., 10.),
     ));
+    // LOAD_LEVEL interrupts the CD. A battle victory also clears all combat
+    // voices and requests the shell engine before the new stage is loaded.
     let audio: Vec<_> = world
-        .query_filtered::<Entity, (With<StageEntity>, With<AudioPlayer>)>()
+        .query_filtered::<(Entity, Has<AudioPlayer<crate::sfx::pcm::StereoPcm>>), (
+            With<StageEntity>,
+            Or<(
+                With<AudioPlayer>,
+                With<AudioPlayer<crate::music::CdTrack>>,
+                With<AudioPlayer<crate::sfx::pcm::StereoPcm>>,
+            )>,
+        )>()
         .iter(world)
+        .filter_map(|(e, pcm)| (advanced || !pcm).then_some(e))
         .collect();
     for e in audio {
         world.despawn(e);
+    }
+    if advanced {
+        let sounds = world.resource::<crate::sfx::Sounds>();
+        sounds.set_screen_volume(volume);
+        for engine in sounds.ending_engine() {
+            world.spawn((StageEntity, crate::sfx::ShellEngine, engine));
+        }
     }
     world.insert_resource(transition);
     Ok(())
@@ -306,21 +330,23 @@ pub fn update(world: &mut World) {
     } else {
         world.resource::<Time<Real>>().delta()
     };
-    let held = !scripted
-        && (world
-            .resource::<ButtonInput<KeyCode>>()
-            .get_pressed()
-            .next()
-            .is_some()
-            || world
-                .query::<&Gamepad>()
+    if !world.resource::<Transition>().released {
+        // The one-player screenTransitionLevel entry polls GetPadStatus(0),
+        // which returns the second port's halfword.
+        let mut pads = world.query::<(Entity, &Gamepad)>();
+        let first = pads.iter(world).map(|(id, _)| id).min();
+        let held = !scripted
+            && pads
                 .iter(world)
-                .any(|p| p.get_pressed().next().is_some()));
-    let mut t = world.resource_mut::<Transition>();
-    if !t.released {
-        t.released = !held;
-        return;
+                .filter(|(id, _)| Some(*id) != first)
+                .min_by_key(|(id, _)| *id)
+                .is_some_and(|(_, pad)| pad.get_pressed().next().is_some());
+        if held {
+            return;
+        }
+        world.resource_mut::<Transition>().released = true;
     }
+    let mut t = world.resource_mut::<Transition>();
     let prev = t.field;
     t.fraction += dt.as_nanos() * 60;
     t.field = t.field.saturating_add((t.fraction / 1_000_000_000) as u32);
@@ -334,23 +360,31 @@ pub fn update(world: &mut World) {
     }
     let changed = t.frame();
     let image = t.image.clone();
-    let field = t.field;
-    let gain = t.gain;
-    let throw = t.throw.clone();
-    let count = t.cards.len();
-    let deal = t.deal;
+    let cue = (0..=t.cards.len()).any(|i| {
+        let field = t.deal + i as u32 * 11;
+        prev < field && field <= t.field
+    });
+    let throw = cue.then(|| t.throw.clone());
     world
         .resource_mut::<Assets<Image>>()
         .get_mut(&image)
         .unwrap()
         .data = Some(changed);
-    for i in 0..=count {
-        let cue = deal + i as u32 * 11;
-        if prev < cue && cue <= field {
+    if let Some(tones) = throw {
+        // Mode 5 restarts this sound ID on each throw, including the final cue.
+        let previous: Vec<_> = world
+            .query_filtered::<Entity, With<CardThrow>>()
+            .iter(world)
+            .collect();
+        for e in previous {
+            world.despawn(e);
+        }
+        for tone in tones {
             world.spawn((
                 StageEntity,
-                AudioPlayer::new(throw.clone()),
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
+                CardThrow,
+                AudioPlayer(tone),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44)),
             ));
         }
     }
@@ -395,5 +429,127 @@ pub fn complete(world: &mut World) {
     assert!(!world.contains_resource::<Transition>());
     if let Some(e) = window {
         world.despawn(e);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sfx::pcm::{Levels, StereoPcm};
+    use bevy::audio::Decodable;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn warehouse_card_throws_replace_each_other_after_second_port_release() {
+        let mut world = crate::contest::menu_world();
+        let first_stage = Stage::load(
+            &world.resource::<Campaign>().0,
+            Level::Arena,
+            Vehicle::RoadKill,
+            crate::campaign::Entry::New(Default::default()),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, first_stage);
+        let old_engines: Vec<_> = world
+            .query_filtered::<Entity, (With<crate::sfx::Engine>, With<AudioPlayer<StereoPcm>>)>()
+            .iter(&world)
+            .collect();
+        let old_music = world
+            .query_filtered::<Entity, With<crate::music::ArenaMusic>>()
+            .single(&world)
+            .unwrap();
+        assert_eq!(old_engines.len(), 2);
+        let disc = &world.resource::<Campaign>().0;
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let base = u32::from_le_bytes(exe[24..28].try_into().unwrap());
+        let record = 2048 + (0x8016fefc - base) as usize + 6 * 0x88;
+        let prog = u16::from_le_bytes(exe[record + 2..record + 4].try_into().unwrap()) as usize;
+        let tones =
+            tm1_assets::sound::program(&disc.read("SND/UACORE.VAB").unwrap(), prog).unwrap();
+        let stage = Stage::load(
+            disc,
+            Level::Warehouse,
+            Vehicle::RoadKill,
+            crate::campaign::Entry::New(Default::default()),
+        )
+        .unwrap();
+        let mut settings = crate::pause::Settings::default();
+        crate::pause::navigate(
+            crate::pause::Page::Audio(1),
+            crate::pause::Action::Right,
+            &mut settings,
+        );
+        begin(&mut world, stage, true, false, Some(settings)).unwrap();
+        assert!(world.get_entity(old_music).is_err());
+        assert!(old_engines.iter().all(|&e| world.get_entity(e).is_err()));
+        let revs: Vec<_> = world
+            .query_filtered::<Entity, With<crate::sfx::ShellEngine>>()
+            .iter(&world)
+            .collect();
+        assert_eq!(revs.len(), 2);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_nanos(16_666_667));
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        let mut pads = [
+            world.spawn(Gamepad::default()).id(),
+            world.spawn(Gamepad::default()).id(),
+        ];
+        pads.sort();
+        for id in pads {
+            world
+                .get_mut::<Gamepad>(id)
+                .unwrap()
+                .digital_mut()
+                .press(GamepadButton::South);
+        }
+        update(&mut world);
+        assert_eq!(world.resource::<Transition>().field, 0);
+        world
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .release(GamepadButton::South);
+        update(&mut world);
+        assert_eq!(world.resource::<Transition>().field, 1);
+        let deal = world.resource::<Transition>().deal;
+        let mut previous = Vec::new();
+        for field in 2..=deal + 33 {
+            update(&mut world);
+            let mut voices = world.query_filtered::<(Entity, &AudioPlayer<StereoPcm>, &PlaybackSettings), With<CardThrow>>();
+            let playing: Vec<_> = voices.iter(&world).collect();
+            let entities: Vec<_> = playing.iter().map(|(id, _, _)| *id).collect();
+            if field < deal || (field - deal) % 11 != 0 {
+                assert_eq!(entities, previous);
+                continue;
+            }
+            assert!(previous.iter().all(|&e| world.get_entity(e).is_err()));
+            assert_eq!(playing.len(), tones.len());
+            for ((_, player, playback), tone) in playing.into_iter().zip(&tones) {
+                assert_eq!(playback.volume, bevy::audio::Volume::Linear(0.44));
+                let expected = StereoPcm::one_shot(tone)
+                    .with_levels(Levels::new([settings.effects_volume().into(); 2], 99));
+                let clip = world
+                    .resource::<Assets<StereoPcm>>()
+                    .get(&player.0)
+                    .unwrap();
+                assert!(expected.decoder().eq(clip.decoder()));
+            }
+            previous = entities;
+        }
+        complete(&mut world);
+        assert!(revs.iter().all(|&e| world.get_entity(e).is_err()));
+        assert_eq!(
+            world.resource::<crate::driving::Drive>().player.level(),
+            Level::Warehouse
+        );
+        assert!(
+            world
+                .query_filtered::<Entity, With<crate::music::ArenaMusic>>()
+                .single(&world)
+                .is_ok()
+        );
     }
 }
