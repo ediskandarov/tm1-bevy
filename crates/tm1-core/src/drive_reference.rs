@@ -4478,3 +4478,43 @@ fn duel_winner_and_return_delay_original() {
         assert!(winner.is_some());
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn voice_priority_and_range_partitions_match_retail() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let list = 0x80010000;
+    for n in [0, 1, 2, 23, 24, 25, 39, 48] {
+        for pattern in 0..4 {
+            let mut voices = Vec::new();
+            for i in 0..n {
+                let address = list + 0x1000 + 0x84 * i;
+                let priority = if pattern < 2 {
+                    21
+                } else {
+                    ((17 * i + 5) % 7) as u8
+                };
+                let range: u32 = match pattern {
+                    0 => 0,
+                    1 => i % 3,
+                    2 => 0,
+                    _ => i.wrapping_mul(0xb12056c5),
+                };
+                cpu.put(address + 6, &[priority]);
+                cpu.put(address + 0x74, &range.to_le_bytes());
+                cpu.put(list + 4 * i, &address.to_le_bytes());
+                voices.push((address, priority, range));
+            }
+            cpu.call(0x80104f98, &[list, 0, n.wrapping_sub(1)]);
+            crate::sound::sort_requested(&mut voices, |v| v.2, |v| v.1);
+            for (i, (address, _, _)) in voices.into_iter().enumerate() {
+                assert_eq!(
+                    address,
+                    cpu.word(list + 4 * i as u32),
+                    "size {n}, pattern {pattern}, slot {i}"
+                );
+            }
+        }
+    }
+}

@@ -830,6 +830,10 @@ impl SoundListener {
         (range.clamp(0, 0x7fffff), eye[0])
     }
 
+    pub fn sound_range(&self, position: [i32; 3]) -> u32 {
+        self.range_and_x(position).0 as u32
+    }
+
     /// Left and right volume before the VAB program and tone gains.
     pub fn channels(&self, position: [i32; 3], volume: u8, full_range: bool) -> [i32; 2] {
         let (range, x) = self.range_and_x(position);

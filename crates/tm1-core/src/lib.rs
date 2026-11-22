@@ -3,6 +3,7 @@
 use std::sync::Mutex;
 pub mod drive;
 pub mod math;
+pub mod sound;
 
 pub const TICKS_PER_FIELD: u32 = 70_618;
 #[repr(C)]

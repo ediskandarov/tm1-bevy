@@ -20,6 +20,7 @@ pub enum VehicleSound {
     Guns {
         car: Vehicle,
         channels: [i32; 2],
+        range: u32,
         firing: bool,
     },
 }
@@ -29,6 +30,7 @@ pub struct BattleSound {
     pub exclusive: Option<ExclusiveVoice>,
     pub id: usize,
     pub channels: [i32; 2],
+    pub range: u32,
 }
 
 pub(crate) fn effect_volume(kind: i32) -> i32 {
@@ -591,6 +593,7 @@ pub fn advance(
             if let Some(firing) = request {
                 state.vehicle_sounds.push(VehicleSound::Guns {
                     car,
+                    range: state.listener.sound_range(position),
                     channels: state.listener.channels(position, volume, false),
                     firing,
                 });
@@ -619,6 +622,7 @@ pub fn advance(
                     volume_percent,
                     id: first_contact_sample + voice as usize,
                     exclusive: Some(ExclusiveVoice::Contact(voice)),
+                    range: state.listener.sound_range(position),
                     channels: state.listener.channels(position, volume, false),
                 });
             }
@@ -629,19 +633,22 @@ pub fn advance(
             let Some(id) = effect_sample(kind, life, state.recharge_sound()) else {
                 continue;
             };
+            let position = if kind == 36 {
+                state.player.position()
+            } else {
+                [x, y, z]
+            };
+            let full_range = matches!(kind, 29 | 30 | 33 | 37);
             state.sounds.push(BattleSound {
                 volume_percent: effect_volume(kind),
                 exclusive: effect_voice(kind),
                 id,
-                channels: state.listener.channels(
-                    if kind == 36 {
-                        state.player.position()
-                    } else {
-                        [x, y, z]
-                    },
-                    volume,
-                    matches!(kind, 29 | 30 | 33 | 37),
-                ),
+                range: if full_range {
+                    0
+                } else {
+                    state.listener.sound_range(position)
+                },
+                channels: state.listener.channels(position, volume, full_range),
             });
         }
         for slot in 0..2 {
@@ -650,6 +657,7 @@ pub fn advance(
                     volume_percent: 99,
                     exclusive: Some(ExclusiveVoice::Hover),
                     id: state.recharge_sound() + 3,
+                    range: state.listener.sound_range([x, y, z]),
                     channels: state.listener.channels([x, y, z], volume, false),
                 });
             }
