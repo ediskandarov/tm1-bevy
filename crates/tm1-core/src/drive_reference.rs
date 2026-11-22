@@ -2265,7 +2265,7 @@ fn barricade_impacts_match_retail_switches() {
         let branches = world
             .polygons
             .iter()
-            .filter_map(|p| p.barricade)
+            .flat_map(|p| p.arena_switches.iter().copied())
             .filter(|(s, _)| usize::from(*s) == slot)
             .fold(0u8, |mask, (_, branch)| mask | (1 << branch));
         assert_eq!(branches, 0b111);
@@ -2288,12 +2288,109 @@ fn barricade_impacts_match_retail_switches() {
             r.cpu
                 .call(0x801468bc, &[700, slot as u32 + 1, bearing as u32]);
             assert_eq!(
-                r.scene.barricade_branches()[slot],
+                r.scene.arena_switch_branches()[slot],
                 r.cpu.ram[((addr + 7) & 0x1fffff) as usize],
                 "{level:?} slot {slot} bearing {bearing}"
             );
         }
     }
     r.scene.reset_projectiles();
-    assert_eq!(r.scene.barricade_branches(), [0; 4]);
+    assert_eq!(r.scene.arena_switch_branches(), [0; 8]);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn rooftop_drop_box_matches_retail() {
+    unsafe extern "C" {
+        fn bulDispatchDamage(id: i32, tag: i32, sub: i32, damage: i32, dir: *const i32, owner: i32);
+    }
+    for vehicle in [Vehicle::YellowJacket, Vehicle::Hammerhead] {
+        let level = Level::Rooftops;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc
+            .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
+            .unwrap();
+        let world = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .extract_kind(1)
+            .unwrap();
+        let mut r = Reference::on_level(vehicle, true, level);
+        let mut records = Vec::new();
+        for (slot, kind, global) in [(4, 1016u16, 0x8018c5c8), (5, 1018, 0x8018c5c4)] {
+            let offset = (0..data.len() - 8)
+                .step_by(4)
+                .find(|&i| data[i] == 9 && data[i + 2..i + 4] == kind.to_le_bytes())
+                .expect("missing roof switch");
+            let addr = 0x800188b8 + offset as u32;
+            r.cpu.call(0x80140f54, &[addr, u32::from(kind)]);
+            assert_eq!(r.cpu.word(global), addr);
+            assert!(
+                world
+                    .polygons
+                    .iter()
+                    .any(|p| p.arena_switches.iter().any(|&(s, _)| s == slot))
+            );
+            records.push(offset + 7);
+        }
+        // Aim the first midpoint collision sample inside the suspended crate.
+        let vertices = world
+            .polygons
+            .iter()
+            .filter(|p| p.arena_switches.contains(&(4, 0)))
+            .flat_map(|p| p.vertices.iter().map(|v| v.position));
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for pos in vertices {
+            for i in 0..3 {
+                lo[i] = lo[i].min(pos[i]);
+                hi[i] = hi[i].max(pos[i]);
+            }
+        }
+        let mut pos: [i32; 3] = std::array::from_fn(|i| ((lo[i] + hi[i]) * 0.5) as i32);
+        pos[0] -= 125;
+        let dir = [4096, 0, 0];
+        unsafe extern "C" {
+            fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
+        }
+        r.sync();
+        for (addr, values) in [(0x800be000, dir), (0x800be020, pos)] {
+            for (i, value) in values.into_iter().enumerate() {
+                put(&mut r.cpu, addr + 4 * i as u32, value as u32);
+            }
+        }
+        r.cpu.call(0x8010c930, &[1, 0x800be000, 0x800be020, 1]);
+        {
+            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                create_bullet(1, dir.as_ptr(), pos.as_ptr(), 1);
+                tm1_use_scene(std::ptr::null_mut());
+            }
+        }
+        r.cpu.call(0x8010d03c, &[]);
+        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+        assert_eq!(r.cpu.ram[0x188b8 + records[0]], 1, "retail shot at {pos:?}");
+        assert_eq!(r.scene.arena_switch_branches()[4], 1);
+        for tick in 0..25 {
+            if matches!(tick, 4 | 15) {
+                let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe {
+                    tm1_use_scene(r.scene.native.as_ptr());
+                    bulDispatchDamage(8, 1016, 0, 1, std::ptr::null(), 0);
+                    tm1_use_scene(std::ptr::null_mut());
+                }
+                r.cpu.call(0x80110f74, &[8, 1016, 0, 1]);
+            }
+            r.scene
+                .step(&mut r.player, &mut r.police, Input::default(), 3);
+            r.cpu.call(0x8014b0a4, &[]);
+            for (i, &offset) in records.iter().enumerate() {
+                assert_eq!(
+                    r.scene.arena_switch_branches()[4 + i],
+                    r.cpu.ram[0x188b8 + offset],
+                    "tick {tick}, switch {i}"
+                );
+            }
+        }
+    }
 }

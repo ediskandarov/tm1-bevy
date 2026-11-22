@@ -929,7 +929,7 @@ fn draw_view(
     let up = right.cross(forward);
     let near = arena.radius * 0.005;
     let hidden = drive.contacts.hidden_pickups();
-    let barricades = drive.contacts.barricade_branches();
+    let switches = drive.contacts.arena_switch_branches();
     let (_, stand_branches) = drive.contacts.health_stands();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
@@ -966,8 +966,9 @@ fn draw_view(
         {
             continue;
         }
-        if p.barricade
-            .is_some_and(|(slot, branch)| barricades[usize::from(slot)] != branch)
+        if p.arena_switches
+            .iter()
+            .any(|&(slot, branch)| switches[usize::from(slot)] != branch)
         {
             continue;
         }

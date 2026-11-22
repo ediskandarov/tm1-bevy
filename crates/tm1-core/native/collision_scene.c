@@ -14,8 +14,10 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count, model_count;
-    DbSwitch* barricades[4];
-    u8 initial_barricades[4];
+    // Slots 0..3 are Freeway barricades, 4 is the release, 5 the falling box.
+    DbSwitch* arena_switches[6];
+    int drop_box_tick;
+    u8 initial_switches[6];
     DbSwitch* stands[10];
     u16 stand_slots, active_stands;
     int regen_timer;
@@ -133,10 +135,14 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
         if (!load(s, addr, 4, &n->sw.sub, 4) || n->sw.sel >= n->sw.nChild
             || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth))
             return NULL;
-        if (n->h.kind == UA_BARRICADE && n->sw.sub >= 1 && n->sw.sub <= 4) {
-            int slot = n->sw.sub - 1;
-            s->barricades[slot] = &n->sw;
-            s->initial_barricades[slot] = n->sw.sel;
+        int slot = -1;
+        if (n->h.kind == UA_BARRICADE && n->sw.sub >= 1 && n->sw.sub <= 4)
+            slot = n->sw.sub - 1;
+        else if (n->h.kind == UA_DROP_BOX || n->h.kind == UA_FALLING_BOX)
+            slot = n->h.kind == UA_DROP_BOX ? 4 : 5;
+        if (slot >= 0) {
+            s->arena_switches[slot] = &n->sw;
+            s->initial_switches[slot] = n->sw.sel;
         }
         if (n->h.kind == 920 && n->sw.sub >= 1 && n->sw.sub <= 10 && n->sw.nChild == 2) {
             int slot = n->sw.sub - 1;
@@ -394,9 +400,10 @@ void tm1_reset_projectiles(CollisionScene* s)
     tm1_new_life(s);
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
-    for (int i = 0; i < 4; i++)
-        if (s->barricades[i])
-            s->barricades[i]->sel = s->initial_barricades[i];
+    s->drop_box_tick = 0;
+    for (int i = 0; i < 6; i++)
+        if (s->arena_switches[i])
+            s->arena_switches[i]->sel = s->initial_switches[i];
     s->active_stands = s->stand_slots;
     s->regen_timer = -1;
     for (int i = 0; i < 10; i++)
@@ -495,7 +502,13 @@ s32 uaIsCarMatID(s16 id, s8* player, u16* idx)
 }
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
-    (void)tag;
+    if ((id <= 0 || id == 8) && tag == UA_DROP_BOX) {
+        DbSwitch* release = current->arena_switches[4];
+        if (release && release->nChild > 1)
+            release->sel = 1;
+        current->drop_box_tick = 1;
+        return;
+    }
     (void)sub;
     (void)owner;
     if (id == 1 || (id >= 50 && id < 50 + current->opponent_count))
@@ -713,17 +726,32 @@ void UAeffectBarricade(s32 tag, s32 sub, s32 bearing)
 {
     if (!current || tag != UA_BARRICADE || sub < 1 || sub > 4 || (u32)bearing > 1)
         return;
-    DbSwitch* node = current->barricades[sub - 1];
+    DbSwitch* node = current->arena_switches[sub - 1];
     if (node && bearing + 1 < node->nChild)
         node->sel = bearing + 1;
 }
 
-u32 tm1_barricade_states(const CollisionScene* scene)
+void tm1_move_drop_box(void)
 {
-    u32 states = 0;
-    for (int i = 0; i < 4; i++)
-        if (scene->barricades[i])
-            states |= (u32)scene->barricades[i]->sel << (8 * i);
+    if (!current->drop_box_tick)
+        return;
+    int branch = current->drop_box_tick - 1;
+    DbSwitch* box = current->arena_switches[5];
+    if (box && branch < box->nChild)
+        box->sel = branch;
+    if (++current->drop_box_tick == 10) {
+        if (box && box->nChild > 9)
+            box->sel = 9;
+        current->drop_box_tick = 0;
+    }
+}
+
+uint64_t tm1_arena_switch_states(const CollisionScene* scene)
+{
+    uint64_t states = 0;
+    for (int i = 0; i < 6; i++)
+        if (scene->arena_switches[i])
+            states |= (uint64_t)scene->arena_switches[i]->sel << (8 * i);
     return states;
 }
 void arena_effect(VECTOR3* pos, s32 kind)

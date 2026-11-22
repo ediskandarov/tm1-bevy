@@ -69,7 +69,7 @@ pub struct Polygon {
     pub animation: Vec<AnimationFrame>,
     pub billboard: Option<[f32; 2]>,
     pub pickup: Option<u8>,
-    pub barricade: Option<(u8, u8)>,
+    pub arena_switches: Vec<(u8, u8)>,
     pub health_stand: Option<(u8, u8)>,
     pub object_id: u32,
     pub source_offset: usize,
@@ -588,13 +588,19 @@ impl<'a> Dmd<'a> {
                     .map_or(d[p + 7], |(_, stage)| stage);
                 ensure!(child < d[p + 6], "switch child out of range");
                 let kind = u16le(d, p + 2)?;
-                if kind == 700 || (kind == 920 && d[p + 6] == 2) {
+                if matches!(kind, 700 | 1016 | 1018) || (kind == 920 && d[p + 6] == 2) {
                     let id = u16le(d, p + 4)?;
-                    ensure!(
-                        (1..=if kind == 700 { 4 } else { 10 }).contains(&id),
-                        "invalid switch ID"
-                    );
-                    let slot = (id - 1) as u8;
+                    let slot = match kind {
+                        1016 => 4,
+                        1018 => 5,
+                        _ => {
+                            ensure!(
+                                (1..=if kind == 700 { 4 } else { 10 }).contains(&id),
+                                "invalid switch ID"
+                            );
+                            (id - 1) as u8
+                        }
+                    };
                     if kind == 920 {
                         scene
                             .health_stands
@@ -611,11 +617,11 @@ impl<'a> Dmd<'a> {
                             scene,
                         )?;
                         for poly in &mut scene.polygons[start..] {
-                            let state = Some((slot, branch as u8));
-                            if kind == 700 {
-                                poly.barricade = state;
+                            let state = (slot, branch as u8);
+                            if kind != 920 {
+                                poly.arena_switches.push(state);
                             } else {
-                                poly.health_stand = state;
+                                poly.health_stand = Some(state);
                             }
                         }
                     }
@@ -756,7 +762,7 @@ impl<'a> Dmd<'a> {
                 animation: Vec::new(),
                 billboard,
                 pickup,
-                barricade: None,
+                arena_switches: Vec::new(),
                 health_stand: None,
                 object_id: ptr,
                 source_offset: poly,

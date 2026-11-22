@@ -943,11 +943,11 @@ impl CollisionScene {
             battle: [0; 3],
         })
     }
-    pub fn barricade_branches(&self) -> [u8; 4] {
+    pub fn arena_switch_branches(&self) -> [u8; 8] {
         unsafe extern "C" {
-            fn tm1_barricade_states(scene: *const std::ffi::c_void) -> u32;
+            fn tm1_arena_switch_states(scene: *const std::ffi::c_void) -> u64;
         }
-        unsafe { tm1_barricade_states(self.native.as_ptr()) }.to_le_bytes()
+        unsafe { tm1_arena_switch_states(self.native.as_ptr()) }.to_le_bytes()
     }
     /// Active and selected DMD branch bits for the ten health stand slots.
     pub fn health_stands(&self) -> (u16, u16) {
