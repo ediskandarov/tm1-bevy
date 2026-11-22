@@ -1201,6 +1201,21 @@ fn exterior_damage_lights_original() {
                     .unwrap() as u8
             });
             assert_eq!(scene.car_lights(), expected, "tick {tick}");
+            if tick == 1 {
+                assert!(expected.contains(&2));
+                // Execute the InitUALevel2 loop that rebinds every registered model.
+                cpu.put(0x8018c336, &(nodes.len() as u16).to_le_bytes());
+                for (i, &cs) in nodes.iter().enumerate() {
+                    put(&mut cpu, 0x8019ee0c + 4 * i as u32, cs);
+                    put(&mut cpu, 0x8019edd8 + 4 * i as u32, 10 * (1 + i as u32));
+                }
+                cpu.call_until(0x8014c6dc, &[], 0x8014c748);
+                tm1_new_life(scene.native.as_ptr());
+                assert!(nodes.iter().all(|&cs| cpu.word(cs + 4) == envs[0]));
+                assert_eq!(scene.car_lights(), [0; 9]);
+                tm1_capture_car_lights();
+                assert_eq!(scene.car_lights(), [0; 9]);
+            }
         }
         tm1_use_scene(std::ptr::null_mut());
     }
@@ -4825,6 +4840,23 @@ fn barricade_impacts_match_retail_switches() {
             );
         }
     }
+    let damaged = r.scene.arena_switch_branches();
+    assert!(damaged[..4].iter().all(|&branch| branch != 0));
+    r.sync();
+    put(&mut r.cpu, 0x8018c3b4, level as u32);
+    r.cpu.put(0x8018c624, &[1]);
+    r.cpu.call(0x801268f8, &[]);
+    // Run Freeway life initialization through the final reverb request.
+    r.cpu.call_until(0x8014c770, &[], 0x8014c950);
+    r.scene.respawn_player(&mut r.player);
+    for slot in 0..4 {
+        let addr = r.cpu.word(0x8019cfe4 + 4 * slot);
+        assert_eq!(
+            r.cpu.ram[((addr + 7) & 0x1fffff) as usize],
+            damaged[slot as usize]
+        );
+    }
+    assert_eq!(r.scene.arena_switch_branches(), damaged);
     r.scene.reset_projectiles();
     assert_eq!(r.scene.arena_switch_branches(), [0; 8]);
 }

@@ -725,6 +725,11 @@ void tm1_regenerate_stands(void)
 
 void tm1_new_life(CollisionScene* s)
 {
+    // InitUALevel restores each model's light environment while hit timers keep running.
+    memset(s->displayed_lights, 0, sizeof s->displayed_lights);
+    s->taxi.env = NULL;
+    for (int i = 0; i < s->model_count; i++)
+        s->opponents[i].env = NULL;
     s->carry_notice_frames = 0;
     s->music.playing = false;
     memset(s->drops, 0, sizeof s->drops);
@@ -750,11 +755,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->wheel_distance, 0, sizeof s->wheel_distance);
     memset(s->wheel_steps, 0, sizeof s->wheel_steps);
     memset(s->hit_lights, 0, sizeof s->hit_lights);
-    memset(s->displayed_lights, 0, sizeof s->displayed_lights);
     s->hit_light_flash = false;
-    s->taxi.env = NULL;
-    for (int i = 0; i < s->model_count; i++)
-        s->opponents[i].env = NULL;
     memset(&s->hit_sheet, 0, sizeof s->hit_sheet);
     for (int i = 0; i < s->num_targets; i++)
         s->targets[i].health = target_health(s->targets[i].type);
