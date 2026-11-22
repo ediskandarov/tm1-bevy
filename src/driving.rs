@@ -455,20 +455,26 @@ pub fn advance(
         for &[x, y, z, kind, life] in &effects[..count] {
             let id = match (kind, life) {
                 (26, 2) => state.recharge_sound(),
+                (36, 2) => state.recharge_sound() + 1,
                 (0, 2) => 1,
                 (11, 2) => 6,
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
                 (1, 2) => 2,
-                (33, 2) | (2, 7) | (28, 32) | (29 | 30, 16) => 3,
+                (28, 32) => state.recharge_sound() + 2,
+                (33, 2) | (2, 7) | (37, 32) | (29 | 30, 16) => 3,
                 (12, 2) => 4,
                 (kind @ 13..=17, 2) => (kind - 6) as usize,
                 _ => continue,
             };
             state.sounds.push(BattleSound {
                 id,
-                position: [x, y, z],
-                full_range: kind == 33,
+                position: if kind == 36 {
+                    state.player.position()
+                } else {
+                    [x, y, z]
+                },
+                full_range: matches!(kind, 29 | 30 | 33 | 37),
             });
         }
         if state.player.health().0 > 0 && state.opponents.iter().all(|car| car.health().0 <= 0) {

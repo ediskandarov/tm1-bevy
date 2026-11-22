@@ -30,7 +30,7 @@ s32 CAR_HD(VECTOR3* pt, s32 owner, s32 flag)
             }
         }
     }
-    return 0;
+    return arena_hit_target(pt, owner, flag);
 }
 s32 find_free_bullet(s32 count)
 {

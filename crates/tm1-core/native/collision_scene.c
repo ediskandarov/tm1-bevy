@@ -4,7 +4,25 @@
 
 // Native nodes contain host pointers. Every pointer slot in the JP data is
 // resolved separately; only fixed-width scalar records are copied.
+typedef struct DecodedNode {
+    DbNode model;
+    u32 address;
+} DecodedNode;
+
+typedef struct ArenaTarget {
+    s32 type, instance, health;
+    VECTOR3 pos;
+} ArenaTarget;
+
+typedef struct DamageNode {
+    DbNode* node;
+    u8 initial;
+} DamageNode;
+
 typedef struct CollisionScene {
+    ArenaTarget targets[50];
+    DamageNode damage_nodes[2][30];
+    int num_targets, num_damage_nodes[2];
     const u8* bytes;
     size_t size;
     u32 base;
@@ -17,7 +35,6 @@ typedef struct CollisionScene {
     // Freeway barricades occupy 0..3. Rooftop crate and window pairs follow.
     DbSwitch* arena_switches[8];
     int drop_box_tick, window_tick;
-    VECTOR3 window_pos;
     u8 initial_switches[8];
     DbSwitch* stands[10];
     u16 stand_slots, active_stands;
@@ -60,19 +77,19 @@ static bool load(CollisionScene* s, u32 addr, size_t offset, void* out, size_t n
     memcpy(out, s->bytes + i, n);
     return true;
 }
-static DbNode* decode(CollisionScene*, u32, unsigned, VECTOR3);
+static DbNode* decode(CollisionScene*, u32, unsigned);
 static bool children(
-    CollisionScene* s, u32 addr, size_t offset, DbNode** out, size_t count, unsigned depth, VECTOR3 origin)
+    CollisionScene* s, u32 addr, size_t offset, DbNode** out, size_t count, unsigned depth)
 {
     for (size_t i = 0; i < count; i++) {
         u32 ptr;
-        if (!load(s, addr, offset + 4 * i, &ptr, 4) || !(out[i] = decode(s, ptr, depth + 1, origin)))
+        if (!load(s, addr, offset + 4 * i, &ptr, 4) || !(out[i] = decode(s, ptr, depth + 1)))
             return false;
     }
     return true;
 }
 
-static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origin)
+static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
 {
     if (depth >= 64 || addr < s->base || (addr & 3))
         return NULL;
@@ -81,9 +98,11 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
         return NULL;
     if (s->nodes[slot])
         return s->nodes[slot];
-    DbNode* n = calloc(1, sizeof(*n));
-    if (!n)
+    DecodedNode* record = calloc(1, sizeof(*record));
+    if (!record)
         return NULL;
+    record->address = addr;
+    DbNode* n = &record->model;
     s->nodes[slot] = n;
     s->visiting[slot] = 1;
     if (!load(s, addr, 0, &n->h, 4))
@@ -95,7 +114,7 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
         break;
     case DB_OP_GROUP:
         if (!load(s, addr, 4, &n->grp.center, 20)
-            || !children(s, addr, 24, n->grp.child, n->grp.nChild, depth, origin))
+            || !children(s, addr, 24, n->grp.child, n->grp.nChild, depth))
             return NULL;
         break;
     case DB_OP_LOD:
@@ -106,26 +125,20 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
             DbLodRec* r = calloc(1, sizeof(*r));
             n->lod.rec[i] = r;
             if (!r || !load(s, addr, 20 + i * 4, &ptr, 4) || !load(s, ptr, 0, &r->far, 8)
-                || !children(s, ptr, 8, &r->child, 1, depth, origin))
+                || !children(s, ptr, 8, &r->child, 1, depth))
                 return NULL;
         }
         break;
     case DB_OP_ROT:
         if (!load(s, addr, 4, &n->rot.mat, 36))
             return NULL;
-        origin.vx += n->rot.mat.t[0];
-        origin.vy += n->rot.mat.t[1];
-        origin.vz += n->rot.mat.t[2];
-        if (!children(s, addr, 40, n->rot.child, n->rot.nChild, depth, origin))
+        if (!children(s, addr, 40, n->rot.child, n->rot.nChild, depth))
             return NULL;
         break;
     case DB_OP_TRANS:
         if (!load(s, addr, 4, &n->trans.ofs, 16))
             return NULL;
-        origin.vx += n->trans.ofs.vx;
-        origin.vy += n->trans.ofs.vy;
-        origin.vz += n->trans.ofs.vz;
-        if (!children(s, addr, 20, n->trans.child, n->trans.nChild, depth, origin))
+        if (!children(s, addr, 20, n->trans.child, n->trans.nChild, depth))
             return NULL;
         if (UA_IS_PICKUP(n->h.kind) && n->trans.sub && n->trans.sub <= 50 && n->trans.nChild == 1) {
             int i = n->trans.sub - 1;
@@ -137,12 +150,12 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
         break;
     case DB_OP_ANIM:
         if (!load(s, addr, 4, &n->anim.sub, 12) || n->anim.cur >= n->anim.nChild
-            || !children(s, addr, 16, n->anim.child, n->anim.nChild, depth, origin))
+            || !children(s, addr, 16, n->anim.child, n->anim.nChild, depth))
             return NULL;
         break;
     case DB_OP_SWITCH:
         if (!load(s, addr, 4, &n->sw.sub, 4) || n->sw.sel >= n->sw.nChild
-            || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth, origin))
+            || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth))
             return NULL;
         int slot = -1;
         if (n->h.kind == UA_BARRICADE && n->sw.sub >= 1 && n->sw.sub <= 4)
@@ -151,7 +164,6 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
             slot = n->h.kind == UA_DROP_BOX ? 4 : 5;
         else if (n->h.kind == UA_UNK_1001) {
             slot = 6;
-            s->window_pos = origin;
         } else if (n->h.kind == UA_BREAKING_WINDOW)
             slot = 7;
         if (slot >= 0) {
@@ -181,7 +193,7 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
             if (!load(s, addr, 12 + i * 4, &ptr, 4))
                 return NULL;
             if (ptr) {
-                DbNode* child = decode(s, ptr, depth + 1, origin);
+                DbNode* child = decode(s, ptr, depth + 1);
                 if (!child)
                     return NULL;
                 if (i)
@@ -207,6 +219,116 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origi
     s->visiting[slot] = 0;
     return n;
 }
+// DB.c visits the last child first, including inactive switches and both
+// visibility branches. Target IDs and the destructible node indices are independent.
+static int target_health(int type)
+{
+    switch (type) {
+    case 600: case 1017: return 8;
+    case 601: case 716: case 720: return 3;
+    case 610: return 5;
+    case 611: return 15;
+    case 612: return 10;
+    case 613: return 20;
+    case 715: return 12;
+    case 902: return 25;
+    case 1000: return 100;
+    case 1002: case 1009: case 1010: return 4;
+    case 1015: return 2;
+    default: return 1;
+    }
+}
+
+// Zero selects the UA_SW switch table, one the child-count table.
+static int damage_node_class(int type)
+{
+    switch (type) {
+    case 715: case 716: case 720: case 721: case 730:
+    case 1003: case 1004: case 1005: case 1008: case 1015:
+        return 1;
+    case 600: case 601: case 610: case 611: case 612: case 613: case 770: case 902:
+    case 930: case 931: case 1000: case 1001: case 1002: case 1009: case 1010: case 1017:
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+static bool scan_targets(CollisionScene* s, DbNode* n, VECTOR3 pos, unsigned* visits)
+{
+    if (!n)
+        return true;
+    if (++*visits > 1000000)
+        return false;
+    DbNode** children = NULL;
+    int count = 0;
+    int op = n->h.op;
+    int type = n->h.kind;
+    switch (op) {
+    case DB_OP_GROUP:
+        children = n->grp.child;
+        count = n->grp.nChild;
+        break;
+    case DB_OP_ROT: {
+        VECTOR3 sum = {
+            pos.vx + n->rot.mat.t[0],
+            pos.vy + n->rot.mat.t[1],
+            pos.vz + n->rot.mat.t[2],
+        };
+        mathMulVec(&n->rot.mat, &sum, &pos);
+        children = n->rot.child;
+        count = n->rot.nChild;
+        break;
+    }
+    case DB_OP_TRANS:
+        pos.vx += n->trans.ofs.vx;
+        pos.vy += n->trans.ofs.vy;
+        pos.vz += n->trans.ofs.vz;
+        children = n->trans.child;
+        count = n->trans.nChild;
+        break;
+    case DB_OP_SWITCH:
+        children = n->sw.child;
+        count = n->sw.nChild;
+        break;
+    case DB_OP_ANIM:
+        children = n->anim.child;
+        count = n->anim.nChild;
+        break;
+    case DB_OP_LOD:
+        for (int i = n->lod.nRec - 1; i >= 0; i--)
+            if (!scan_targets(s, n->lod.rec[i]->child, pos, visits))
+                return false;
+        break;
+    case DB_OP_CTRL:
+        return scan_targets(s, n->ctrl.childIn, pos, visits)
+            && scan_targets(s, n->ctrl.childOut, pos, visits);
+    }
+
+    int group = damage_node_class(type);
+    if (group >= 0 && op != DB_OP_BOX && op != DB_OP_VOLUME && op != DB_OP_UNK_6 && op != DB_OP_UNK_10) {
+        u16 sub;
+        if (!load(s, ((DecodedNode*)n)->address, group ? 22 : 4, &sub, sizeof(sub)))
+            return false;
+        int index = s->num_damage_nodes[group];
+        if (op == (group ? DB_OP_GROUP : DB_OP_SWITCH) && type != 930 && type != 931 && index < 30) {
+            s->damage_nodes[group][index] = (DamageNode){ n, group ? n->grp.nChild : n->sw.sel };
+            sub = index;
+            if (group)
+                n->grp.sub = sub;
+            else
+                n->sw.sub = sub;
+            s->num_damage_nodes[group]++;
+        }
+        if (s->num_targets < 50)
+            s->targets[s->num_targets++] = (ArenaTarget){ type, sub, target_health(type), pos };
+    }
+    for (int i = count - 1; i >= 0; i--)
+        if (!scan_targets(s, children[i], pos, visits))
+            return false;
+    return true;
+}
+
 static CollisionScene* current;
 void tm1_scene_free(CollisionScene* s)
 {
@@ -243,8 +365,8 @@ CollisionScene* tm1_scene_load(
     s->slots = size / 4;
     s->nodes = calloc(s->slots, sizeof(DbNode*));
     s->visiting = calloc(s->slots, 1);
-    if (!s->nodes || !s->visiting || !(s->world.epNode = decode(s, world, 0, (VECTOR3){ 0 }))
-        || !(s->taxi.epNode = decode(s, taxi, 0, (VECTOR3){ 0 }))) {
+    if (!s->nodes || !s->visiting || !(s->world.epNode = decode(s, world, 0))
+        || !(s->taxi.epNode = decode(s, taxi, 0))) {
         tm1_scene_free(s);
         return NULL;
     }
@@ -269,7 +391,7 @@ CollisionScene* tm1_scene_load(
             if (root != (j ? opponents[j - 1] : taxi))
                 continue;
             Cs* cs = j ? &s->opponents[j - 1] : &s->taxi;
-            if (cs->drawMode || !(cs->epNode = decode(s, root, 0, (VECTOR3){ 0 })))
+            if (cs->drawMode || !(cs->epNode = decode(s, root, 0)))
                 goto invalid;
             cs->unkC0 = j ? 49 + j : 1;
             cs->unk0C = cs->drawMode = 1;
@@ -282,6 +404,9 @@ CollisionScene* tm1_scene_load(
     for (size_t i = 0; i < count; i++)
         if (!s->opponents[i].drawMode)
             goto invalid;
+    unsigned visits = 0;
+    if (!scan_targets(s, s->world.epNode, (VECTOR3){0}, &visits))
+        goto invalid;
     s->regen_timer = -1;
     s->bytes = NULL;
     return s;
@@ -414,6 +539,17 @@ void tm1_reset_projectiles(CollisionScene* s)
     tm1_new_life(s);
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
+    for (int i = 0; i < s->num_targets; i++)
+        s->targets[i].health = target_health(s->targets[i].type);
+    for (int group = 0; group <= 1; group++) {
+        for (int i = 0; i < s->num_damage_nodes[group]; i++) {
+            DamageNode model = s->damage_nodes[group][i];
+            if (group)
+                model.node->grp.nChild = model.initial;
+            else
+                model.node->sw.sel = model.initial;
+        }
+    }
     s->drop_box_tick = s->window_tick = 0;
     for (int i = 0; i < 8; i++)
         if (s->arena_switches[i])
@@ -514,6 +650,114 @@ s32 uaIsCarMatID(s16 id, s8* player, u16* idx)
     }
     return 0;
 }
+int tm1_target_record(const CollisionScene* s, int index, ArenaTarget* out)
+{
+    if (index < 0 || index >= s->num_targets)
+        return 0;
+    *out = s->targets[index];
+    return 1;
+}
+int arena_hit_target(const VECTOR3* p, int owner, int radius)
+{
+    for (int i = 0; i < current->num_targets; i++) {
+        ArenaTarget* t = &current->targets[i];
+        if (t->health > 0 && t->type != -owner
+            && (abs(p->vx - t->pos.vx) >> 3) < radius + 5
+            && (abs(p->vy - t->pos.vy) >> 3) < radius + 5
+            && (abs(p->vz - t->pos.vz) >> 3) < radius + 5)
+            return 500 + i;
+    }
+    return 0;
+}
+
+static void damage_target(int type, int sub, int damage)
+{
+    int group = damage_node_class(type);
+    if (group < 0 || type == 930 || type == 931)
+        return;
+    // target_takehit keeps the last living match when a model is instanced.
+    for (int i = current->num_targets - 1; i >= 0; i--) {
+        ArenaTarget* t = &current->targets[i];
+        if (t->type != type || t->instance != sub || t->health <= 0)
+            continue;
+        t->health -= damage;
+        if (t->health > 0)
+            return;
+        if ((unsigned)sub < (unsigned)current->num_damage_nodes[group]) {
+            DbNode* model = current->damage_nodes[group][sub].node;
+            if (group)
+                model->grp.nChild = 0;
+            else if (model->sw.nChild > 1)
+                model->sw.sel = 1;
+        }
+        VECTOR3 pos = t->pos;
+        do_smoke(&pos);
+        do_puff(&pos);
+        switch (type) {
+        case 1001:
+            current->window_tick = 1;
+            arena_effect(&pos, 31);
+            arena_effect(&pos, 33);
+            break;
+        case 600: case 601: case 610: case 612: case 1017:
+            arena_effect(&pos, 28);
+            arena_effect(&pos, 35);
+            break;
+        case 611: case 613: {
+            VECTOR3 offset = {pos.vx - 40, pos.vy + 40, pos.vz + 30};
+            arena_effect(&offset, 29);
+            arena_effect(&offset, 28);
+            do_smoke(&offset);
+            do_puff(&offset);
+            do_smoke(&pos);
+            break;
+        }
+        case 720: case 770:
+            arena_effect(&pos, 36);
+            break;
+        case 730: {
+            arena_effect(&pos, 37);
+            arena_effect(&pos, 35);
+            int slot = FindFreeDropWeap();
+            if (slot >= 0) {
+                DropWeap* oil = &current->drops[slot];
+                oil->idx = 0;
+                oil->kind = WEAPON_OIL;
+                oil->type = HIT_OIL;
+                oil->life = 400;
+                oil->pos = pos;
+                oil->power = 0;
+            }
+            break;
+        }
+        case 1000:
+            for (int j = 0; j < 45; j++) {
+                VECTOR3 cloud;
+                cloud.vx = arena_rand() % 2400 + 9600;
+                cloud.vy = arena_rand() % 2400 + 4000;
+                cloud.vz = (arena_rand() & 1023) + 8000;
+                arena_effect(&cloud, 34);
+                if (arena_rand() & 1)
+                    arena_effect(&cloud, 30);
+            }
+            break;
+        }
+        return;
+    }
+}
+
+int tm1_damage_branch(const CollisionScene* s, u32 addr)
+{
+    if (addr < s->base || (addr & 3) || (addr - s->base) / 4 >= s->slots)
+        return 0;
+    DbNode* n = s->nodes[(addr - s->base) / 4];
+    if (!n)
+        return 0;
+    if (n->h.op == DB_OP_GROUP)
+        return n->grp.nChild == 0;
+    return n->h.op == DB_OP_SWITCH ? n->sw.sel : 0;
+}
+
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
     if ((id <= 0 || id == 8) && tag == UA_DROP_BOX) {
@@ -523,16 +767,13 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
         current->drop_box_tick = 1;
         return;
     }
-    if ((id <= 0 || id == 8) && tag == UA_UNK_1001) {
-        DbSwitch* pane = current->arena_switches[6];
-        if (pane && pane->sub == sub && pane->sel == 0 && pane->nChild > 1 && dmg > 0) {
-            pane->sel = 1;
-            current->window_tick = 1;
-            do_smoke(&current->window_pos);
-            do_puff(&current->window_pos);
-            arena_effect(&current->window_pos, 31);
-            arena_effect(&current->window_pos, 33);
-        }
+    if (id >= 500 && id < 500 + current->num_targets) {
+        ArenaTarget* t = &current->targets[id - 500];
+        damage_target(t->type, t->instance, dmg);
+        return;
+    }
+    if (id <= 0 || id == 8) {
+        damage_target(tag, sub, dmg);
         return;
     }
     (void)owner;
@@ -801,10 +1042,12 @@ void arena_effect(VECTOR3* pos, s32 kind)
     case 2: e[4] = 7; break;
     case 8:
     case 34: e[4] = 88; break;
+    case 35: e[4] = 104; break;
     case 31: e[4] = 24; break;
     case 32: e[4] = 16; break;
     case 27: e[4] = 8; break;
-    case 28: e[4] = 32; break;
+    case 28:
+    case 37: e[4] = 32; break;
     case 29:
     case 30: e[4] = 16; break;
     default: e[4] = 2; break;

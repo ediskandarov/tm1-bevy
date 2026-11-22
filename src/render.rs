@@ -946,14 +946,17 @@ fn draw_view(
             .skip(usize::from(hide_player))
             .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
     );
-    let hidden_ranges: Vec<_> = arena
-        .scene
-        .visibility
-        .iter()
-        .map(|controller| controller.hidden_polygons([eye.x, -eye.z, eye.y]))
-        .collect();
+    let mut hidden_world = vec![false; arena.vehicle_start];
+    for controller in &arena.scene.visibility {
+        hidden_world[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
+    }
+    for (address, branch, polygons) in &arena.scene.damage_branches {
+        if drive.contacts.damage_branch(*address) != *branch {
+            hidden_world[polygons.clone()].fill(true);
+        }
+    }
     for i in visible {
-        if hidden_ranges.iter().any(|range| range.contains(&i)) {
+        if i < arena.vehicle_start && hidden_world[i] {
             continue;
         }
         let p = &arena.scene.polygons[i];
@@ -1092,8 +1095,9 @@ fn draw_view(
                 }
                 31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
                 32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
+                35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
-                28 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
+                28 | 37 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
                 29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
                 30 => (&arena.explosion_frames[(16 - ttl) as usize], 96),
                 _ => return None,
@@ -1181,7 +1185,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 8 | 26..=34 => continue,
+            3 | 8 | 26..=37 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };

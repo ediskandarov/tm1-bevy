@@ -44,23 +44,27 @@ fn supported_disc_arena_and_audio() {
         assert_ne!(damaged.object_ids, critical.object_ids);
     }
     let scene = db.extract_kind(1).unwrap();
-    assert_eq!(scene.object_ids.len(), 53);
-    assert_eq!(
+    assert_eq!(scene.object_ids.len(), 63);
+    let intact = || {
         scene
             .polygons
             .iter()
-            .filter(|p| p.billboard.is_none())
-            .count(),
-        1273
-    );
-    assert_eq!(
-        scene
-            .polygons
-            .iter()
-            .filter(|p| p.billboard.is_some())
-            .count(),
-        8
-    );
+            .enumerate()
+            .filter(|(i, _)| {
+                scene.damage_branches.iter().all(|(ptr, branch, range)| {
+                    let offset = (ptr - 0x800188b8) as usize;
+                    let initial = if d[offset] == 1 {
+                        u8::from(d[offset + 20] == 0)
+                    } else {
+                        d[offset + 7]
+                    };
+                    !range.contains(i) || *branch == initial
+                })
+            })
+            .map(|(_, poly)| poly)
+    };
+    assert_eq!(intact().filter(|p| p.billboard.is_none()).count(), 1273);
+    assert_eq!(intact().filter(|p| p.billboard.is_some()).count(), 8);
     assert!(scene.omitted_nodes.is_empty());
     let show = |step| {
         scene
@@ -79,7 +83,9 @@ fn supported_disc_arena_and_audio() {
     assert_eq!(show(0), show(32));
     let keys: std::collections::BTreeSet<_> =
         scene.polygons.iter().filter_map(|p| p.texture).collect();
-    assert_eq!(keys.len(), 61);
+    let intact_keys: std::collections::BTreeSet<_> = intact().filter_map(|p| p.texture).collect();
+    assert_eq!(intact_keys.len(), 61);
+    assert_eq!(keys.len(), 62);
     for key in keys {
         for y in 0..=255 {
             for x in 0..=255 {

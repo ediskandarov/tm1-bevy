@@ -34,6 +34,7 @@ typedef struct {
     } trail;
 } Missile;
 Missile *arena_missiles(void);
+int arena_hit_target(const VECTOR3*, int, int);
 s32 CAR_HD(VECTOR3 *,s32,s32);
 void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags);
 void arena_launch_missile(CarStats *,CarMotion *,CarWeap *,u8 *,u8);
@@ -45,6 +46,7 @@ typedef struct {
 } ArenaTaser;
 DropWeap *arena_drops(void);
 ArenaTaser *arena_tasers(void);
+s32 FindFreeDropWeap(void);
 void arena_move_drops(void);
 int arena_launch_flame(Cs*, int);
 void arena_move_flames(void);

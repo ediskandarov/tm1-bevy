@@ -127,6 +127,7 @@ pub struct Scene {
     pub object_ids: Vec<u32>,
     pub omitted_nodes: Vec<String>,
     pub visibility: Vec<VisibilityController>,
+    pub damage_branches: Vec<(u32, u8, std::ops::Range<usize>)>,
     pub health_stands: Vec<(u8, [i32; 3])>,
 }
 
@@ -429,6 +430,7 @@ impl<'a> Dmd<'a> {
             root_id,
             polygons: vec![],
             visibility: vec![],
+            damage_branches: vec![],
             health_stands: vec![],
             object_ids: vec![],
             omitted_nodes: vec![],
@@ -478,6 +480,7 @@ impl<'a> Dmd<'a> {
             }
             Ok(())
         };
+        let start = scene.polygons.len();
         match d[p] {
             0 => self.object(ptr, p, transform, pickup, scene)?,
             1 => {
@@ -632,6 +635,24 @@ impl<'a> Dmd<'a> {
                             }
                         }
                     }
+                } else if matches!(
+                    kind,
+                    600 | 601 | 610..=613 | 770 | 902 | 1000 | 1002 | 1009 | 1010 | 1017
+                ) {
+                    for branch in 0..d[p + 6] {
+                        let first = scene.polygons.len();
+                        self.visit(
+                            u32le(d, p + 8 + 4 * usize::from(branch))?,
+                            transform,
+                            selection,
+                            pickup,
+                            ancestors,
+                            scene,
+                        )?;
+                        scene
+                            .damage_branches
+                            .push((ptr, branch, first..scene.polygons.len()));
+                    }
                 } else {
                     children.push(u32le(d, p + 8 + 4 * child as usize)?);
                 }
@@ -674,6 +695,16 @@ impl<'a> Dmd<'a> {
         }
         for child in children {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
+        }
+        if d[p] == 1
+            && matches!(
+                u16le(d, p + 2)?,
+                715 | 716 | 720 | 721 | 730 | 1003..=1005 | 1008 | 1015
+            )
+        {
+            scene
+                .damage_branches
+                .push((ptr, 0, start..scene.polygons.len()));
         }
         ancestors.pop();
         Ok(())

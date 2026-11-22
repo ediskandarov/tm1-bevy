@@ -2,6 +2,9 @@ use super::*;
 #[path = "../tests/support/mips.rs"]
 mod mips;
 use mips::Cpu;
+#[path = "../tests/support/targets.rs"]
+mod targets;
+use targets::register_retail_targets;
 
 const PLAYER: u32 = 0x8019ee40;
 const POLICE: u32 = 0x8019f7a8;
@@ -62,6 +65,7 @@ impl Reference {
         let mut police = PoliceCar::for_vehicle(&mut player, opponent);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
+        register_retail_targets(&mut cpu, &roots);
         for (at, v) in [
             (0x8018c4b0, WORLD),
             (0x8018bf14, POLICE_CS),
@@ -1676,7 +1680,7 @@ fn database_and_opponents_match_retail_shell() {
 }
 
 fn register_retail_stands(cpu: &mut Cpu, data: &[u8]) {
-    for at in [0x80147508, 0x8010844c, 0x80141300] {
+    for at in [0x80147508, 0x8010844c] {
         cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     cpu.call(0x80135d7c, &[]);
@@ -2033,6 +2037,17 @@ fn compare_battle_controls(
                     _ => {}
                 }
             }
+            for index in 0..50 {
+                let Some(record) = target_record(&r.scene, index) else {
+                    break;
+                };
+                assert_eq!(
+                    record[2],
+                    r.cpu.word(0x801ac968 + index as u32 * 28 + 8) as i32,
+                    "target {index} {:?} tick {tick}",
+                    &record[..2]
+                );
+            }
             let mut effects = [[0; 5]; 122];
             let count = r.scene.effects(&mut effects);
             let native_fragments = effects[..count]
@@ -2332,6 +2347,7 @@ fn compare_rooftop_switches(
             .unwrap();
         let mut r = Reference::on_level(vehicle, true, level);
         let mut records = Vec::new();
+        let mut sub = 0;
         for (slot, kind, global) in [
             (first_slot, trigger, globals[0]),
             (first_slot + 1, animation, globals[1]),
@@ -2341,8 +2357,13 @@ fn compare_rooftop_switches(
                 .find(|&i| data[i] == 9 && data[i + 2..i + 4] == kind.to_le_bytes())
                 .expect("missing roof switch");
             let addr = 0x800188b8 + offset as u32;
-            r.cpu.call(0x80140f54, &[addr, u32::from(kind)]);
-            assert_eq!(r.cpu.word(global), addr);
+            if kind == 1001 {
+                sub = r.cpu.word(addr + 4) & 65535;
+                assert_eq!(r.cpu.word(global + sub * 4), addr);
+            } else {
+                r.cpu.call(0x80140f54, &[addr, u32::from(kind)]);
+                assert_eq!(r.cpu.word(global), addr);
+            }
             assert!(
                 world
                     .polygons
@@ -2352,10 +2373,6 @@ fn compare_rooftop_switches(
             records.push(offset + 7);
         }
         if trigger == 1001 {
-            // Register a one-hit target using the retail initializer. The impact
-            // still has to intersect the window in the original DMD hierarchy.
-            put(&mut r.cpu, 0x801ac968 + 8, u32::MAX);
-            r.cpu.call(0x80147bd0, &[1001, 0, 0x800be040]);
             r.cpu.put(0x80108604, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         // Aim the midpoint collision sample inside the intact model.
@@ -2424,10 +2441,10 @@ fn compare_rooftop_switches(
                 let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
                 unsafe {
                     tm1_use_scene(r.scene.native.as_ptr());
-                    bulDispatchDamage(8, i32::from(trigger), 0, 1, std::ptr::null(), 0);
+                    bulDispatchDamage(8, i32::from(trigger), sub as i32, 1, std::ptr::null(), 0);
                     tm1_use_scene(std::ptr::null_mut());
                 }
-                r.cpu.call(0x80110f74, &[8, u32::from(trigger), 0, 1]);
+                r.cpu.call(0x80110f74, &[8, u32::from(trigger), sub, 1]);
             }
             r.scene
                 .step(&mut r.player, &mut r.police, Input::default(), 3);
@@ -2530,4 +2547,219 @@ fn smoke_puff_and_steam_match_retail() {
         }
         cpu.call(0x801360bc, &[]);
     }
+}
+
+fn target_record(scene: &CollisionScene, index: i32) -> Option<[i32; 6]> {
+    unsafe extern "C" {
+        fn tm1_target_record(scene: *const std::ffi::c_void, index: i32, out: *mut i32) -> i32;
+    }
+    let mut record = [0; 6];
+    let found = unsafe { tm1_target_record(scene.native.as_ptr(), index, record.as_mut_ptr()) };
+    (found != 0).then_some(record)
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn arena_target_registry_matches_retail() {
+    let mut seen = std::collections::HashSet::new();
+    for level in [
+        Level::Arena,
+        Level::Warehouse,
+        Level::Freeway,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Rooftops,
+    ] {
+        for car in Vehicle::ROSTER {
+            let db = level.database(car);
+            if !seen.insert(db) {
+                continue;
+            }
+            let mut r = Reference::on_level(car, true, level);
+            let mut count = 0;
+            for slot in 0..50 {
+                let at = 0x801ac968 + slot * 28;
+                let native = target_record(&r.scene, slot as i32);
+                let record = [0, 4, 8, 16, 20, 24].map(|off| r.cpu.word(at + off) as i32);
+                assert_eq!(
+                    native.is_some(),
+                    record[2] >= 0,
+                    "{db} slot {slot}: {record:?}"
+                );
+                if let Some(native) = native {
+                    assert_eq!(native, record, "{db} slot {slot}");
+                    count += 1;
+                }
+            }
+            compare_target_impacts(&mut r, count, db);
+            println!("{db} has {count} targets");
+        }
+    }
+}
+
+fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
+    unsafe extern "C" {
+        fn arena_hit_target(pos: *const i32, owner: i32, radius: i32) -> i32;
+        fn bulDispatchDamage(id: i32, tag: i32, sub: i32, damage: i32, dir: *const i32, owner: i32);
+    }
+    // Isolate the arena targets from cars, pedestrians, mercenaries and audio.
+    for addr in [
+        0x8014f914, 0x8014f94c, 0x80149140, 0x8014a4c4, 0x801085d0, 0x80108604,
+    ] {
+        r.cpu.put(addr, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
+    }
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read(&format!("UADMD/{db}.DMD")).unwrap();
+    let art = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .extract_kind(1)
+        .unwrap();
+    let initial_records: Vec<_> = (0..count).map(|i| target_record(&r.scene, i)).collect();
+    let initial_branches: Vec<_> = art
+        .damage_branches
+        .iter()
+        .map(|(ptr, _, _)| r.scene.damage_branch(*ptr))
+        .collect();
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    for index in 0..count {
+        let [kind, sub, hp, x, y, z] = target_record(&r.scene, index).unwrap();
+        for (dx, owner, radius) in [
+            (0, 1, 0),
+            (39, 1, 0),
+            (40, 1, 0),
+            (-40, 1, 0),
+            (62, 1, 3),
+            (64, 1, 3),
+            (0, -kind, 0),
+        ] {
+            let point = [x + dx, y, z];
+            for (i, n) in point.into_iter().enumerate() {
+                put(&mut r.cpu, 0x800e7000 + i as u32 * 4, n as u32);
+            }
+            let retail = r.cpu.call(0x8010c1d0, &[0x800e7000, owner as u32, radius]);
+            let native = unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                let result = arena_hit_target(point.as_ptr(), owner, radius as i32);
+                tm1_use_scene(std::ptr::null_mut());
+                result
+            };
+            assert_eq!(native as u32, retail, "{db} target {index} dx {dx}");
+        }
+        // Some retail registrations use the first coordinate of a translation
+        // as the sub-index. Only destructible slots within the UA_SW arrays have models.
+        if sub >= 30 || hp <= 0 {
+            continue;
+        }
+        for (id, damage) in [(500 + index, (hp - 1).max(0)), (8, 1), (8, 1)] {
+            r.cpu.call(
+                0x80110f74,
+                &[id as u32, kind as u32, sub as u32, damage as u32, 0, 0],
+            );
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                bulDispatchDamage(id, kind, sub, damage, std::ptr::null(), 0);
+                tm1_use_scene(std::ptr::null_mut());
+            }
+            for slot in 0..count {
+                let health = r.cpu.word(0x801ac968 + 28 * slot as u32 + 8) as i32;
+                assert_eq!(
+                    target_record(&r.scene, slot).unwrap()[2],
+                    health,
+                    "{db} hit {index} health {slot}"
+                );
+            }
+            for &(ptr, _, _) in &art.damage_branches {
+                let p = (ptr & 0x1fffff) as usize;
+                let branch = if r.cpu.ram[p] == 1 {
+                    u8::from(r.cpu.ram[p + 20] == 0)
+                } else {
+                    r.cpu.ram[p + 7]
+                };
+                assert_eq!(
+                    r.scene.damage_branch(ptr),
+                    branch,
+                    "{db} hit {index} model {ptr:x}"
+                );
+            }
+        }
+    }
+    drop(_guard);
+    r.scene.reset_projectiles();
+    assert!(
+        initial_records
+            .into_iter()
+            .eq((0..count).map(|i| target_record(&r.scene, i)))
+    );
+    assert!(
+        initial_branches.into_iter().eq(art
+            .damage_branches
+            .iter()
+            .map(|(ptr, _, _)| r.scene.damage_branch(*ptr)))
+    );
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn rooftop_pyramid_bullet_matches_retail_clouds() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Rooftops);
+    let (slot, record) = (0..50)
+        .filter_map(|i| target_record(&r.scene, i).map(|v| (i, v)))
+        .find(|(_, v)| v[0] == 1000 && v[1] < 30)
+        .unwrap();
+    assert_eq!(record[2], 100);
+    let sample = (8000..9200)
+        .step_by(10)
+        .map(|z| [10800, 5200, z])
+        .find(|&point| r.scene.world_point(point)[2] == 1000)
+        .expect("pyramid collision volume");
+    let pos = [sample[0] - 125, sample[1], sample[2]];
+    let dir = [4096, 0, 0];
+    r.sync();
+    for (at, values) in [(0x800be000, dir), (0x800be020, pos)] {
+        for (i, v) in values.into_iter().enumerate() {
+            put(&mut r.cpu, at + i as u32 * 4, v as u32);
+        }
+    }
+    r.cpu.call(0x8010c930, &[1, 0x800be000, 0x800be020, 100]);
+    {
+        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe extern "C" {
+            fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
+        }
+        unsafe {
+            tm1_use_scene(r.scene.native.as_ptr());
+            create_bullet(1, dir.as_ptr(), pos.as_ptr(), 100);
+            tm1_use_scene(std::ptr::null_mut());
+        }
+    }
+    let mut clouds = Vec::new();
+    // Observe particle creation at the original call boundary. Audio output
+    // is external to the collision and RNG comparison.
+    r.cpu.put(0x80108604, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    r.cpu.call_observed(0x8010d03c, &[], 0x80000080, |cpu| {
+        let kind = match cpu.pc() {
+            0x801371cc => 34,
+            0x80136d68 => 30,
+            _ => return,
+        };
+        clouds.push([
+            cpu.word(cpu.r[4]) as i32,
+            cpu.word(cpu.r[4] + 4) as i32,
+            cpu.word(cpu.r[4] + 8) as i32,
+            kind,
+        ]);
+    });
+    r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+    assert_eq!(target_record(&r.scene, slot).unwrap()[2], 0);
+    assert_eq!(r.cpu.word(0x801ac968 + slot as u32 * 28 + 8), 0);
+    assert_eq!(clouds.iter().filter(|c| c[3] == 34).count(), 45);
+    let mut effects = [[0; 5]; 122];
+    let count = r.scene.effects(&mut effects);
+    let native: Vec<_> = effects[..count]
+        .iter()
+        .filter(|e| matches!(e[3], 30 | 34))
+        .map(|e| [e[0], e[1], e[2], e[3]])
+        .collect();
+    assert_eq!(native, clouds);
+    assert_eq!(r.player.seed, r.cpu.random_state);
 }

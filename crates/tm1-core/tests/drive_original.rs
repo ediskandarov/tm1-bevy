@@ -1,5 +1,7 @@
 #[path = "support/mips.rs"]
 mod mips;
+#[path = "support/targets.rs"]
+mod targets;
 use tm1_core::drive::{Input, Taxi};
 
 #[test]
@@ -164,6 +166,7 @@ fn world_projectile_contacts() {
         tm1_core::drive::CollisionScene::from_dmd(&data, root(1), root(20), root(50)).unwrap();
     let mut cpu = mips::Cpu::new(&disc.read("SIPS_600.07").unwrap());
     cpu.put(0x800188b8, &data);
+    targets::register_retail_targets(&mut cpu, &roots);
     cpu.put(0x800b0104, &root(1).to_le_bytes());
     cpu.call(0x80103a4c, &[0x800b0400]);
     let mut hits = 0;

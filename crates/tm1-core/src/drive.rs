@@ -943,6 +943,12 @@ impl CollisionScene {
             battle: [0; 3],
         })
     }
+    pub fn damage_branch(&self, address: u32) -> u8 {
+        unsafe extern "C" {
+            fn tm1_damage_branch(scene: *const std::ffi::c_void, address: u32) -> i32;
+        }
+        unsafe { tm1_damage_branch(self.native.as_ptr(), address) as u8 }
+    }
     pub fn arena_switch_branches(&self) -> [u8; 8] {
         unsafe extern "C" {
             fn tm1_arena_switch_states(scene: *const std::ffi::c_void) -> u64;

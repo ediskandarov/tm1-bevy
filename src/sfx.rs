@@ -118,7 +118,7 @@ impl Sounds {
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .chain(opponents.iter().map(|&car| programs(car).1))
-            .chain([52, programs(SweetTooth).1, 57, 58])
+            .chain([52, 53, 27, programs(SweetTooth).1, 57, 58])
             .enumerate()
         {
             let sample = Sample::load(&bank, prog, id == 0)?;
