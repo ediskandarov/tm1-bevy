@@ -1458,6 +1458,29 @@ pub fn particle_frame(kind: i32, ticks: i32) -> Option<ParticleFrame> {
     })
 }
 
+/// INTERACT.c culls the drop center before projecting either kind of quad.
+pub fn drop_visible([x, y, z]: [i32; 3]) -> bool {
+    (-640..=640).contains(&x) && (-640..=640).contains(&y) && (16..=30000).contains(&z)
+}
+
+pub fn drop_screen_point([x, y, z]: [i32; 3], focal: [i32; 2]) -> [i32; 2] {
+    [
+        x.wrapping_mul(focal[0]) / z.max(16),
+        y.wrapping_mul(focal[1]) / z.max(16),
+    ]
+}
+
+pub fn drop_billboard(camera: [i32; 3], focal: [i32; 2]) -> [[i32; 2]; 4] {
+    let [x, y] = drop_screen_point(camera, focal);
+    let scale = (focal[0] * 16 / camera[2].max(16)).clamp(1, 512);
+    [
+        [x - scale, y - 2 * scale],
+        [x + scale, y - 2 * scale],
+        [x - scale, y - scale],
+        [x + scale, y - scale],
+    ]
+}
+
 /// Screen offsets for EXPLODE.c explodeDisplayFragments, measured from the viewport center.
 pub fn project_fragment(
     camera: [i32; 3],

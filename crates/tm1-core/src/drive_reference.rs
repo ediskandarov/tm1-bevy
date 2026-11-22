@@ -2260,6 +2260,94 @@ fn identity_projection(cpu: &mut Cpu) -> ([i32; 2], [i32; 2]) {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn drop_draw_packets_original() {
+    let mut r = Reference::new();
+    let cpu = &mut r.cpu;
+    let (center, _) = identity_projection(cpu);
+    // Deliberately use unequal lenses to catch horizontal/vertical mixups.
+    let focal = [204, 91];
+    for (getter, value) in [0x80109e3c, 0x80109e74].into_iter().zip(focal) {
+        put(cpu, getter, 0x03e00008);
+        put(cpu, getter + 4, 0x24020000 | value as u32);
+    }
+    let d = 0x801996b8;
+    let packet = RENDER_SCRATCH + 0x100;
+    put(cpu, RENDER_SCRATCH, 0x80010000);
+    put(cpu, RENDER_SCRATCH + 12, packet + 160);
+    // Isolate displayDropWeapons' packet output from its collision callback.
+    cpu.put(0x80133fd4, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    put(cpu, d + 28, packet + 200);
+    for kind in [6, 8, 9, 10] {
+        put(cpu, d, kind);
+        for pos in [
+            [-26i32, 17, 241],
+            [0, 0, 15],
+            [0, 0, 16],
+            [-640, 640, 30000],
+            [640, -640, 16],
+            [-641, 0, 240],
+            [0, 641, 240],
+            [0, 0, 30001],
+        ] {
+            for (axis, value) in pos.into_iter().enumerate() {
+                put(cpu, d + 8 + axis as u32 * 4, value as u32);
+            }
+            put(cpu, d + 20, pos[2] as u32);
+            cpu.put(d + 4, &40i16.to_le_bytes());
+            put(cpu, RENDER_SCRATCH + 8, packet);
+            cpu.call(0x801344e0, &[RENDER_SCRATCH, 0]);
+            assert_eq!(
+                cpu.word(RENDER_SCRATCH + 8) != packet,
+                drop_visible(pos),
+                "{pos:?}"
+            );
+            if !drop_visible(pos) {
+                continue;
+            }
+            let corners = if kind == 9 {
+                [[-48, -48], [48, -48], [-48, 48], [48, 48]]
+                    .map(|[dx, dy]| drop_screen_point([pos[0] + dx, pos[1] + dy, pos[2]], focal))
+            } else {
+                drop_billboard(pos, focal)
+            };
+            for (i, [x, y]) in corners.into_iter().enumerate() {
+                let xy = cpu.word(packet + 8 + i as u32 * 8);
+                assert_eq!(
+                    [xy as i16, (xy >> 16) as i16],
+                    [(center[0] + x) as i16, (center[1] + y) as i16],
+                    "{kind} {pos:?}"
+                );
+            }
+        }
+    }
+    // Tilt the ground through the near plane. Retail clamps each oil corner
+    // independently even when the center remains visible.
+    let matrix = cpu.call(0x8010af70, &[0]);
+    for (i, value) in [4096i16, 0, 0, 0, 0, -4096, 0, 4096, 0]
+        .into_iter()
+        .enumerate()
+    {
+        cpu.put(matrix + 2 * i as u32, &value.to_le_bytes());
+    }
+    for (axis, value) in [12, 20, 5].into_iter().enumerate() {
+        put(cpu, VIEW_OUTPUT + 4 * axis as u32, value);
+    }
+    cpu.call(0x80134238, &[packet, VIEW_OUTPUT, 0]);
+    for (i, [x, z]) in [[-36, -28], [60, -28], [-36, 68], [60, 68]]
+        .into_iter()
+        .enumerate()
+    {
+        let [u, v] = drop_screen_point([x, -5, z], focal);
+        let xy = cpu.word(packet + 8 + i as u32 * 8);
+        assert_eq!(
+            [xy as i16, (xy >> 16) as i16],
+            [(center[0] + u) as i16, (center[1] + v) as i16]
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn fragment_draw_packets_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let data = disc.read("UADMD/XARENA1.DMD").unwrap();

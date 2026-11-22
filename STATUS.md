@@ -63,7 +63,7 @@ An Arena replay drives Hammerhead over Outlaw with each player slot taking a tur
 
 ## Dropped weapons
 
-Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.
+Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact. Drop projection uses the current viewport lens, integer screen coordinates and the original center visibility bounds. A packet test runs the retail display routine for all four weapons, checks all four vertex positions, and exercises oil straddling the near plane with a rotated camera.
 
 A disc-backed test launches each weapon, places the opponent at the trap, and compares the native car records, random state, impact request, and particle positions and call order with the JP executable. It checks which traps remain visible on the next update. A Metal capture of Road Kill deploying oil in Warehouse is saved at `local/warehouse-oil-near.png`. The renderer compensates for the eight-unit difference between the road mesh and collision floor while preserving the projected sprite corners.
 

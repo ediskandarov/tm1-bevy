@@ -1339,16 +1339,35 @@ fn draw_view(
             }
         }
     }
+    let camera_point = |p: [i32; 3]| {
+        let d = world(p.map(|n| n as f32)) - eye;
+        Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
+    };
+    let (lens, center) = if batch_bodies {
+        (228, [160, 60])
+    } else if view.secondary {
+        (
+            MIRROR_FOCAL as i32,
+            [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
+        )
+    } else {
+        (204, [160, 120])
+    };
+    let pixel_scale = focal / lens as f32;
+    let drop_camera = |p: Vec3| {
+        let d = p - eye;
+        [
+            d.dot(right) as i32,
+            -d.dot(up) as i32,
+            d.dot(forward) as i32,
+        ]
+    };
     let mut drops = [[0; 4]; 12];
     let drop_count = contacts.drawn_drops(&mut drops);
     for &[x, y, z, weapon] in &drops[..drop_count] {
         let center = world([x as f32, y as f32, z as f32]);
-        let delta = center - eye;
-        let depth = delta.dot(forward);
-        if !(16.0..30001.0).contains(&depth)
-            || delta.dot(right).abs() >= 641.0
-            || delta.dot(up).abs() >= 641.0
-        {
+        let camera = drop_camera(center);
+        if !tm1_core::drive::drop_visible(camera) {
             continue;
         }
         let index = match weapon {
@@ -1360,26 +1379,28 @@ fn draw_view(
         };
         let sprite = &arena.drop_sprites[index];
         let tile = arena.tiles[&(Some(sprite.texture), false)];
+        let billboard = tm1_core::drive::drop_billboard(camera, [lens; 2]);
         for &i in indices(4) {
-            let side = if i & 1 == 0 { -1. } else { 1. };
-            let point = if weapon == 9 {
-                // drawOil places the ground square one OT bucket in front of the road.
-                let corner = center + world([48. * side, if i < 2 { -48. } else { 48. }, 0.]);
-                let ray = corner - eye;
-                // Warehouse road polygons lie eight units above the collision floor.
-                // Clear that skin along the same camera ray, preserving the projected UVs.
-                let corner_depth = ray.dot(forward).max(16.);
-                let road_offset = if eye.y > corner.y {
+            let (xy, depth) = if weapon == 9 {
+                let dx = if i & 1 == 0 { -48. } else { 48. };
+                let dy = if i < 2 { -48. } else { 48. };
+                let corner = center + world([dx, dy, 0.]);
+                let coords = drop_camera(corner);
+                let xy = tm1_core::drive::drop_screen_point(coords, [lens; 2]);
+                // Warehouse road geometry is eight units above its collision floor.
+                let skin = if eye.y > corner.y {
                     8. / (eye.y - corner.y).max(16.)
                 } else {
                     0.
                 };
-                let biased_depth = (corner_depth * (1. - road_offset) - 8.).max(16.);
-                eye + ray * (biased_depth / corner_depth)
+                (xy, (coords[2].max(16) as f32 * (1. - skin) - 8.).max(16.))
             } else {
-                let scale = (228. * 16. / depth).floor().clamp(1., 512.) * depth / 228.;
-                center + right * (side * scale) + up * (if i < 2 { 2. } else { 1. } * scale)
+                (billboard[i], camera[2] as f32)
             };
+            let depth = depth.max(near + 0.01);
+            let point = eye
+                + forward * depth
+                + (right * xy[0] as f32 - up * xy[1] as f32) * (depth / lens as f32);
             solids.push(
                 point,
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
@@ -1402,22 +1423,6 @@ fn draw_view(
     let bullet_count = contacts.drawn_bullets(view.secondary, &mut bullets);
     let mut arcs = [[[0; 3]; 16]; 3];
     let arc_count = contacts.taser_arcs(&mut arcs);
-    let camera_point = |p: [i32; 3]| {
-        let d = world(p.map(|n| n as f32)) - eye;
-        Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
-    };
-    // draw_tasers emits one opaque Gouraud line per adjacent pair in the PS1 framebuffer.
-    let (lens, center) = if batch_bodies {
-        (228, [160, 60])
-    } else if view.secondary {
-        (
-            MIRROR_FOCAL as i32,
-            [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
-        )
-    } else {
-        (204, [160, 120])
-    };
-    let pixel_scale = focal / lens as f32;
     let mut particles = [[0; 5]; 80];
     let count = contacts.drawn_particles(view.secondary, &mut particles);
     for &[x, y, z, kind, ttl] in &particles[..count] {
