@@ -1165,6 +1165,7 @@ unsafe extern "C" {
         seed: *mut u32,
         turbo: *mut u8,
         guns: *mut u8,
+        sounds: *mut [i32; 5],
     );
     #[cfg(test)]
     fn tm1_contacts(
@@ -1186,6 +1187,7 @@ pub struct CollisionScene {
     duel_winner: Option<usize>,
     turbo_requests: [u8; 2],
     gun_requests: [u8; 9],
+    car_sounds: [[i32; 5]; 9],
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
@@ -1228,6 +1230,7 @@ impl CollisionScene {
             duel_returns: Vec::new(),
             duel_winner: None,
             gun_requests: [0; 9],
+            car_sounds: [[0; 5]; 9],
             turbo_requests: [0; 2],
         })
     }
@@ -1413,6 +1416,21 @@ impl CollisionScene {
         })
     }
 
+    pub fn car_sound_requests(&self, slot: usize) -> impl Iterator<Item = (CarSound, [i32; 3])> {
+        let [x, y, z, flags, impact] = self.car_sounds.get(slot).copied().unwrap_or_default();
+        let [skid, crash] = contact_sounds(flags & 1 != 0, impact as i16);
+        let contact = |(voice, level)| CarSound::Contact(voice, level);
+        [
+            skid.map(contact),
+            (flags & 2 != 0).then_some(CarSound::Explosion),
+            crash.map(contact),
+            (flags & 4 != 0).then_some(CarSound::Signature),
+        ]
+        .into_iter()
+        .flatten()
+        .map(move |sound| (sound, [x, y, z]))
+    }
+
     pub fn duel_gun_requests(&self) -> [Option<bool>; 2] {
         let [first, second, ..] = self.gun_sound_requests();
         [first, second]
@@ -1444,6 +1462,7 @@ impl CollisionScene {
                 seed: *mut u32,
                 requests: *mut u8,
                 turbo: *mut u8,
+                sounds: *mut [i32; 5],
             );
         }
         assert_eq!(self.opponent_count, 0);
@@ -1474,6 +1493,7 @@ impl CollisionScene {
                 &mut first.seed,
                 self.gun_requests.as_mut_ptr(),
                 self.turbo_requests.as_mut_ptr(),
+                self.car_sounds.as_mut_ptr(),
             );
         }
         second.frame = first.frame;
@@ -1532,6 +1552,7 @@ impl CollisionScene {
                 &mut player.seed,
                 self.turbo_requests.as_mut_ptr(),
                 self.gun_requests.as_mut_ptr(),
+                self.car_sounds.as_mut_ptr(),
             );
         }
         player.cap_turbo_reserve();
@@ -1704,6 +1725,13 @@ impl PlayerVehicle {
     pub fn missiles(&self) -> i16 {
         i16::from_le_bytes(self.state[0x464..0x466].try_into().unwrap())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CarSound {
+    Contact(ContactVoice, i32),
+    Explosion,
+    Signature,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

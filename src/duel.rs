@@ -404,14 +404,19 @@ pub fn advance(
             );
         }
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
-        for boosting in duel.scene.turbo_sound_requests().into_iter().flatten() {
-            duel.sounds.push(if boosting {
-                crate::sfx::duel::Request::Turbo
-            } else {
-                crate::sfx::duel::Request::Stop(crate::driving::ExclusiveVoice::Turbo)
-            });
-        }
-        for (car, request) in duel.cars.iter().zip(duel.scene.duel_gun_requests()) {
+        for (slot, (car, request)) in duel
+            .cars
+            .iter()
+            .zip(duel.scene.duel_gun_requests())
+            .enumerate()
+        {
+            if let Some(boosting) = duel.scene.turbo_sound_requests()[slot] {
+                duel.sounds.push(if boosting {
+                    crate::sfx::duel::Request::Turbo
+                } else {
+                    crate::sfx::duel::Request::Stop(crate::driving::ExclusiveVoice::Turbo)
+                });
+            }
             let key = crate::driving::ExclusiveVoice::MachineGuns(car.vehicle());
             if let Some(firing) = request {
                 duel.sounds.push(if firing {
@@ -423,6 +428,15 @@ pub fn advance(
                     }
                 } else {
                     crate::sfx::duel::Request::Stop(key)
+                });
+            }
+            for (sound, _) in duel.scene.car_sound_requests(slot) {
+                let (id, key, volume) = crate::driving::car_sample(sound, car.vehicle(), slot, 13);
+                duel.sounds.push(crate::sfx::duel::Request::Play {
+                    id,
+                    key: Some(key),
+                    volume: volume as f32 / 99.,
+                    position: duel.cars[0].position(),
                 });
             }
         }
@@ -439,16 +453,6 @@ pub fn advance(
                     key: crate::driving::effect_voice(kind),
                     volume: crate::driving::effect_volume(kind) as f32 / 99.,
                     position: [x, y, z],
-                });
-            }
-        }
-        for car in &duel.cars {
-            for (voice, volume) in car.contact_sounds().into_iter().flatten() {
-                duel.sounds.push(crate::sfx::duel::Request::Play {
-                    id: 18 + voice as usize,
-                    key: Some(crate::driving::ExclusiveVoice::Contact(voice)),
-                    volume: volume as f32 / 99.,
-                    position: car.position(),
                 });
             }
         }

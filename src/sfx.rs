@@ -176,7 +176,7 @@ fn battle_programs(
         .chain(opponents.iter().map(|&car| car.sound_programs().1))
         .chain([52, 53, 27, 38, 36])
         .chain(tm1_core::drive::ContactVoice::PROGRAMS)
-        .chain([28, SweetTooth.sound_programs().1, 57, 58])
+        .chain([28, 54, SweetTooth.sound_programs().1, 57, 58])
 }
 
 impl Sounds {
@@ -621,6 +621,46 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn actor_signatures_and_wrecks_select_the_disc_programs() {
+        use tm1_core::drive::CarSound;
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let base = u32::from_le_bytes(exe[24..28].try_into().unwrap());
+        let table = 2048 + (0x8016fefc - base) as usize;
+        let program_for = |id: usize| exe[table + 6 * id + 2] as usize;
+        // IDs follow the original car sound order, including Minion's separate signature.
+        let cars = [
+            Vehicle::SweetTooth,
+            Vehicle::YellowJacket,
+            Vehicle::Darkside,
+            Vehicle::Hammerhead,
+            Vehicle::Outlaw,
+            Vehicle::CrimsonFury,
+            Vehicle::Warthog,
+            Vehicle::MrGrimm,
+            Vehicle::PitViper,
+            Vehicle::Thumper,
+            Vehicle::Spectre,
+            Vehicle::RoadKill,
+            Vehicle::Minion,
+        ];
+        for (i, car) in cars.into_iter().enumerate() {
+            for (slot, pair) in [
+                (0, [car, Vehicle::YellowJacket]),
+                (1, [Vehicle::YellowJacket, car]),
+            ] {
+                let bank = battle_programs(pair[0], &pair[1..]).collect::<Vec<_>>();
+                for (sound, id) in [(CarSound::Signature, 0x74 + i), (CarSound::Explosion, 0x73)] {
+                    let (index, _, level) = crate::driving::car_sample(sound, car, slot, 13);
+                    assert_eq!(bank[index], program_for(id), "{car:?} {sound:?}");
+                    assert_eq!(level, 99);
+                }
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

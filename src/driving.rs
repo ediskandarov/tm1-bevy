@@ -12,6 +12,8 @@ pub enum ExclusiveVoice {
     Hover,
     HoverGuns,
     FireMissileLaunch,
+    CarExplosion,
+    Signature(Vehicle),
     Pickup(i32),
     Contact(tm1_core::drive::ContactVoice),
     ScaledEffect(u8),
@@ -60,6 +62,33 @@ pub(crate) fn hover_sample(
         HoverSound::Guns(firing) => (ExclusiveVoice::HoverGuns, firing.then_some(1)),
         HoverSound::Launch => (ExclusiveVoice::FireMissileLaunch, Some(4)),
         HoverSound::Motor => (ExclusiveVoice::Hover, Some(motor)),
+    }
+}
+
+pub(crate) fn car_sample(
+    sound: tm1_core::drive::CarSound,
+    car: Vehicle,
+    slot: usize,
+    recharge: usize,
+) -> (usize, ExclusiveVoice, i32) {
+    use tm1_core::drive::CarSound;
+    match sound {
+        CarSound::Contact(voice, level) => (
+            recharge + 5 + voice as usize,
+            ExclusiveVoice::Contact(voice),
+            level,
+        ),
+        CarSound::Explosion => (3, ExclusiveVoice::CarExplosion, 99),
+        CarSound::Signature => {
+            let id = if car == Vehicle::Minion {
+                recharge + 10
+            } else if slot == 0 {
+                5
+            } else {
+                11 + slot
+            };
+            (id, ExclusiveVoice::Signature(car), 99)
+        }
     }
 }
 
@@ -599,7 +628,11 @@ pub fn advance(
                 .iter()
                 .map(|ai| (ai.vehicle(), ai.position())),
         );
-        for ((car, position), request) in shooters.zip(state.contacts.gun_sound_requests()) {
+        let recharge = state.recharge_sound();
+        for (slot, ((car, position), request)) in shooters
+            .zip(state.contacts.gun_sound_requests())
+            .enumerate()
+        {
             if let Some(firing) = request {
                 let key = ExclusiveVoice::MachineGuns(car);
                 state.sounds.push(if firing {
@@ -614,6 +647,21 @@ pub fn advance(
                     BattleRequest::Stop(key)
                 });
             }
+            for (sound, position) in state.contacts.car_sound_requests(slot) {
+                let (id, key, volume_percent) = car_sample(sound, car, slot, recharge);
+                let full_range = sound == tm1_core::drive::CarSound::Explosion;
+                state.sounds.push(BattleRequest::Play(BattleSound {
+                    volume_percent,
+                    id,
+                    exclusive: Some(key),
+                    range: if full_range {
+                        0
+                    } else {
+                        state.listener.sound_range(position)
+                    },
+                    channels: state.listener.channels(position, volume, full_range),
+                }));
+            }
         }
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter
@@ -624,24 +672,6 @@ pub fn advance(
         }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
-        }
-        let first_contact_sample = state.recharge_sound() + 5;
-        let cars = std::iter::once((state.player.position(), state.player.contact_sounds())).chain(
-            state
-                .opponents
-                .iter()
-                .map(|ai| (ai.position(), ai.contact_sounds())),
-        );
-        for (position, contacts) in cars {
-            for (voice, volume_percent) in contacts.into_iter().flatten() {
-                state.sounds.push(BattleRequest::Play(BattleSound {
-                    volume_percent,
-                    id: first_contact_sample + voice as usize,
-                    exclusive: Some(ExclusiveVoice::Contact(voice)),
-                    range: state.listener.sound_range(position),
-                    channels: state.listener.channels(position, volume, false),
-                }));
-            }
         }
         let mut effects = [[0; 5]; 122];
         let count = state.contacts.effects(&mut effects);

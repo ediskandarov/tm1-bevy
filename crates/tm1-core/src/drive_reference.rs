@@ -263,6 +263,43 @@ fn engine_requests_match_disc() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn actor_explosion_and_signature_are_consumed_once() {
+    let mut r = Reference::new();
+    for (state, base) in [
+        (&mut r.player.state[..], 0xa0),
+        (&mut r.police.state[..], 0x66),
+    ] {
+        state[base + 26] = 1;
+        state[base + 24] = 1;
+    }
+    r.police.state[0x40] = 1;
+    for tick in 0..2 {
+        r.scene
+            .step(&mut r.player, &mut r.police, Input::default(), 3);
+        for slot in 0..2 {
+            let events = r
+                .scene
+                .car_sound_requests(slot)
+                .map(|(s, _)| s)
+                .filter(|s| matches!(s, CarSound::Explosion | CarSound::Signature))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                events,
+                if tick == 0 {
+                    vec![CarSound::Explosion, CarSound::Signature]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        for (state, base) in [(&r.player.state[..], 0xa0), (&r.police.state[..], 0x66)] {
+            assert_eq!((state[base + 26], state[base + 24]), (0, 0));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn skid_and_crash_requests_match_disc() {
     let mut r = Reference::new();
     let table = r.cpu.call(0x801073bc, &[]);
@@ -3019,6 +3056,40 @@ fn compare_battle_controls(
         });
         request
     };
+    let observe_actor_sounds = |cpu: &mut Cpu, address: u32, player: bool| {
+        let mut sounds = Vec::new();
+        if !player && cpu.ram[((address + 0x40) & 0x1fffff) as usize] == 0 {
+            return sounds;
+        }
+        let offset = if player { 0x388 } else { 0x444 };
+        let position = [0, 4, 8].map(|i| cpu.word(address + offset + i) as i32);
+        cpu.call_observed(
+            0x80150790,
+            &[0, address, u32::from(player)],
+            0x80000080,
+            |cpu| {
+                if cpu.pc() != 0x80106d60 {
+                    return;
+                }
+                let level = cpu.word(cpu.r[29] + 16) as i32;
+                let sound = match cpu.r[4] {
+                    0x4d..=0x59 => return, // Engine pitch is checked separately.
+                    0x6a => CarSound::Contact(ContactVoice::LightCrash, level),
+                    0x6b => CarSound::Contact(ContactVoice::MediumCrash, level),
+                    0x6c => CarSound::Contact(ContactVoice::HeavyCrash, level),
+                    0x6f => CarSound::Contact(ContactVoice::Skid, level),
+                    0x73 => {
+                        assert_eq!((cpu.r[5], level), (0, 99));
+                        CarSound::Explosion
+                    }
+                    0x74..=0x80 => CarSound::Signature,
+                    id => panic!("unexpected actor sound {id:#x}"),
+                };
+                sounds.push((sound, position));
+            },
+        );
+        sounds
+    };
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -3063,6 +3134,7 @@ fn compare_battle_controls(
         {
             gun_requests[0] = Some(false);
         }
+        let mut actor_sounds = vec![observe_actor_sounds(&mut r.cpu, PLAYER, true)];
         start_retail_death(&mut r.cpu, PLAYER, true);
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
@@ -3070,6 +3142,7 @@ fn compare_battle_controls(
             let address = POLICE + 0x560 * i as u32;
             let car = lineup.get(i).unwrap_or(&r.police).vehicle();
             gun_requests[1 + i] = observe_guns(&mut r.cpu, 0x8014ee14, &[cs, address], car);
+            actor_sounds.push(observe_actor_sounds(&mut r.cpu, address, false));
             start_retail_death(&mut r.cpu, address, false);
         }
         r.cpu.call_until(0x8014e0b4, &[], 0x8014e10c);
@@ -3141,6 +3214,13 @@ fn compare_battle_controls(
                 }
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
+        for (slot, expected) in actor_sounds.into_iter().enumerate() {
+            assert_eq!(
+                r.scene.car_sound_requests(slot).collect::<Vec<_>>(),
+                expected,
+                "{level:?} tick {tick} slot {slot}"
+            );
         }
         assert_eq!(
             r.scene.gun_sound_requests(),

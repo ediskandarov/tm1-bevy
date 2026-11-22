@@ -1063,11 +1063,23 @@ void arena_gun_sound(s32 slot, int firing)
         gun_requests[slot] = firing ? 1 : 2;
 }
 
+// UASetSoundFlags runs after each actor update and before its death model.
+static void capture_car_sounds(int out[5], u8* flags, CarMotion* motion, CarCollision* collision)
+{
+    out[0] = motion->pos.vx;
+    out[1] = motion->pos.vy;
+    out[2] = motion->pos.vz;
+    out[3] = (flags[2] != 0) | ((flags[26] != 0) << 1) | ((flags[24] != 0) << 2);
+    out[4] = (s16)collision->unk12;
+    flags[26] = flags[24] = 0;
+}
+
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9])
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5])
 {
+    memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     gun_requests = requests;
     *turbo = 0;
@@ -1107,11 +1119,14 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
                 cars[i].driving = driving;
         }
     }
+    capture_car_sounds(sounds[0], player.flags, &player.motion, &player.collision);
     tm1_start_death(&player, 1);
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
     for (int i = 0; i < count; i++) {
         AICarUpdate(&cars[i]);
         contact_phase(&player, &cars[i], 0, fields);
+        if (cars[i].unk40)
+            capture_car_sounds(sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision);
         tm1_start_death(&cars[i], 0);
     }
     tm1_check_victory(&player, cars, count);
@@ -1137,8 +1152,9 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
 void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5])
 {
+    memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     memset(turbo, 0, 2);
     gun_requests = requests;
@@ -1166,6 +1182,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
             tm1_contact_setup(GetPlayerCs3D(i), &car->motion, &car->stats);
             contact_phase(car, NULL, 1, fields);
         }
+        capture_car_sounds(sounds[i], car->flags, &car->motion, &car->collision);
         tm1_start_death(car, 1);
     }
     arena_regenerate_pickups();
