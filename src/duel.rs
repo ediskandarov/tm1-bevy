@@ -9,7 +9,7 @@ use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use std::time::Duration;
 use tm1_assets::{scene::Dmd, texture::Vram};
 use tm1_core::drive::{
-    CarView, CollisionScene, Difficulty, Input, Level, PlayerVehicle, Vehicle, VehicleCamera,
+    CollisionScene, Difficulty, Input, Level, PlayerVehicle, Vehicle, VehicleCamera,
 };
 
 pub const STAGES: [Level; 6] = [
@@ -121,9 +121,7 @@ pub fn start(
     for (car, layout) in cars.iter_mut().zip(layouts) {
         car.set_pad_layout(layout);
     }
-    let cameras = cars
-        .each_ref()
-        .map(|car| VehicleCamera::new(car, CarView::Chase));
+    let cameras = cars.each_ref().map(VehicleCamera::duel);
     campaign::clear_stage(world);
     world.remove_resource::<crate::contest::Contest>();
     world.insert_resource(arena);
@@ -362,11 +360,6 @@ pub fn advance(
         duel.wait_release = false;
     }
     let duel = &mut *duel;
-    for (slot, k) in [KeyC, KeyO].into_iter().enumerate() {
-        if keys.just_pressed(k) {
-            duel.cameras[slot].cycle(true);
-        }
-    }
     let input = [
         [KeyW, KeyS, KeyA, KeyD, ShiftLeft, KeyT, Space, KeyF, KeyE],
         [

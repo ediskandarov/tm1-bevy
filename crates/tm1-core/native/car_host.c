@@ -640,13 +640,14 @@ static void init_camera_modes(PlayerCar* car, int fov)
     car->vrRot[3].vz = 0;
 }
 
-// CAR_INIT.c CarInitVRModes and CAR.c CarViewUpdate (one-player views).
-int tm1_update_car_view(const u8* state, int mode, int snap, s32* offset, s32* pitch)
+// CAR_INIT.c CarInitVRModes and CAR.c CarViewUpdate. The split-screen level initializers copy preset 5 into chase preset 1.
+int tm1_update_car_view(const u8* state, int mode, int split, int snap, s32* offset, s32* pitch)
 {
     PlayerCar car;
     memcpy(&car, state, sizeof(car));
     init_camera_modes(&car, 60);
-    const VECTOR3* target = &car.vrPos[mode - 1];
+    int preset = split && mode == 2 ? 5 : mode - 1;
+    const VECTOR3* target = &car.vrPos[preset];
     int settled = abs(offset[1] - target->vy) < 17 || snap;
     int side = target->vx;
     if (mode != 1) {
@@ -658,7 +659,7 @@ int tm1_update_car_view(const u8* state, int mode, int snap, s32* offset, s32* p
     offset[0] = snap || (mode == 1 && settled) ? side : SmoothValue(offset[0], side, 90);
     offset[1] = settled ? target->vy : SmoothValue(offset[1], target->vy, 90);
     offset[2] = settled ? target->vz : SmoothValue(offset[2], target->vz, 90);
-    int target_pitch = car.vrRot[mode - 1].vx;
+    int target_pitch = car.vrRot[preset].vx;
     *pitch = settled ? target_pitch : SmoothValue(*pitch, target_pitch, 90);
     return car.stats.unk3C && !(mode == 1 && settled);
 }

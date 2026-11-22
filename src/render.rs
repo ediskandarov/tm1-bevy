@@ -1838,18 +1838,6 @@ pub fn duel_view(
         let view = &duel.cameras[slot];
         let radians = std::f32::consts::TAU / 4096.;
         let yaw = Quat::from_rotation_y(-(car.heading() as f32) * radians);
-        let rotate = |v: Vec3| {
-            if view.mode == tm1_core::drive::CarView::Cockpit {
-                let p = [v.x, -v.z, v.y];
-                world(std::array::from_fn(|i| {
-                    (0..3)
-                        .map(|j| poses[slot].matrix[j][i] as f32 * p[j] / 4096.)
-                        .sum()
-                }))
-            } else {
-                yaw * v
-            }
-        };
         let (eye, forward, up) = if let Some([x, y, z, pitch, yaw]) = view.fixed_pose {
             let (sp, cp) = (pitch as f32 * radians).sin_cos();
             let (sy, cy) = (yaw as f32 * radians).sin_cos();
@@ -1861,9 +1849,9 @@ pub fn duel_view(
         } else {
             let (sin, cos) = (view.pitch as f32 * radians).sin_cos();
             (
-                poses[slot].origin + rotate(world(view.offset.map(|v| v as f32))),
-                rotate(Vec3::new(0., -sin, -cos)),
-                rotate(Vec3::new(0., cos, -sin)),
+                poses[slot].origin + yaw * world(view.offset.map(|v| v as f32)),
+                yaw * Vec3::new(0., -sin, -cos),
+                yaw * Vec3::new(0., cos, -sin),
             )
         };
         let top = if slot == 0 { 0 } else { height / 2 };

@@ -768,6 +768,7 @@ impl RooftopPassage {
 }
 
 pub struct VehicleCamera {
+    split_screen: bool,
     pub mode: CarView,
     pub offset: [i32; 3],
     pub pitch: i32,
@@ -777,7 +778,16 @@ pub struct VehicleCamera {
 
 impl VehicleCamera {
     pub fn new(player: &PlayerVehicle, mode: CarView) -> Self {
+        Self::with_profile(player, mode, false)
+    }
+
+    pub fn duel(player: &PlayerVehicle) -> Self {
+        Self::with_profile(player, CarView::Chase, true)
+    }
+
+    fn with_profile(player: &PlayerVehicle, mode: CarView, split_screen: bool) -> Self {
         let mut view = Self {
+            split_screen,
             mode,
             offset: [0; 3],
             pitch: 0,
@@ -790,6 +800,9 @@ impl VehicleCamera {
 
     pub fn cycle(&mut self, forward: bool) {
         use CarView::*;
+        if self.split_screen {
+            return;
+        }
         self.mode = match (self.mode, forward) {
             (Cockpit, true) | (Far, false) => Chase,
             (Chase, true) | (Cockpit, false) => Far,
@@ -802,6 +815,7 @@ impl VehicleCamera {
             fn tm1_update_car_view(
                 state: *const u8,
                 mode: i32,
+                split_screen: i32,
                 snap: i32,
                 offset: *mut i32,
                 pitch: *mut i32,
@@ -818,6 +832,7 @@ impl VehicleCamera {
                 tm1_update_car_view(
                     player.state.as_ptr(),
                     self.mode as i32,
+                    self.split_screen.into(),
                     (snap || leaving_fixed).into(),
                     self.offset.as_mut_ptr(),
                     &mut self.pitch,

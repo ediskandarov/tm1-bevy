@@ -32,7 +32,9 @@ After both picks, choose **START** to play or **OPTIONS** to change the battlegr
 | Steer | A / D | Left / Right |
 | Hard turn / turbo | Left Shift / T | Right Shift / Slash |
 | Machine guns / selected weapon | Space / F | Comma / Period |
-| Cycle weapon / camera | E / C | L / O |
+| Cycle weapon | E | L |
+
+Each split-screen view follows its car using that vehicle’s two-player chase camera.
 
 Press P or the numeric keypad Enter to pause both views. Either player can navigate the pause menu. Choose CONTROLLER OPTIONS with Space for player one or Comma for player two. AUDIO adjusts the shared music and effects mix. START resumes the round and QUIT returns to the title movie.
 

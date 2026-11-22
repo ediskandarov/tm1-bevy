@@ -1324,6 +1324,73 @@ fn ordinary_camera_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn split_screen_chase_cameras_match_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    put(&mut cpu, 0x8018bf28, 1); // split_screen
+    put(&mut cpu, 0x8018c334, 2); // numPlayers
+    // Run the slot loop from InitUALevel1, retaining the camera setup part of CarInit.
+    put(
+        &mut cpu,
+        0x8012287c,
+        0x08000000 | ((0x80124474_u32 >> 2) & 0x03ffffff),
+    );
+    put(&mut cpu, 0x80122880, 0);
+    cpu.put(0x8010a690, &[8, 0, 224, 3, 70, 0, 2, 36]); // split FOV in both views
+    for entry in [0x8015060c, 0x801505c4, 0x8010ad84, 0x8010add4, 0x80144be8] {
+        cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    for i in 0..Vehicle::ROSTER.len() {
+        let kinds = [
+            Vehicle::ROSTER[i],
+            Vehicle::ROSTER[(i + 1) % Vehicle::ROSTER.len()],
+        ];
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+        for (slot, car) in cars.iter().enumerate() {
+            let addr = PLAYER + (slot * car.state.len()) as u32;
+            cpu.put(addr, &car.state);
+            put(&mut cpu, addr + 0xf4, CarView::Chase as u32);
+        }
+        cpu.call_until(0x8014c384, &[], 0x8014c4d4);
+        for (slot, car) in cars.iter_mut().enumerate() {
+            let addr = PLAYER + (slot * car.state.len()) as u32;
+            let mut camera = VehicleCamera::duel(car);
+            for axis in 0..3 {
+                assert_eq!(
+                    camera.offset[axis],
+                    cpu.word(addr + 0x54 + axis as u32 * 4) as i32
+                );
+            }
+            assert_eq!(camera.pitch, cpu.word(addr + 0x20) as i16 as i32);
+            put(&mut cpu, 0x8018c354, slot as u32); // let both pads reach the split-screen gate
+            camera.offset = [0; 3];
+            camera.pitch = 0;
+            for tick in 0..120 {
+                let turn = [0, -32, 190, -240, 48][(tick / 8) % 5];
+                vec3(&mut car.state, 0x380 + 0x2c, [0, 0, turn]);
+                put(&mut cpu, addr + 0x3b4, turn as u32);
+                let forward = tick % 3 == 0;
+                cpu.put(addr + 0xd9, &[(!forward).into(), forward.into()]);
+                cpu.call(0x8014eff4, &[addr]);
+                camera.cycle(forward);
+                cpu.call(0x80116bcc, &[addr]);
+                camera.update(car, false);
+                assert_eq!(camera.mode as u32, cpu.word(addr + 0xf4));
+                assert_eq!(
+                    camera.offset,
+                    std::array::from_fn(|j| cpu.word(addr + 12 + 4 * j as u32) as i32),
+                    "{kinds:?} slot {slot} tick {tick}"
+                );
+                assert_eq!(camera.pitch, cpu.word(addr + 4) as i16 as i32);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn helicopter_camera_original() {
     const HELI: u32 = 0x801a22b8;
     for (level, points) in [
