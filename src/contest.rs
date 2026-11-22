@@ -605,7 +605,10 @@ impl Contest {
             Page::MainOptions(_) | Page::Audio(_) | Page::Options(_) => 18001,
             Page::DuelJoin(None) => 1200,
             Page::Duel(_) | Page::Battle(_) | Page::Wrong(_) => 1201,
-            Page::DuelGarage { bio: false, .. } | Page::DuelOptions(_) | Page::DuelStage => 18001,
+            Page::Contest
+            | Page::DuelGarage { bio: false, .. }
+            | Page::DuelOptions(_)
+            | Page::DuelStage => 18001,
             Page::Controls | Page::DuelControls(_) => crate::pause::CONTROL_IDLE_FIELDS,
             _ => return false,
         };
@@ -621,9 +624,11 @@ impl Contest {
         match self.page {
             Page::MainOptions(_) => self.page = Page::Title,
             Page::Audio(_) => self.page = Page::MainOptions(0),
-            Page::DuelJoin(_) | Page::DuelGarage { .. } | Page::Duel(_) | Page::Battle(_) => {
-                self.leave_battle()
-            }
+            Page::Contest
+            | Page::DuelJoin(_)
+            | Page::DuelGarage { .. }
+            | Page::Duel(_)
+            | Page::Battle(_) => self.leave_battle(),
             Page::DuelOptions(_) => self.page = Page::Duel(1),
             Page::DuelStage => self.page = Page::DuelOptions(1),
             Page::DuelControls(_) => self.page = Page::DuelOptions(0),
@@ -693,12 +698,14 @@ impl Contest {
             Page::StaffRoll | Page::History | Page::Showcase(_) => return None,
             Page::Title | Page::MainOptions(_) if vertical => 0,
             Page::Audio(n) if vertical || (horizontal && n < 3) => 0,
+            Page::Contest if vertical => 0,
+            Page::Contest if keys.pressed(ArrowLeft) && keys.pressed(ArrowRight) => return None,
             _ if enter => 1,
             Page::Password if keys.any_just_pressed([Digit1, Digit2, Digit3, Digit4, Space]) => 1,
             Page::Password | Page::Controls if horizontal => 0,
             Page::Battle(_) | Page::Wrong(_) if vertical => 0,
             Page::Options(n) if vertical || (n < 2 && horizontal) => 0,
-            Page::Contest if vertical || (self.garage.row != 2 && horizontal) => 0,
+            Page::Contest if self.garage.row != 2 && horizontal => 0,
             _ => return None,
         };
         Some(self.button_sounds[index].clone())
@@ -930,18 +937,21 @@ impl Contest {
                 }
             }
             Page::Contest => {
-                if key(KeyCode::Enter) && self.garage.row == 0 {
-                    self.player_cars.0[0] = Some(self.vehicle);
-                    self.page = Page::Battle(0);
-                    self.idle = Duration::ZERO;
-                    return false;
-                }
-                if key(KeyCode::Enter) && self.garage.row == 1 {
-                    self.page = Page::Bio;
-                } else if key(KeyCode::ArrowUp) {
+                if key(KeyCode::ArrowUp) {
                     self.garage.row = (self.garage.row + 2) % 3;
                 } else if key(KeyCode::ArrowDown) {
                     self.garage.row = (self.garage.row + 1) % 3;
+                } else if !key(KeyCode::Escape)
+                    && keys.pressed(KeyCode::ArrowLeft)
+                    && keys.pressed(KeyCode::ArrowRight)
+                {
+                    return false;
+                } else if key(KeyCode::Enter) && self.garage.row == 0 {
+                    self.player_cars.0[0] = Some(self.vehicle);
+                    self.page = Page::Battle(0);
+                    self.idle = Duration::ZERO;
+                } else if key(KeyCode::Enter) && self.garage.row == 1 {
+                    self.page = Page::Bio;
                 } else if key(KeyCode::Escape) || key(KeyCode::Enter) {
                     self.page = Page::Title;
                     self.modes = Default::default();
@@ -1278,7 +1288,13 @@ pub fn update(world: &mut World) {
         let joining = matches!(menu.page, Page::DuelJoin(_));
         let join_held = joining && (crate::pause::duel_pad_held(keys, 0) || crate::pause::duel_pad_held(keys, 1));
         let join_wait = join_held || matches!(menu.page, Page::DuelJoin(Some(_)));
-        let timed_out = menu.tick_setup_timeout(if joining { join_held } else { controls.map_or(held, |input| input.reset_idle) }, menu_delta(world));
+        let reset_idle = match menu.page {
+            Page::DuelJoin(_) => join_held,
+            Page::Contest => keys.any_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft,
+                KeyCode::ArrowRight, KeyCode::Enter, KeyCode::KeyD, KeyCode::KeyP, KeyCode::Escape]),
+            _ => controls.map_or(held, |input| input.reset_idle),
+        };
+        let timed_out = menu.tick_setup_timeout(reset_idle, menu_delta(world));
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
             remaining.is_zero()
@@ -2299,6 +2315,46 @@ mod tests {
             );
         }
         assert_eq!(world.resource::<Contest>().page, Page::Battle(0));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn solo_showroom_input_priority_and_idle_exit() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, Enter);
+        let car = world.resource::<Contest>().vehicle;
+        let mut keys = ButtonInput::default();
+        for key in [ArrowLeft, ArrowRight, Enter] {
+            keys.press(key);
+        }
+        world.insert_resource(keys);
+        update(&mut world);
+        let menu = world.resource::<Contest>();
+        assert_eq!((menu.page, menu.vehicle), (Page::Contest, car));
+        assert!(
+            menu.input_sound(Page::Contest, world.resource::<ButtonInput<KeyCode>>())
+                .is_none()
+        );
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ArrowDown);
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().garage.row, 1);
+        let mut keys = ButtonInput::default();
+        keys.press(KeyQ);
+        world.insert_resource(keys);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(300));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Contest);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_nanos(16_666_667));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Title);
+        assert_eq!(world.resource::<Contest>().garage.voices().count(), 0);
     }
 
     #[test]
