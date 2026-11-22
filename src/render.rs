@@ -1257,13 +1257,11 @@ fn draw_view(
             continue;
         }
         let slot = arena.tiles[&(p.texture, p.semi_transparent)];
-        if i >= arena.vehicle_start && !p.double_sided && p.billboard.is_none() {
-            // geomProc rejects negative screen-space NCLIP in the normal view.
-            // The screen Y flip makes a clockwise world-space face visible.
-            let [a, b, c] = [0, 1, 2].map(|j| transform(i, p.vertices[j].position));
-            if (b - a).cross(c - a).dot(eye - a) > 0. {
-                continue;
-            }
+        if !p.double_sided
+            && p.billboard.is_none()
+            && back_facing([0, 1, 2].map(|j| transform(i, p.vertices[j].position)), eye)
+        {
+            continue;
         }
         let indices = indices(p.vertices.len());
         let batch = if let Some(i) = p
@@ -1371,6 +1369,21 @@ fn draw_view(
             {
                 continue;
             }
+            let mut points = [Vec3::ZERO; 4];
+            for (corner, vertex) in p.vertices.iter().enumerate() {
+                let rotated = std::array::from_fn(|k| {
+                    (0..3)
+                        .map(|j| pose[4 + 3 * j + k] as f32 * vertex.position[j] / 4096.)
+                        .sum()
+                });
+                points[corner] = billboard_point(origin + world(rotated), p.billboard, corner);
+            }
+            if !p.double_sided
+                && p.billboard.is_none()
+                && back_facing([points[0], points[1], points[2]], eye)
+            {
+                continue;
+            }
             let batch = if let Some(i) = p
                 .texture
                 .filter(|_| p.semi_transparent)
@@ -1385,16 +1398,7 @@ fn draw_view(
             let slot = arena.tiles[&(p.texture, p.semi_transparent)];
             for &i in indices(p.vertices.len()) {
                 let v = &p.vertices[i];
-                let rotated = std::array::from_fn(|k| {
-                    (0..3)
-                        .map(|j| pose[4 + 3 * j + k] as f32 * v.position[j] / 4096.)
-                        .sum()
-                });
-                batch.push(
-                    billboard_point(origin + world(rotated), p.billboard, i),
-                    arena.uv(slot, v.uv.into()),
-                    v.color,
-                );
+                batch.push(points[i], arena.uv(slot, v.uv.into()), v.color);
             }
             if p.semi_transparent {
                 batch.order_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
@@ -1890,6 +1894,11 @@ fn draw_radar(
         }
     }
 }
+// The PS1 screen Y axis points down. geomProc keeps clockwise faces in the normal view.
+fn back_facing([a, b, c]: [Vec3; 3], eye: Vec3) -> bool {
+    (b - a).cross(c - a).dot(eye - a) > 0.
+}
+
 fn indices(n: usize) -> &'static [usize] {
     if n == 4 {
         &[0, 1, 2, 2, 1, 3]
@@ -2170,6 +2179,25 @@ pub fn duel_view(
 mod tests {
     use super::*;
     use tm1_core::drive::Vehicle;
+
+    #[test]
+    fn battle_face_winding_matches_projected_screen_area() {
+        let points = [
+            Vec3::new(-2., 3., -4.),
+            Vec3::new(4., -1., -8.),
+            Vec3::new(0., 2., -2.),
+        ];
+        for eye_x in [-10., 0., 12.] {
+            let eye = Vec3::X * eye_x;
+            for face in [points, [points[1], points[0], points[2]], [points[0]; 3]] {
+                let [a, b, c] = face.map(|p| {
+                    let v = p - eye;
+                    Vec2::new(v.x, -v.y) * (200. / -v.z)
+                });
+                assert_eq!(back_facing(face, eye), (b - a).perp_dot(c - a) < 0.);
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
