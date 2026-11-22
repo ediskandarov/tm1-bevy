@@ -557,10 +557,8 @@ pub fn advance(
         return;
     }
     const STEP: Duration = Duration::from_millis(50);
-    let pad = gamepads
-        .iter()
-        .min_by_key(|(id, _)| *id)
-        .map(|(_, pad)| pad);
+    let first_pad = gamepads.iter().min_by_key(|(id, _)| *id);
+    let pad = first_pad.map(|(_, pad)| pad);
     let pressed = |button| pad.is_some_and(|p| p.pressed(button));
     let just_pressed = |button| pad.is_some_and(|p| p.just_pressed(button));
     let regained = window.focused && !drive.was_focused;
@@ -570,7 +568,10 @@ pub fn advance(
     }
     if window.focused
         && drive.pause != Some(crate::pause::Page::Aborted)
-        && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select))
+        && (keys.just_pressed(KeyCode::KeyR)
+            || (!drive.showing_boss_intro()
+                && drive.lost_life.is_none()
+                && just_pressed(GamepadButton::Select)))
     {
         drive.contacts.reset_projectiles();
         drive.pause = None;
@@ -690,11 +691,24 @@ pub fn advance(
         } else {
             time.delta()
         };
-        let selected = keys.just_pressed(KeyCode::Enter) || just_pressed(GamepadButton::South);
+        let selected = keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
+            || pad.is_some_and(|p| {
+                p.any_pressed([
+                    GamepadButton::South,
+                    GamepadButton::Select,
+                    GamepadButton::Start,
+                ])
+            });
         if drive.showing_boss_intro() {
             if !drive.boss_input_released {
-                drive.boss_input_released = keys.get_pressed().next().is_none()
-                    && pad.is_none_or(|p| p.get_pressed().next().is_none());
+                // screenBossCar polls GetPadStatus(0), which reads the upper
+                // controller halfword. ctlpadAnySelect(0) then reads the lower one.
+                let second_pad = gamepads
+                    .iter()
+                    .filter(|(id, _)| first_pad.is_some_and(|(first, _)| *id != first))
+                    .min_by_key(|(id, _)| *id);
+                drive.boss_input_released =
+                    second_pad.is_none_or(|(_, p)| p.get_pressed().next().is_none());
             }
             if drive.boss_input_released {
                 drive.pause_sound = selected.then_some(true);
@@ -868,6 +882,78 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_notices_sample_retail_pad_halves_and_held_select() {
+        use crate::campaign::{Entry, Stage};
+        use tm1_core::drive::Level;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let stage = Stage::load(
+            &disc,
+            Level::Rooftops,
+            Vehicle::RoadKill,
+            Entry::New(Default::default()),
+        )
+        .unwrap();
+        let mut app = App::new();
+        app.insert_resource(stage.drive)
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, advance);
+        app.world_mut().spawn(Window {
+            focused: true,
+            ..default()
+        });
+        let mut pads = [
+            app.world_mut().spawn(Gamepad::default()).id(),
+            app.world_mut().spawn(Gamepad::default()).id(),
+        ];
+        pads.sort();
+        tick(&mut app, 1);
+        app.world_mut().resource_mut::<Drive>().start_with_minion();
+        for (second_held, raw) in [(true, 0x1000_0100), (false, 0x100)] {
+            let mut first = app.world_mut().get_mut::<Gamepad>(pads[0]).unwrap();
+            first.digital_mut().press(GamepadButton::Select);
+            first.digital_mut().clear();
+            let mut second = app.world_mut().get_mut::<Gamepad>(pads[1]).unwrap();
+            if second_held {
+                second.digital_mut().press(GamepadButton::DPadUp);
+            } else {
+                second.digital_mut().release(GamepadButton::DPadUp);
+            }
+            cpu.call(0x800ffb98, &[2, raw]);
+            let waiting = cpu.call(0x800ffb50, &[0]) != 0;
+            let selected = cpu.call(0x800fffc4, &[0]) != 0;
+            tick(&mut app, 17);
+            let drive = app.world().resource::<Drive>();
+            assert_eq!(drive.showing_boss_intro(), waiting || !selected);
+            assert_eq!(drive.restart_count, 0);
+        }
+        assert_eq!(
+            app.world()
+                .resource::<Drive>()
+                .opponents
+                .last()
+                .unwrap()
+                .vehicle(),
+            Vehicle::Minion
+        );
+        app.world_mut()
+            .get_mut::<Gamepad>(pads[0])
+            .unwrap()
+            .digital_mut()
+            .reset_all();
+        let mut keys = app.world_mut().resource_mut::<ButtonInput<KeyCode>>();
+        keys.press(KeyCode::Space);
+        keys.clear();
+        app.world_mut().resource_mut::<Drive>().advance_death(181);
+        tick(&mut app, 17);
+        let drive = app.world().resource::<Drive>();
+        assert!(drive.lost_life.is_none());
+        assert_eq!(drive.pause_sound, Some(true));
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

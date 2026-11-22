@@ -11,6 +11,10 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 Single-player stage setup carries the deal sequence through card angles and pedestrian setup. It samples the counter again before placing vehicles and when entering combat, following the reseeds in uaInitDB and InitLevel. The shell then consumes twelve BIOS random values for six windshield marks in both game modes. A new life samples a fresh combat seed and regenerates the marks. Keyboard restart restores the original stage combat seed and spawn layout. The host counter models the JP counter frequency and wraparound. Exact boot and disc-load timings are platform dependent.
 
+## Loss of life and Minion introduction
+
+During the first 30 fields of the loss-of-life fade, holding Enter, Space or P skips to the next life and plays the menu confirmation sound. On the Minion introduction the same keys skip the five-second message. On a controller the accepted buttons are Cross, Select and Start. The retail boss screen initially waits for release on the upper controller halfword before polling confirmation on the lower halfword. An input integration test exercises both ports with virtual controllers, compares the decisions with the retail GetPadStatus and ctlpadAnySelect routines, and checks held Space during the loss-of-life fade.
+
 ## Battle radar
 
 The single-player radar collects opponents during their individual updates and active repair stands before regeneration. It displays the previous simulation pass, retaining up to twelve marks and four directional flags while hidden. Repair stands blink with the original radar buffer. A disc-backed test compares the buffered marks, colors, coordinates and edge flags with the JP executable across hide and show transitions, including a full buffer. The Cyburbia Metal capture at `local/cyburbia-radar.png` shows Road Kill at update 40. Framebuffer blending has not been compared pixel by pixel.
