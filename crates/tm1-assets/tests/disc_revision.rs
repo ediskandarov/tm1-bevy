@@ -59,6 +59,26 @@ fn supported_disc_arena_and_audio() {
             assert!(boss.iter().all(|stage| !stage.polygons.is_empty()));
         }
     }
+    // Check expanded ranges against each stage's own geometry in both game modes.
+    for folder in ["UADMD/", "UA2PLAY/"] {
+        for path in disc
+            .files
+            .keys()
+            .filter(|p| p.starts_with(folder) && p.ends_with(".DMD"))
+        {
+            let data = disc.read(path).unwrap();
+            let level = Dmd::parse(&data).unwrap();
+            if !level.roots.iter().any(|r| r.1 == 1) {
+                continue;
+            }
+            let world = level.battle_world().unwrap();
+            let mut hidden = vec![false; world.polygons.len()];
+            for lod in world.lods.as_ref().unwrap() {
+                lod.hide_other_branches(world.polygons[0].vertices[0].position, &mut hidden);
+            }
+            assert!(hidden.iter().any(|&h| !h), "{path}");
+        }
+    }
     let frames = db.explosion_frames().unwrap();
     assert_eq!(frames[0].uv, [[64, 96], [95, 96], [64, 127], [95, 127]]);
     for frame in &frames {

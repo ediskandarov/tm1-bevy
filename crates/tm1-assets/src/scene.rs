@@ -135,6 +135,34 @@ impl VisibilityController {
 }
 
 #[derive(Debug)]
+pub struct LevelOfDetail {
+    transform: Transform,
+    offset: [i32; 3],
+    branches: Vec<(u32, u32, std::ops::Range<usize>)>,
+}
+
+impl LevelOfDetail {
+    pub fn hide_other_branches(&self, eye: [f32; 3], hidden: &mut [bool]) {
+        let mut distance = 0u32;
+        for axis in 0..3 {
+            let local = (0..3)
+                .map(|j| self.transform.axes[j][axis] * (self.transform.offset[j] - eye[j]))
+                .sum::<f32>() as i32;
+            let scaled = local.wrapping_add(self.offset[axis]) >> 3;
+            distance = distance.wrapping_add(scaled.wrapping_mul(scaled) as u32);
+        }
+        let mut selected = false;
+        for (near, far, range) in &self.branches {
+            if !selected && (*near..*far).contains(&distance) {
+                selected = true;
+            } else {
+                hidden[range.clone()].fill(true);
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Scene {
     pub version: u32,
     pub root_id: u32,
@@ -142,6 +170,7 @@ pub struct Scene {
     pub object_ids: Vec<u32>,
     pub omitted_nodes: Vec<String>,
     pub visibility: Vec<VisibilityController>,
+    pub lods: Option<Vec<LevelOfDetail>>,
     pub damage_branches: Vec<(u32, u8, std::ops::Range<usize>)>,
     pub health_stands: Vec<(u8, [i32; 3])>,
 }
@@ -213,8 +242,12 @@ impl<'a> Dmd<'a> {
         Ok(offset)
     }
     pub fn extract_kind(&self, kind: u16) -> Result<Scene> {
-        self.extract(kind, None)
+        self.extract(kind, None, false)
     }
+    pub fn battle_world(&self) -> Result<Scene> {
+        self.extract(1, None, true)
+    }
+
     /// Read the 16 Aburst frames used by explodeStoreExplosionAnimation.
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
         self.sprite_frames(654, true)
@@ -466,15 +499,20 @@ impl<'a> Dmd<'a> {
     }
     pub fn vehicle_bodies_with_lights(&self, kind: u16, headlights: bool) -> Result<[Scene; 3]> {
         Ok([
-            self.extract(kind, Some((Some(0), headlights)))?,
-            self.extract(kind, Some((Some(1), headlights)))?,
-            self.extract(kind, Some((Some(2), headlights)))?,
+            self.extract(kind, Some((Some(0), headlights)), false)?,
+            self.extract(kind, Some((Some(1), headlights)), false)?,
+            self.extract(kind, Some((Some(2), headlights)), false)?,
         ])
     }
     pub fn garage_vehicle(&self, kind: u16) -> Result<Scene> {
-        self.extract(kind, Some((None, false)))
+        self.extract(kind, Some((None, false)), false)
     }
-    fn extract(&self, kind: u16, body: Option<(Option<u8>, bool)>) -> Result<Scene> {
+    fn extract(
+        &self,
+        kind: u16,
+        body: Option<(Option<u8>, bool)>,
+        battle_lods: bool,
+    ) -> Result<Scene> {
         let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
         ensure!(
             roots.len() == 1,
@@ -509,7 +547,7 @@ impl<'a> Dmd<'a> {
                 headlights,
             });
         }
-        let scene = self.extract_root(root_id, selection)?;
+        let scene = self.extract_root(root_id, selection, battle_lods)?;
         ensure!(
             !scene.polygons.is_empty(),
             "selected root has no supported polygons"
@@ -545,16 +583,23 @@ impl<'a> Dmd<'a> {
                         vehicle_kind: None,
                         headlights: true,
                     }),
+                    false,
                 )
             })
             .collect()
     }
-    fn extract_root(&self, root_id: u32, selection: Option<BodySelection>) -> Result<Scene> {
+    fn extract_root(
+        &self,
+        root_id: u32,
+        selection: Option<BodySelection>,
+        battle_lods: bool,
+    ) -> Result<Scene> {
         let mut scene = Scene {
             version: self.version,
             root_id,
             polygons: vec![],
             visibility: vec![],
+            lods: battle_lods.then(Vec::new),
             damage_branches: vec![],
             health_stands: vec![],
             object_ids: vec![],
@@ -637,7 +682,6 @@ impl<'a> Dmd<'a> {
                 }
             }
             2 => {
-                // Static inspection chooses the nearest LOD; it does not implement game LOD selection.
                 let n = u32le(d, p + 16)? as usize;
                 bytes(
                     d,
@@ -645,15 +689,31 @@ impl<'a> Dmd<'a> {
                     n.checked_mul(4)
                         .ok_or_else(|| anyhow::anyhow!("LOD count overflow"))?,
                 )?;
-                let mut choice = None;
+                let mut branches = Vec::new();
+                let mut nearest = None;
                 for i in 0..n {
                     let r = self.offset(u32le(d, p + 20 + 4 * i)?)?;
                     let near = u32le(d, r + 4)?;
-                    if choice.is_none_or(|(best, _)| near < best) {
-                        choice = Some((near, u32le(d, r + 8)?));
+                    let child = u32le(d, r + 8)?;
+                    if scene.lods.is_some() {
+                        let first = scene.polygons.len();
+                        self.visit(child, transform, selection, pickup, ancestors, scene)?;
+                        branches.push((near, u32le(d, r)?, first..scene.polygons.len()));
+                    } else if nearest.is_none_or(|(best, _)| near < best) {
+                        nearest = Some((near, child));
                     }
                 }
-                if let Some((_, child)) = choice {
+                if let Some(lods) = &mut scene.lods {
+                    lods.push(LevelOfDetail {
+                        transform,
+                        offset: [
+                            u32le(d, p + 4)? as i32,
+                            u32le(d, p + 8)? as i32,
+                            u32le(d, p + 12)? as i32,
+                        ],
+                        branches,
+                    });
+                } else if let Some((_, child)) = nearest {
                     children.push(child);
                 }
             }

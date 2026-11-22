@@ -146,7 +146,7 @@ pub fn start(
     let textures = Vram::from_tms(&texture_data)?;
     let dmd = Dmd::parse(&data)?;
     ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
-    let mut geometry = dmd.extract_kind(1)?;
+    let mut geometry = dmd.battle_world()?;
     if level == Level::Arena {
         geometry.polygons.extend(dmd.extract_kind(3)?.polygons);
     }

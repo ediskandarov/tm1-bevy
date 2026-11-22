@@ -57,6 +57,10 @@ Fragments use the two four-frame texture sequences selected by EXPLODE.c. The ma
 
 Wrecks and special-weapon impacts use the same eight-frame flame sequence. It repeats thirteen times over 104 updates. The renderer projects a strip between the impact position and a point 80 units above it using the original angle tables. A disc-backed test checks both cameras against the JP GPU commands over 105 updates, including the frame omitted from the secondary view in the final loop. The Warehouse capture uses Sweet Tooth with `--demo-special-screenshot local/warehouse-ground-fire.png 210`.
 
+## Scenery level of detail
+
+Battle scenery loads every DMD level-of-detail branch. Each camera selects the first matching distance interval for each node, using the battle hierarchy's signed coordinate shifts and unsigned squared-distance comparisons. The chase view, rear mirror and both duel views evaluate their own eye positions. A disc-backed test compares the visible polygon records from four Warehouse nodes with the child selected by the JP hierLod routine over 7,388 camera positions. This covers world scenery. Vehicle bodies and showroom meshes still load their nearest branch.
+
 ## Combat particles in both views
 
 The main camera captures the particle pool immediately after animation. Vehicle updates can then create effects that appear in the mirror or second player's view during the same update. The secondary view skips age one of the last animation loop. Both views use integer projection, the initial sprite width for size, the current animation frame for UVs and the per-effect depth bias. A JP packet comparison follows muzzle flash, smoke, steam, ground fire, blue explosion and large explosion from creation to expiry. It checks visibility, all four screen corners, UVs, texture page, palette, primitive type and ordering-table bucket. The Thumper capture on Metal uses `--level warehouse --car thumper --demo-special-screenshot local/warehouse-thumper-views.png 16`.

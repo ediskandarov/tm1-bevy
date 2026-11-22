@@ -1167,6 +1167,9 @@ fn draw_view(
             }),
     );
     let mut hidden_world = vec![false; arena.vehicle_start];
+    for lod in arena.scene.lods.iter().flatten() {
+        lod.hide_other_branches([eye.x, -eye.z, eye.y], &mut hidden_world);
+    }
     for controller in &arena.scene.visibility {
         hidden_world[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
     }
@@ -2260,6 +2263,66 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn warehouse_lod_ranges_match_retail_traversal() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let mut db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(0x800188b8, &data);
+        // Capture the child passed to hierPush, bypassing the rest of the hierarchy.
+        cpu.put(0x800fd7dc, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        let mut selections = std::collections::BTreeSet::new();
+        for node in [0x80042b40, 0x80035ec8, 0x80036638, 0x800367a8] {
+            db.roots = vec![(node, 1)];
+            let scene = db.battle_world().unwrap();
+            let lod = scene.lods.as_ref().unwrap().last().unwrap();
+            let origin = [4, 8, 12].map(|off| cpu.word(node + off) as i32);
+            let mut children = std::collections::BTreeMap::new();
+            for i in 0..cpu.word(node + 16) {
+                let record = cpu.word(node + 20 + 4 * i);
+                let ptr = cpu.word(record + 8);
+                db.roots = vec![(ptr, 1)];
+                let child = db.battle_world().unwrap();
+                children.insert(
+                    ptr,
+                    child
+                        .polygons
+                        .iter()
+                        .map(|p| p.source_offset)
+                        .collect::<Vec<_>>(),
+                );
+            }
+            for step in (-12000..=12000).step_by(13) {
+                let eye = [origin[0] + step, origin[1], origin[2]];
+                for (i, pos) in eye.iter().enumerate() {
+                    cpu.put(0x80011008 + 4 * i as u32, &(-pos).to_le_bytes());
+                }
+                let mut child = None;
+                cpu.call_observed(0x800fe144, &[node, 0x80011000], 0x80000080, |cpu| {
+                    if cpu.pc() == 0x800fd7dc {
+                        child = Some(cpu.r[4]);
+                    }
+                });
+                let mut hidden = vec![false; scene.polygons.len()];
+                lod.hide_other_branches(eye.map(|v| v as f32), &mut hidden);
+                let visible: Vec<_> = scene
+                    .polygons
+                    .iter()
+                    .zip(hidden)
+                    .filter_map(|(p, h)| (!h).then_some(p.source_offset))
+                    .collect();
+                let expected = child
+                    .map(|ptr| children[&ptr].as_slice())
+                    .unwrap_or_default();
+                assert_eq!(visible, expected, "node {node:x} eye {eye:?}");
+                selections.insert(child);
+            }
+        }
+        assert!(selections.len() > 4);
     }
 
     fn draw_jp_font_packets(cpu: &crate::reference_cpu::Cpu, ot: u32, tim: &[u8]) -> Vec<u8> {

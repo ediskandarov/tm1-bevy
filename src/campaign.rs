@@ -169,7 +169,7 @@ impl Stage {
         let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
         let dmd = Dmd::parse(&data)?;
         ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
-        let mut scene = dmd.extract_kind(1)?;
+        let mut scene = dmd.battle_world()?;
         if matches!(level, Level::Arena | Level::Arena5) {
             scene.polygons.extend(dmd.extract_kind(3)?.polygons);
         }
