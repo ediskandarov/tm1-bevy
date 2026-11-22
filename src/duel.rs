@@ -35,6 +35,7 @@ pub struct Duel {
     pub cameras: [VehicleCamera; 2],
     pub scene: CollisionScene,
     remainder: Duration,
+    focus: DuelFocus,
     score: [u32; 2],
     pub(crate) settings: crate::pause::Settings,
     winner: Option<usize>,
@@ -53,6 +54,76 @@ impl Duel {
     pub(crate) fn finished(&self) -> bool {
         self.winner.is_some()
     }
+}
+
+enum DuelFocus {
+    Playing,
+    Background(Vec<Entity>),
+    Returning,
+}
+
+pub fn configure(schedule: &mut Schedule) {
+    schedule.add_systems(
+        (
+            update_focus,
+            (
+                pause_menu,
+                advance,
+                crate::sfx::duel::mix,
+                render::duel_view,
+                round_menu,
+            )
+                .chain()
+                .run_if(accepts_input),
+        )
+            .chain()
+            .run_if(resource_exists::<Duel>),
+    );
+}
+
+fn update_focus(
+    mut duel: ResMut<Duel>,
+    window: Single<&Window>,
+    capture: Res<Capture>,
+    mut voices: Query<(Entity, &mut PlaybackSettings, Option<&AudioSink>), With<StageEntity>>,
+) {
+    if !window.focused && !capture.demo {
+        if !matches!(duel.focus, DuelFocus::Background(_)) {
+            let mut resume = Vec::new();
+            for (entity, mut settings, sink) in &mut voices {
+                if !settings.paused {
+                    settings.paused = true;
+                    if let Some(sink) = sink {
+                        sink.pause();
+                    }
+                    resume.push(entity);
+                }
+            }
+            duel.focus = DuelFocus::Background(resume);
+            duel.remainder = Duration::ZERO;
+        }
+        return;
+    }
+    match &duel.focus {
+        DuelFocus::Background(resume) => {
+            for entity in resume {
+                if let Ok((_, mut settings, sink)) = voices.get_mut(*entity) {
+                    settings.paused = false;
+                    if let Some(sink) = sink {
+                        sink.play();
+                    }
+                }
+            }
+            // The first foreground delta can include the entire background interval.
+            duel.focus = DuelFocus::Returning;
+        }
+        DuelFocus::Returning => duel.focus = DuelFocus::Playing,
+        DuelFocus::Playing => {}
+    }
+}
+
+fn accepts_input(duel: Res<Duel>) -> bool {
+    matches!(duel.focus, DuelFocus::Playing)
 }
 
 pub fn start(
@@ -132,6 +203,7 @@ pub fn start(
         cameras,
         scene,
         remainder: Duration::ZERO,
+        focus: DuelFocus::Playing,
         score,
         winner: None,
         score_time_left,
@@ -207,9 +279,6 @@ pub fn pause_menu(
         for (entity, ..) in &mut audio {
             commands.entity(entity).despawn();
         }
-        return;
-    }
-    if !window.focused {
         return;
     }
     let before = duel.pause;
@@ -358,8 +427,7 @@ pub fn advance(
 ) {
     use KeyCode::*;
     duel.sounds.clear();
-    if duel.pause.is_some() || (!window.focused && !capture.demo) || capture.holding_battle_frame()
-    {
+    if duel.pause.is_some() || capture.holding_battle_frame() {
         return;
     }
     if duel.winner.is_some() {
@@ -520,6 +588,94 @@ pub fn round_menu(world: &mut World) {
 mod tests {
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn duel_focus_preserves_simulation_and_voices() {
+        use super::*;
+        use KeyCode::*;
+        let mut world = crate::contest::menu_world();
+        start(
+            &mut world,
+            Level::Warehouse,
+            [Vehicle::Outlaw, Vehicle::RoadKill],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(Capture::new(None, false, false));
+        let mut schedule = Schedule::default();
+        configure(&mut schedule);
+        let mut tick = |world: &mut World, focused, millis, pressed: &[KeyCode]| {
+            world
+                .query::<&mut Window>()
+                .single_mut(world)
+                .unwrap()
+                .focused = focused;
+            let mut keys = ButtonInput::default();
+            for &key in pressed {
+                keys.press(key);
+            }
+            world.insert_resource(keys);
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(millis));
+            schedule.run(world);
+        };
+        let clocks = |world: &World| {
+            world
+                .resource::<Duel>()
+                .cars
+                .each_ref()
+                .map(PlayerVehicle::frame)
+        };
+        let voices = |world: &mut World| {
+            world
+                .query_filtered::<(Entity, &PlaybackSettings), With<StageEntity>>()
+                .iter(world)
+                .map(|(e, s)| (e, s.paused))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        tick(&mut world, true, 50, &[KeyW, ArrowUp, Space, Comma]);
+        assert!(
+            world
+                .query_filtered::<Entity, With<DuelEffect>>()
+                .iter(&world)
+                .count()
+                >= 4
+        );
+        let frame = clocks(&world);
+        let playing = voices(&mut world);
+        assert!(playing.values().all(|paused| !paused));
+        tick(&mut world, false, 50, &[Escape]);
+        tick(&mut world, false, 20_000, &[Enter, KeyP]);
+        assert_eq!(frame, clocks(&world));
+        let suspended = voices(&mut world);
+        assert!(suspended.keys().eq(playing.keys()));
+        assert!(suspended.values().all(|paused| *paused));
+        tick(&mut world, true, 20_000, &[Escape]);
+        assert_eq!(frame, clocks(&world));
+        assert_eq!(voices(&mut world), playing);
+        tick(&mut world, true, 50, &[]);
+        assert_eq!(clocks(&world), frame.map(|f| f + 1));
+        for key in [KeyP, ArrowDown, ArrowDown, Enter] {
+            tick(&mut world, true, 50, &[key]);
+        }
+        assert_eq!(
+            world.resource::<Duel>().pause,
+            Some(crate::pause::Page::Audio(0))
+        );
+        let menu = voices(&mut world);
+        assert!(menu.values().any(|paused| *paused) && menu.values().any(|paused| !paused));
+        tick(&mut world, false, 400_000, &[KeyP]);
+        assert!(voices(&mut world).values().all(|paused| *paused));
+        tick(&mut world, true, 400_000, &[Enter]);
+        assert_eq!(voices(&mut world), menu);
+        assert_eq!(
+            world.resource::<Duel>().pause,
+            Some(crate::pause::Page::Audio(0))
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn duel_auto_rematch_after_rooftop_fall() {
         use super::*;
         use crate::contest::menu_world;
@@ -585,6 +741,42 @@ mod tests {
                 .collect::<Vec<_>>(),
             score_voices
         );
+        let remaining = world.resource::<Duel>().score_time_left;
+        let mut schedule = Schedule::default();
+        configure(&mut schedule);
+        world
+            .query::<&mut Window>()
+            .single_mut(&mut world)
+            .unwrap()
+            .focused = false;
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(60));
+        schedule.run(&mut world);
+        assert!(
+            score_voices
+                .iter()
+                .all(|&e| world.get::<PlaybackSettings>(e).unwrap().paused)
+        );
+        world
+            .query::<&mut Window>()
+            .single_mut(&mut world)
+            .unwrap()
+            .focused = true;
+        schedule.run(&mut world);
+        assert!(
+            score_voices
+                .iter()
+                .all(|&e| !world.get::<PlaybackSettings>(e).unwrap().paused)
+        );
+        assert_eq!(world.resource::<Duel>().score_time_left, remaining);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
         round_menu(&mut world);
         assert!(world.get_entity(hud_entity).is_ok());
         assert_eq!(world.resource::<Duel>().score, [2, 4]);

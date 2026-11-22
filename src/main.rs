@@ -255,18 +255,7 @@ fn main() -> Result<()> {
             gpu_timing::GpuTiming,
         ));
     }
-    app.add_systems(
-        Update,
-        (
-            duel::pause_menu,
-            duel::advance,
-            sfx::duel::mix,
-            render::duel_view,
-            duel::round_menu,
-        )
-            .chain()
-            .run_if(resource_exists::<duel::Duel>),
-    );
+    app.edit_schedule(Update, duel::configure);
     let exit = app
         .add_systems(
             Update,
