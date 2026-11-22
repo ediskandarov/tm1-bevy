@@ -984,6 +984,19 @@ fn hover_requests(
 
 impl SoundListener {
     pub fn new(car: &PlayerVehicle, camera: &VehicleCamera, helicopter: Option<[i32; 5]>) -> Self {
+        Self::for_view(car, camera, helicopter, false)
+    }
+
+    pub fn rear_view(car: &PlayerVehicle, camera: &VehicleCamera) -> Self {
+        Self::for_view(car, camera, None, true)
+    }
+
+    fn for_view(
+        car: &PlayerVehicle,
+        camera: &VehicleCamera,
+        helicopter: Option<[i32; 5]>,
+        rear: bool,
+    ) -> Self {
         let fixed = helicopter.or(camera.fixed_pose);
         let (origin, offset, pitch, yaw) = match fixed {
             Some([x, y, z, pitch, yaw]) => ([x, y, z], [0; 3], pitch, yaw),
@@ -1005,9 +1018,25 @@ impl SoundListener {
                 std::array::from_fn(|j| (0..3).map(|k| a[i][k] * b[k][j]).sum::<i32>() >> 12)
             })
         };
-        let axes = [[4096, 0, 0], [0, 0, -3690], [0, 3690, 0]];
+        let axes = [
+            [if rear { -4096 } else { 4096 }, 0, 0],
+            [0, 0, -3690],
+            [0, 3690, 0],
+        ];
         let tilt = [[4096, 0, 0], [0, cp, -sp], [0, sp, cp]];
-        let matrix = if fixed.is_some() {
+        let matrix = if rear {
+            let parent = if fixed.is_some() {
+                rotate(tilt, parent)
+            } else {
+                parent
+            };
+            let local_pitch = if fixed.is_some() { 0 } else { pitch };
+            let [s, c] = car
+                .wheel_sin_cos(i64::from(local_pitch - 56))
+                .map(i32::from);
+            let local = [[-4096, 0, 0], [0, -c, -s], [0, -s, c]];
+            rotate(rotate(axes, local), parent)
+        } else if fixed.is_some() {
             rotate(axes, rotate(tilt, parent))
         } else {
             rotate(rotate(axes, tilt), parent)
@@ -1378,6 +1407,7 @@ unsafe extern "C" {
         sounds: *mut [i32; 5],
         audio: *mut std::ffi::c_void,
         next_audio: *mut std::ffi::c_void,
+        before_primary_view: *mut usize,
     ) -> u8;
     #[cfg(test)]
     fn tm1_contacts(
@@ -1946,8 +1976,8 @@ impl CollisionScene {
     pub fn duel_updated_players(&self) -> [bool; 2] {
         self.duel_updated.map(|flag| flag != 0)
     }
-    /// RT advances missiles with the previous secondary camera before installing view zero.
-    pub fn duel_events_before_primary_view(&self) -> usize {
+    /// RT advances missiles with the last installed camera before installing view zero.
+    pub fn events_before_primary_view(&self) -> usize {
         self.before_primary_view
     }
 
@@ -2150,6 +2180,7 @@ impl CollisionScene {
                 self.car_sounds.as_mut_ptr(),
                 (&raw mut self.audio).cast(),
                 (&raw mut self.next_audio).cast(),
+                &mut self.before_primary_view,
             ) != 0
         }
     }

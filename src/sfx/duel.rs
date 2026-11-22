@@ -332,7 +332,7 @@ mod tests {
                 [0, 1].map(|slot| SoundListener::new(&duel.cars[slot], &duel.cameras[slot], None));
             world.run_system_once(crate::duel::advance).unwrap();
             let duel = world.resource::<Duel>();
-            let before_primary = duel.scene.duel_events_before_primary_view();
+            let before_primary = duel.scene.events_before_primary_view();
             let mut expected = Vec::new();
             let mut spark_count = [0; 2];
             for (i, event) in duel.scene.battle_events(&views[0]).enumerate() {
@@ -460,7 +460,7 @@ mod tests {
             world.run_system_once(mix).unwrap();
             let duel = world.resource::<Duel>();
             let volume = duel.settings.effects_volume();
-            let boundary = duel.scene.duel_events_before_primary_view();
+            let boundary = duel.scene.events_before_primary_view();
             for (index, event) in duel.scene.battle_events(&views[0]).enumerate() {
                 let (id, pos) = match event {
                     BattleEvent::Guns {

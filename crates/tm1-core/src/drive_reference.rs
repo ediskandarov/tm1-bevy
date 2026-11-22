@@ -1722,16 +1722,30 @@ fn positional_sound_matches_retail() {
             (CarView::Cockpit, false, 0, 6),
             (CarView::Far, false, 0, 6),
             (CarView::Chase, true, 0, 6),
+            (CarView::Chase, false, 1, 13),
+            (CarView::Cockpit, false, 1, 13),
+            (CarView::Far, false, 1, 13),
+            (CarView::Chase, true, 1, 13),
         ] {
             put(&mut cpu, 0x8018c50c + view * 4, node);
             put(&mut cpu, 0x8018c51c + view * 4, fov);
-            let camera = if fov >= 11 {
+            if fov == 13 {
+                put(&mut cpu, 0x8018c50c, node);
+                put(&mut cpu, 0x8018c510, node + 0x600);
+                put(&mut cpu, node + 0x610, node + 0x800);
+            }
+            let mut camera = if matches!(fov, 11 | 12) {
                 VehicleCamera::duel(&car)
             } else {
                 VehicleCamera::new(&car, mode)
             };
             let fixed = detached.then_some([1500, -120, 8100, tilt, yaw]);
-            let listener = SoundListener::new(&car, &camera, fixed);
+            camera.fixed_pose = fixed;
+            let listener = if fov == 13 {
+                SoundListener::rear_view(&car, &camera)
+            } else {
+                SoundListener::new(&car, &camera, fixed)
+            };
             let (rotation, location, offset, pitch) = if let Some([x, y, z, p, h]) = fixed {
                 ([p as i16, 0, h as i16], [x, y, z], [0; 3], 0)
             } else {
@@ -1754,6 +1768,19 @@ fn positional_sound_matches_retail() {
             );
             vec3_cpu(&mut cpu, node + 0x5c, offset);
             cpu.call_until(0x8010a774, &[view], 0x8010a9f4);
+            let matrix = ((WORLD + 0x34) & 0x1fffff) as usize;
+            for (j, value) in listener.matrix.iter().flatten().enumerate() {
+                let at = matrix + 2 * j;
+                assert_eq!(
+                    *value,
+                    i16::from_le_bytes(cpu.ram[at..at + 2].try_into().unwrap()) as i32,
+                    "FOV {fov} {mode:?} yaw {yaw} matrix {j}"
+                );
+            }
+            assert_eq!(
+                listener.eye,
+                [0, 4, 8].map(|d| -(cpu.word(WORLD + 0x68 + d) as i32))
+            );
             for d in [
                 [0, 0, 0],
                 [1, -2, 3],

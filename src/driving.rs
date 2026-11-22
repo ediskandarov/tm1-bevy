@@ -162,7 +162,8 @@ pub(crate) fn battle_audio(
     listener: &tm1_core::drive::SoundListener,
     volume: u8,
     recharge: usize,
-    previous_view: Option<&tm1_core::drive::SoundListener>,
+    previous_view: &tm1_core::drive::SoundListener,
+    split_screen: bool,
     actor: impl Fn(usize) -> (Vehicle, i32, [i32; 3]),
     mut emit: impl FnMut(BattleRequest),
 ) {
@@ -171,9 +172,11 @@ pub(crate) fn battle_audio(
     let mut emit = |request| queue.submit(request, &mut emit);
     let car = |slot| actor(slot).0;
     for (index, event) in scene.battle_events(listener).enumerate() {
-        let listener = previous_view
-            .filter(|_| index < scene.duel_events_before_primary_view())
-            .unwrap_or(listener);
+        let listener = if index < scene.events_before_primary_view() {
+            previous_view
+        } else {
+            listener
+        };
         let centered = |id, exclusive, volume_percent| {
             BattleRequest::Play(BattleSound {
                 id,
@@ -227,7 +230,7 @@ pub(crate) fn battle_audio(
             BattleEvent::Actor(slot) => {
                 let effect = |(sound, position)| {
                     let (id, key, level) = car_sample(sound, car(slot), slot, recharge);
-                    if previous_view.is_some() {
+                    if split_screen {
                         centered(id, Some(key), level)
                     } else {
                         play(id, Some(key), level, position, sound == CarSound::Explosion)
@@ -245,7 +248,7 @@ pub(crate) fn battle_audio(
                     emit(effect(sound));
                 }
                 let (_, rev, position) = actor(slot);
-                let (channels, range) = if previous_view.is_some() {
+                let (channels, range) = if split_screen {
                     ([i32::from(volume); 2], 0)
                 } else {
                     (
@@ -362,6 +365,7 @@ pub struct Drive {
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
     pub listener: tm1_core::drive::SoundListener,
+    last_listener: Option<tm1_core::drive::SoundListener>,
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
     rooftop_passage: RooftopPassage,
@@ -582,6 +586,7 @@ impl Drive {
             if let Some(heli) = &mut self.helicopter {
                 heli.respawn(&mut self.player);
             }
+            self.last_listener = None;
             self.contacts.respawn_player(&mut self.player);
             if self.helicopter_active
                 && let Some(heli) = &mut self.helicopter
@@ -633,6 +638,7 @@ impl Drive {
             opponents,
             contacts,
             deck: Default::default(),
+            last_listener: None,
             listener: tm1_core::drive::SoundListener::new(&player, &camera, None),
             camera,
             player,
@@ -712,6 +718,7 @@ pub fn advance(
                 && drive.lost_life.is_none()
                 && just_pressed(GamepadButton::Select)))
     {
+        drive.last_listener = None;
         drive.contacts.reset_projectiles();
         drive.pause = None;
         drive.pause_input = PauseInput::Ready;
@@ -994,7 +1001,8 @@ pub fn advance(
             &state.listener,
             state.settings.effects_volume(),
             state.recharge_sound(),
-            None,
+            state.last_listener.as_ref().unwrap_or(&state.listener),
+            false,
             |slot| {
                 if slot == 0 {
                     (
@@ -1020,6 +1028,11 @@ pub fn advance(
         } else {
             state.camera.after_step(&state.player, update_player);
         }
+        state.last_listener = Some(if state.mirror {
+            tm1_core::drive::SoundListener::rear_view(&state.player, &state.camera)
+        } else {
+            state.listener
+        });
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
@@ -1092,6 +1105,83 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn rear_view_sparks_use_the_camera_installed_before_the_flush() {
+        use crate::campaign::{Entry, Stage};
+        use tm1_core::drive::{BattleEvent, Level, SoundListener};
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let stage = Stage::load(
+            &disc,
+            Level::Warehouse,
+            Vehicle::Outlaw,
+            Entry::New(Default::default()),
+        )
+        .unwrap();
+        let mut app = App::new();
+        app.insert_resource(stage.drive)
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, advance);
+        app.world_mut().spawn(Window {
+            focused: true,
+            ..default()
+        });
+        tick(&mut app, 1);
+        let mut previous_mirror = None;
+        let mut distinct = false;
+        for frame in 0..4 {
+            let mut keys = ButtonInput::default();
+            if frame == 0 || frame == 2 {
+                keys.press(KeyCode::KeyB);
+            }
+            if frame == 0 {
+                keys.press(KeyCode::KeyF);
+            }
+            app.insert_resource(keys);
+            tick(&mut app, 50);
+            let drive = app.world().resource::<Drive>();
+            assert_eq!(drive.mirror, frame < 2);
+            let mut expected = Vec::new();
+            let mut carried = 0;
+            for (i, event) in drive.contacts.battle_events(&drive.listener).enumerate() {
+                if let BattleEvent::Effect { kind: 1, position } = event {
+                    let view = if i < drive.contacts.events_before_primary_view() {
+                        carried += 1;
+                        previous_mirror.as_ref().unwrap()
+                    } else {
+                        &drive.listener
+                    };
+                    let range = view.sound_range(position);
+                    distinct |= range != drive.listener.sound_range(position);
+                    expected.push((
+                        range,
+                        view.channels(position, drive.settings.effects_volume(), false),
+                    ));
+                }
+            }
+            assert_eq!(carried, if matches!(frame, 1 | 2) { 2 } else { 0 });
+            let actual: Vec<_> = drive
+                .sounds
+                .iter()
+                .filter_map(|r| match r {
+                    BattleRequest::Play(sound)
+                        if sound.exclusive == Some(ExclusiveVoice::ScaledEffect(103)) =>
+                    {
+                        Some((sound.range, sound.channels))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(actual, expected);
+            previous_mirror = drive
+                .mirror
+                .then(|| SoundListener::rear_view(&drive.player, &drive.camera));
+        }
+        assert!(distinct);
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn battle_notices_sample_retail_pad_halves_and_held_select() {

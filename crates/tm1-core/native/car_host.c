@@ -1177,7 +1177,7 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
 // so CheckVRMode can use the post-impact car state.
 // The original routines can change other cars during collision and weapon updates.
 u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio, void* next_audio)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio, void* next_audio, size_t* before_primary_view)
 {
     tm1_bind_step_audio(audio);
     gun_requests = requests;
@@ -1202,7 +1202,7 @@ u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct Colli
         tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
         for (int i = 0; i < count; i++)
             tm1_contact_setup(GetAICs3D(i), &cars[i].motion, &cars[i].stats);
-        contact_phase(&player, cars, 2, fields);
+        *before_primary_view = contact_phase(&player, cars, 2, fields);
         update_player = !tm1_recharge_player(&player);
         goto store_frame;
     }

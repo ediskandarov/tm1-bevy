@@ -548,7 +548,8 @@ pub fn advance(
             &listener,
             duel.settings.effects_volume(),
             13,
-            Some(&previous_view),
+            &previous_view,
+            true,
             |slot| {
                 let car = &duel.cars[slot];
                 (car.vehicle(), car.rev(), car.position())
