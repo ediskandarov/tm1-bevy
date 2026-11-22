@@ -48,17 +48,30 @@ pub fn vehicle_card(data: &[u8]) -> Result<Vec<[u8; 4]>> {
         u16le(bitmap, 8)? == 64 && u16le(bitmap, 10)? == 64,
         "unexpected vehicle card dimensions"
     );
+    let palette: [[u8; 4]; 256] =
+        std::array::from_fn(|i| card_color(u16::from_le_bytes([colors[i * 2], colors[i * 2 + 1]])));
     Ok(bytes(bitmap, 12, 128 * 64)?
         .iter()
-        .map(|&index| {
-            let at = usize::from(index) * 2;
-            let mut color = rgb555(u16::from_le_bytes([colors[at], colors[at + 1]]));
-            for v in &mut color[..3] {
-                *v = (u16::from(*v) * 127 / 128) as u8;
-            }
-            color
-        })
+        .map(|&index| palette[usize::from(index)])
         .collect())
+}
+
+fn card_color(word: u16) -> [u8; 4] {
+    // The FT4 multiplies each five-bit component by 127/128 before framebuffer storage.
+    let lit = |shift: u32| (((word >> shift) & 31) * 127) >> 7;
+    let mut color = rgb555(lit(0) | (lit(5) << 5) | (lit(10) << 10));
+    color[3] = if word == 0 { 0 } else { 255 };
+    color
+}
+
+#[test]
+fn opponent_card_modulation_preserves_texel_coverage() {
+    assert_eq!(card_color(0), [0; 4]);
+    assert_eq!(card_color(0x8000), [0, 0, 0, 255]);
+    assert_eq!(card_color(1), [0, 0, 0, 255]);
+    assert_eq!(card_color(0x7fff), [247, 247, 247, 255]);
+    assert_eq!(card_color(0x400), [0, 0, 0, 255]);
+    assert_eq!(card_color(0x40), [0, 8, 0, 255]);
 }
 
 pub struct Fonts {
