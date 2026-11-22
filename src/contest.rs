@@ -1101,7 +1101,7 @@ pub fn show(
     };
     let bank = disc.read("SND/UACORE.VAB")?;
     for program in [57, 58, 36, 41] {
-        let sample = crate::sfx::Sample::load(&bank, program, false)?.wave(0.)?;
+        let sample = crate::sfx::Sample::load(&bank, program, false)?.wave()?;
         menu.button_sounds
             .push(world.resource_mut::<Assets<AudioSource>>().add(sample));
     }

@@ -200,7 +200,7 @@ fn main() -> Result<()> {
             ..default()
         }));
     use bevy::audio::AddAudioSource;
-    app.add_audio_source::<sfx::looping::LoopingPcm>();
+    app.add_audio_source::<sfx::pcm::StereoPcm>();
     if let Some(second) = duel_car {
         app.add_systems(Startup, move |world: &mut World| {
             if let Err(e) = duel::start(world, level, [vehicle, second], difficulty, [0; 2]) {

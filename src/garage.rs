@@ -41,8 +41,8 @@ impl Garage {
             let (engine, signature) = car.sound_programs();
             let motor = crate::sfx::Sample::load(&bank, engine, true)?;
             audio.push((
-                motor.wave(0.)?,
-                crate::sfx::Sample::load(&bank, signature, false)?.wave(0.)?,
+                motor.wave()?,
+                crate::sfx::Sample::load(&bank, signature, false)?.wave()?,
                 motor.range,
             ));
             cars.push(dmd.garage_vehicle(car as u16)?);

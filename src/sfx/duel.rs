@@ -44,7 +44,7 @@ pub enum Request {
 
 impl DuelBank {
     pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
-        world.init_resource::<Assets<super::looping::LoopingPcm>>();
+        world.init_resource::<Assets<super::pcm::StereoPcm>>();
         let mut layers = |id, engine, looping| -> Result<Vec<Layer>> {
             program(bank, id)?
                 .into_iter()

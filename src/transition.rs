@@ -218,7 +218,7 @@ pub fn begin(
         .map(|s| Transition::intro_fields(&fonts, s))
         .sum::<u32>()
         + 1;
-    let sound = crate::sfx::Sample::load(&disc.read("SND/UACORE.VAB")?, 57, false)?.wave(0.)?;
+    let sound = crate::sfx::Sample::load(&disc.read("SND/UACORE.VAB")?, 57, false)?.wave()?;
     let throw = world.resource_mut::<Assets<AudioSource>>().add(sound);
     let gain = settings_override
         .or_else(|| {
