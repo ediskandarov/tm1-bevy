@@ -21,6 +21,19 @@ pub enum Level {
     Warehouse,
 }
 
+impl Level {
+    pub fn database(self, vehicle: Vehicle) -> &'static str {
+        use Vehicle::*;
+        match self {
+            Self::Arena => "XARENA1",
+            Self::Warehouse => match vehicle {
+                SweetTooth | YellowJacket | Darkside | Outlaw | CrimsonFury | Thumper => "WH1",
+                _ => "WH2",
+            },
+        }
+    }
+}
+
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Vehicle {

@@ -12,7 +12,7 @@ campaign, front end and multiplayer are outstanding.
 
 ## Warehouse
 
-Launch with `--level warehouse` to drive WH1 against all three original opponents for the selected player. The game reads the level geometry, sky and textures from the disc, spawns the player at the original Warehouse start, and plays CDDA track 4. Warehouse uses its own trigger points, bridges, curbs, potholes and AI lane selection. The encounter can be restarted from the keyboard. The HUD shows the nearest surviving opponent and the number of rivals left. The round ends after all three rivals are defeated or the player is wrecked. Campaign progression is outstanding.
+Launch with `--level warehouse` to drive WH1 or WH2, selected by the original vehicle-dependent shell rules, against all three original opponents for the selected player. The game reads the level geometry, sky and textures from the disc, spawns the player at the original Warehouse start, and plays CDDA track 4. Warehouse uses its own trigger points, bridges, curbs, potholes and AI lane selection. The encounter can be restarted from the keyboard. The HUD shows the nearest surviving opponent and the number of rivals left. The round ends after all three rivals are defeated or the player is wrecked. Campaign progression is outstanding.
 
 ## Reference execution
 

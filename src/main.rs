@@ -75,10 +75,7 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let stage = match level {
-        Level::Arena => "XARENA1",
-        Level::Warehouse => "WH1",
-    };
+    let stage = level.database(vehicle);
     let data = disc.read(&format!("UADMD/{stage}.DMD"))?;
     let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
     let dmd = Dmd::parse(&data)?;

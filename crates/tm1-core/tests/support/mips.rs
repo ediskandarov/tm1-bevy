@@ -94,12 +94,23 @@ impl Cpu {
     }
     fn step(&mut self) {
         if self.pc == 0xa0 {
-            assert_eq!(self.r[9], 0x2f, "unexpected BIOS call");
-            self.random_state = self
-                .random_state
-                .wrapping_mul(1103515245)
-                .wrapping_add(12345);
-            self.r[2] = (self.random_state >> 16) & 32767;
+            self.r[2] = match self.r[9] {
+                0x1b => {
+                    let start = (self.r[4] & 0x1fffff) as usize;
+                    self.ram[start..]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .expect("unterminated BIOS strlen") as u32
+                }
+                0x2f => {
+                    self.random_state = self
+                        .random_state
+                        .wrapping_mul(1103515245)
+                        .wrapping_add(12345);
+                    (self.random_state >> 16) & 32767
+                }
+                id => panic!("unexpected BIOS A0 call {id:x}"),
+            };
             self.pc = self.r[31];
             self.next = self.pc + 4;
             return;

@@ -31,10 +31,7 @@ impl Reference {
     fn on_level(vehicle: Vehicle, retail_particles: bool, level: Level) -> Self {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc
-            .read(match level {
-                Level::Arena => "UADMD/XARENA1.DMD",
-                Level::Warehouse => "UADMD/WH1.DMD",
-            })
+            .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
             .unwrap();
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
         let opponent = match level {
@@ -910,6 +907,22 @@ fn warehouse_encounter_original() {
         compare_encounter(player, 20, Level::Warehouse);
     }
 }
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_database_matches_retail_shell() {
+    let mut r = Reference::new();
+    put(&mut r.cpu, 0x8018c3b4, 1);
+    let address = r.cpu.word(0x8017187c + 4);
+    let start = (address & 0x1fffff) as usize;
+    for vehicle in Vehicle::ROSTER {
+        r.cpu.call(0x80152518, &[vehicle as u32]);
+        assert_eq!(
+            &r.cpu.ram[start..start + 3],
+            Level::Warehouse.database(vehicle).as_bytes()
+        );
+    }
+}
+
 fn register_retail_stands(cpu: &mut Cpu, data: &[u8]) {
     for at in [0x80147508, 0x8010844c, 0x80141300] {
         cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
@@ -1051,7 +1064,9 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     let mut slots = vec![POLICE_CS];
     if level == Level::Warehouse {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let data = disc
+            .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
+            .unwrap();
         register_retail_stands(&mut r.cpu, &data);
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
         let kinds = vehicle.warehouse_opponents();
