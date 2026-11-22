@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use std::time::Duration;
 use tm1_core::drive::{
-    CollisionScene, Input, Opponent, PlayerVehicle, PlayerView, RooftopPassage, Vehicle,
+    CollisionScene, HelicopterRoute, Input, Opponent, PlayerVehicle, PlayerView, RooftopPassage,
+    Vehicle,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -278,6 +279,7 @@ pub struct Drive {
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
     rooftop_passage: RooftopPassage,
+    initial_helicopter_route: HelicopterRoute,
     helicopter: Option<tm1_core::drive::Helicopter>,
     pub deck: tm1_core::drive::ArenaDeck,
     pub opponents: Vec<Opponent>,
@@ -311,13 +313,21 @@ impl Drive {
     fn helicopter_available(&self) -> bool {
         self.helicopter_unlocked && self.helicopter.is_some()
     }
-    fn stage_helicopter(player: &mut PlayerVehicle) -> Option<tm1_core::drive::Helicopter> {
+    pub(crate) fn helicopter_route(&self) -> HelicopterRoute {
+        self.helicopter
+            .as_ref()
+            .map_or(self.initial_helicopter_route, |heli| heli.route())
+    }
+    fn stage_helicopter(
+        player: &mut PlayerVehicle,
+        route: HelicopterRoute,
+    ) -> Option<tm1_core::drive::Helicopter> {
         use tm1_core::drive::Level;
         matches!(
             player.level(),
             Level::Arena | Level::Rooftops | Level::Arena5
         )
-        .then(|| tm1_core::drive::Helicopter::new(player))
+        .then(|| tm1_core::drive::Helicopter::from_route(player, route))
     }
     fn selected_view(&self) -> PlayerView {
         if self.helicopter_active {
@@ -516,9 +526,10 @@ impl Drive {
         mut player: PlayerVehicle,
         contacts: CollisionScene,
         opponent_kinds: &[Vehicle],
+        initial_helicopter_route: HelicopterRoute,
     ) -> Self {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
-        let helicopter = Self::stage_helicopter(&mut player);
+        let helicopter = Self::stage_helicopter(&mut player, initial_helicopter_route);
         let camera = tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase);
         Self {
             battle_seed: player.rng_state(),
@@ -547,6 +558,7 @@ impl Drive {
             helicopter_active: false,
             rooftop_passage: Default::default(),
             helicopter,
+            initial_helicopter_route,
             audio_restart_count: 0,
             was_focused: false,
             victory_fields: 0,
@@ -626,7 +638,8 @@ pub fn advance(
             .filter(|&kind| kind != Vehicle::Minion)
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
-        drive.helicopter = Drive::stage_helicopter(&mut drive.player);
+        let route = drive.initial_helicopter_route;
+        drive.helicopter = Drive::stage_helicopter(&mut drive.player, route);
         let seed = drive.battle_seed;
         drive.begin_battle(seed);
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
@@ -1350,6 +1363,8 @@ mod tests {
             drive.radar = false;
             drive.list_cars = true;
             drive.camera.mode = tm1_core::drive::CarView::Far;
+            let route = drive.helicopter_route();
+            assert_ne!(route, HelicopterRoute::default());
             // Inject the shell victory event at the end of its return delay.
             drive.lives = 2;
             drive.opponents.clear();
@@ -1358,6 +1373,7 @@ mod tests {
             crate::transition::complete(&mut world);
             let drive = world.resource::<Drive>();
             assert_eq!(drive.player.level(), level);
+            assert_eq!(drive.initial_helicopter_route, route);
             let expected = tm1_core::drive::SoundListener::new(&drive.player, &drive.camera, None);
             assert_eq!(drive.camera.mode, tm1_core::drive::CarView::Far);
             assert_eq!(
@@ -1552,6 +1568,7 @@ mod tests {
                 PlayerVehicle::from_executable(&exe).unwrap(),
                 scene,
                 &[Vehicle::Outlaw],
+                Default::default(),
             ))
             .insert_resource(crate::smoke::Capture::new(None, false, false))
             .init_resource::<ButtonInput<KeyCode>>()

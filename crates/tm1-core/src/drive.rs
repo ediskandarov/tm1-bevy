@@ -1088,6 +1088,12 @@ impl VehicleCamera {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HelicopterRoute {
+    player_direction_and_distance: [u8; 12],
+    previous_link: [u8; 4],
+}
+
 pub struct Helicopter {
     state: [u8; 0x560],
     /// World XYZ followed by JP pitch and yaw in 4096 units per turn.
@@ -1095,24 +1101,32 @@ pub struct Helicopter {
 }
 impl Helicopter {
     pub fn new(player: &mut PlayerVehicle) -> Self {
+        Self::from_route(player, HelicopterRoute::default())
+    }
+    pub fn from_route(player: &mut PlayerVehicle, route: HelicopterRoute) -> Self {
         let mut heli = Self {
             state: [0; 0x560],
             pose: [0; 5],
         };
-        heli.state[6..8].copy_from_slice(&(player.used_starts.count_ones() as i16).to_le_bytes());
-        heli.initialize(player);
+        let slot = player.used_starts.count_ones() as i16;
+        heli.initialize_route(player, slot, route);
         heli
     }
-    pub fn respawn(&mut self, player: &mut PlayerVehicle) {
-        // InitTriggerPoint chooses the next route using the previous stats.unk68 link.
-        // AICarInit also keeps the roster slot and the last direction and distance to the player.
-        self.state[..6].fill(0);
-        self.state[8..0x2c].fill(0);
-        self.state[0x38..0x274].fill(0);
-        self.state[0x278..].fill(0);
-        self.initialize(player);
+    pub fn route(&self) -> HelicopterRoute {
+        HelicopterRoute {
+            player_direction_and_distance: self.state[0x2c..0x38].try_into().unwrap(),
+            previous_link: self.state[0x274..0x278].try_into().unwrap(),
+        }
     }
-    fn initialize(&mut self, player: &mut PlayerVehicle) {
+    pub fn respawn(&mut self, player: &mut PlayerVehicle) {
+        let slot = i16::from_le_bytes(self.state[6..8].try_into().unwrap());
+        self.initialize_route(player, slot, self.route());
+    }
+    fn initialize_route(&mut self, player: &mut PlayerVehicle, slot: i16, route: HelicopterRoute) {
+        self.state.fill(0);
+        self.state[6..8].copy_from_slice(&slot.to_le_bytes());
+        self.state[0x2c..0x38].copy_from_slice(&route.player_direction_and_distance);
+        self.state[0x274..0x278].copy_from_slice(&route.previous_link);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(player.difficulty as i32);

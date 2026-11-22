@@ -58,6 +58,17 @@ pub struct Stage {
     sounds: sfx::Sounds,
     clear: ClearColor,
 }
+pub(crate) fn stage_clear_color(level: Level) -> ClearColor {
+    ClearColor(match level {
+        Level::Arena | Level::Arena5 => Color::srgb_u8(40, 40, 40),
+        Level::Rooftops => Color::srgb_u8(0, 20, 0),
+        Level::Cyburbia => Color::srgb_u8(110, 110, 100),
+        Level::CityPark => Color::srgb_u8(75, 60, 30),
+        Level::Freeway => Color::srgb_u8(60, 45, 20),
+        Level::Warehouse => Color::srgb_u8(75, 70, 55),
+    })
+}
+
 fn load_cockpit(
     disc: &Disc,
     dmd: &Dmd<'_>,
@@ -235,7 +246,11 @@ impl Stage {
             opponent_mesh,
             &contacts,
         )?;
-        let mut drive = driving::Drive::new(player, contacts, &opponent_kinds);
+        let helicopter_route = match entry {
+            Entry::Continue(previous) => previous.helicopter_route(),
+            Entry::New(_) => Default::default(),
+        };
+        let mut drive = driving::Drive::new(player, contacts, &opponent_kinds, helicopter_route);
         drive.deck = deck;
         if let Entry::Continue(previous) = entry {
             drive.camera = tm1_core::drive::VehicleCamera::new(&drive.player, previous.camera.mode);
@@ -253,14 +268,7 @@ impl Stage {
             drive,
             music: music::Music::level(disc, level)?,
             sounds: sfx::Sounds::load(disc, vehicle, &models)?,
-            clear: ClearColor(match level {
-                Level::Arena | Level::Arena5 => Color::srgb(0.035, 0.045, 0.065),
-                Level::Rooftops => Color::srgb_u8(0, 20, 0),
-                Level::Cyburbia => Color::srgb_u8(110, 110, 100),
-                Level::CityPark => Color::srgb_u8(75, 60, 30),
-                Level::Freeway => Color::srgb_u8(60, 45, 20),
-                Level::Warehouse => Color::srgb_u8(75, 70, 55),
-            }),
+            clear: stage_clear_color(level),
         })
     }
     pub fn apply_passwords(&mut self, modes: PasswordModes) {

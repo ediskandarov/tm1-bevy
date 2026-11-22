@@ -211,6 +211,7 @@ pub fn start(
     campaign::clear_stage(world);
     world.remove_resource::<crate::contest::Contest>();
     world.insert_resource(arena);
+    world.insert_resource(campaign::stage_clear_color(level));
     // InitLevel resets the shared BIOS generator once both cars are ready.
     let battle_seed = crate::campaign::round_ticks(world);
     info!("Duel seeds: pedestrians={pedestrian_seed}, setup={setup_seed}, battle={battle_seed}");
@@ -771,7 +772,9 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = menu_world();
         let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        world.insert_resource(ClearColor(Color::WHITE));
         start(&mut world, Level::Rooftops, kinds, Difficulty::Hard, [2, 3]).unwrap();
+        assert_eq!(world.resource::<ClearColor>().0, Color::srgb_u8(0, 20, 0));
         world.insert_resource(crate::smoke::Capture::new(None, false, false));
         world
             .resource_mut::<Time<Real>>()

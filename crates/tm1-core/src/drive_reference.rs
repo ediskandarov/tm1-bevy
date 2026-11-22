@@ -1570,20 +1570,34 @@ fn init_retail_helicopter(cpu: &mut Cpu) {
 #[ignore = "requires the supported TM1_CUE"]
 fn helicopter_camera_original() {
     const HELI: u32 = 0x801a22b8;
-    for (level, points) in [
-        (Level::Arena, 0x80125bc0),
-        (Level::Rooftops, 0x8012b5a4),
-        (Level::Arena5, 0x80125bc0),
+    let mut retail_record = [0u8; 0x560];
+    let mut route = HelicopterRoute::default();
+    for (level, points, opponents) in [
+        (Level::Arena, 0x80125bc0, 1),
+        (Level::Rooftops, 0x8012b5a4, 3),
+        (Level::Arena5, 0x80125bc0, 5),
     ] {
         let mut r = Reference::on_level(Vehicle::YellowJacket, false, level);
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         r.cpu.call(points, &[]);
-        r.player.used_starts = 0; // The retail point table above is freshly initialized.
+        // Database loading replaces the start table and assigns the new opponent count to the actor.
+        r.cpu.put(HELI, &retail_record);
+        r.cpu.put(HELI + 6, &(opponents as i16).to_le_bytes());
+        r.cpu.put(0x801b222a, &[1; 5][..opponents]);
+        r.player.used_starts = (1 << opponents) - 1;
         r.cpu.random_state = r.player.seed;
         put(&mut r.cpu, 0x8018c378, level as u32 + 1);
-        let mut heli = Helicopter::new(&mut r.player);
+        let mut heli = Helicopter::from_route(&mut r.player, route);
         init_retail_helicopter(&mut r.cpu);
         assert_eq!(r.player.seed, r.cpu.random_state);
+        let base = (HELI & 0x1fffff) as usize;
+        for (offset, &byte) in heli.state.iter().enumerate() {
+            assert_eq!(
+                byte,
+                r.cpu.ram[base + offset],
+                "{level:?} initial helicopter offset {offset:x}"
+            );
+        }
         for entry in [0x8015060c, 0x801505c4, 0x8010ad84] {
             r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -1660,6 +1674,8 @@ fn helicopter_camera_original() {
             assert_eq!(heli.pose[3], r.cpu.word(PLAYER + 4) as i16 as i32);
             assert_eq!(heli.pose[4], r.cpu.word(PLAYER + 8) as i16 as i32);
         }
+        retail_record.copy_from_slice(&r.cpu.ram[base..base + 0x560]);
+        route = heli.route();
     }
 }
 fn vec3_cpu(cpu: &mut Cpu, at: u32, xyz: [i32; 3]) {
