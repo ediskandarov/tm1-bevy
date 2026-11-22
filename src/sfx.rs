@@ -23,6 +23,22 @@ struct EffectTone {
     priority: u8,
 }
 
+impl EffectTone {
+    fn load(bank: &[u8], prog: usize, looping: bool) -> Result<Vec<Self>> {
+        Ok(program(bank, prog)?
+            .into_iter()
+            .map(|tone| {
+                let priority = tone.priority;
+                let (sample, marker) = Sample::single(tone, false);
+                Self {
+                    clip: pcm::StereoPcm::new(&sample.mix, marker.filter(|_| looping)),
+                    priority,
+                }
+            })
+            .collect())
+    }
+}
+
 pub struct EngineSample {
     priority: u8,
     pub clip: pcm::StereoPcm,
@@ -255,20 +271,7 @@ impl Sounds {
         let mut effects = Vec::new();
         for (id, prog) in battle_programs(vehicle, opponents).enumerate() {
             let sample = Sample::load(&bank, prog, id == 0)?;
-            let tones = program(&bank, prog)?
-                .into_iter()
-                .map(|tone| {
-                    let priority = tone.priority;
-                    let (sample, marker) = Sample::single(tone, false);
-                    EffectTone {
-                        clip: pcm::StereoPcm::new(
-                            &sample.mix,
-                            marker.filter(|_| id == 1 || prog == 38),
-                        ),
-                        priority,
-                    }
-                })
-                .collect();
+            let tones = EffectTone::load(&bank, prog, id == 1 || prog == 38)?;
             effects.push(tones);
             sources.push(sample.wave()?);
         }
@@ -1207,19 +1210,31 @@ mod tests {
             world.run_system_once(crate::duel::advance).unwrap();
             world.run_system_once(duel::mix).unwrap();
             world
-                .query_filtered::<Entity, (
-                    With<crate::duel::DuelEffect>,
-                    With<AudioPlayer<pcm::StereoPcm>>,
-                )>()
+                .query::<(Entity, &duel::Voice, &AudioPlayer<pcm::StereoPcm>)>()
                 .iter(world)
+                .filter(|(_, voice, _)| voice.is_turbo())
+                .map(|(entity, _, source)| {
+                    use bevy::audio::{Decodable, Source};
+                    (
+                        entity,
+                        world
+                            .resource::<Assets<pcm::StereoPcm>>()
+                            .get(&source.0)
+                            .unwrap()
+                            .decoder()
+                            .total_duration()
+                            .is_none(),
+                    )
+                })
                 .collect::<Vec<_>>()
         };
         // Both requests address sound 0x82; the second slot can stop the first slot.
         assert!(duel(&mut world, &[KeyT]).is_empty());
         let voices = duel(&mut world, &[KeyT, Slash]);
-        assert_eq!(voices.len(), 3);
+        assert_eq!(voices.len(), 4);
+        assert_eq!(voices.iter().filter(|v| v.1).count(), 3);
         assert_eq!(duel(&mut world, &[KeyT, Slash]), voices);
-        assert_eq!(duel(&mut world, &[Slash]).len(), 3);
+        assert_eq!(duel(&mut world, &[Slash]).len(), 4);
         assert!(duel(&mut world, &[]).is_empty());
     }
 }

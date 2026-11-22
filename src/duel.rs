@@ -44,7 +44,7 @@ pub struct Duel {
     abort_elapsed: Duration,
     wait_release: bool,
     layouts: [u8; 2],
-    pub(crate) sounds: Vec<crate::sfx::duel::Request>,
+    pub(crate) sounds: Vec<crate::driving::BattleRequest>,
 }
 
 impl Duel {
@@ -403,30 +403,18 @@ pub fn advance(
                 camera.fixed_pose.is_some(),
             );
         }
-        duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
         let listener = tm1_core::drive::SoundListener::new(&duel.cars[0], &duel.cameras[0], None);
+        let previous_view =
+            tm1_core::drive::SoundListener::new(&duel.cars[1], &duel.cameras[1], None);
+        duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
         crate::driving::battle_audio(
             &duel.scene,
             &listener,
             duel.settings.effects_volume(),
             13,
-            duel.cars[0].position(),
-            true,
+            Some(&previous_view),
             |slot| duel.cars[slot].vehicle(),
-            |request, position| {
-                use crate::driving::BattleRequest;
-                use crate::sfx::duel::Request;
-                duel.sounds.push(match request {
-                    BattleRequest::Turbo => Request::Turbo,
-                    BattleRequest::Stop(key) => Request::Stop(key),
-                    BattleRequest::Play(sound) => Request::Play {
-                        id: sound.id,
-                        key: sound.exclusive,
-                        volume: sound.volume_percent as f32 / 99.,
-                        position,
-                    },
-                });
-            },
+            |request| duel.sounds.push(request),
         );
         for (camera, car) in duel.cameras.iter_mut().zip(&duel.cars) {
             camera.update(car, false);

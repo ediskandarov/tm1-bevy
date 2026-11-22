@@ -118,67 +118,78 @@ pub(crate) fn battle_audio(
     listener: &tm1_core::drive::SoundListener,
     volume: u8,
     recharge: usize,
-    player_position: [i32; 3],
-    split: bool,
+    previous_view: Option<&tm1_core::drive::SoundListener>,
     car: impl Fn(usize) -> Vehicle,
-    mut emit: impl FnMut(BattleRequest, [i32; 3]),
+    mut emit: impl FnMut(BattleRequest),
 ) {
     use tm1_core::drive::{BattleEvent, CarSound};
-    let play = |id, exclusive, volume_percent, position, full_range| {
-        BattleRequest::Play(BattleSound {
-            id,
-            exclusive,
-            volume_percent,
-            channels: listener.channels(position, volume, full_range),
-            range: if full_range {
-                0
-            } else {
-                listener.sound_range(position)
-            },
-        })
-    };
-    for event in scene.battle_events(listener) {
-        match event {
-            BattleEvent::Turbo(on) => emit(
-                if on {
-                    BattleRequest::Turbo
+    for (index, event) in scene.battle_events(listener).enumerate() {
+        let listener = previous_view
+            .filter(|_| index < scene.duel_events_before_primary_view())
+            .unwrap_or(listener);
+        let centered = |id, exclusive, volume_percent| {
+            BattleRequest::Play(BattleSound {
+                id,
+                exclusive,
+                volume_percent,
+                channels: [i32::from(volume); 2],
+                range: 0,
+            })
+        };
+        let play = |id, exclusive, volume_percent, position, full_range| {
+            BattleRequest::Play(BattleSound {
+                id,
+                exclusive,
+                volume_percent,
+                channels: listener.channels(position, volume, full_range),
+                range: if full_range {
+                    0
                 } else {
-                    BattleRequest::Stop(ExclusiveVoice::Turbo)
+                    listener.sound_range(position)
                 },
-                player_position,
-            ),
+            })
+        };
+
+        match event {
+            BattleEvent::Turbo(on) => emit(if on {
+                BattleRequest::Turbo
+            } else {
+                BattleRequest::Stop(ExclusiveVoice::Turbo)
+            }),
             BattleEvent::Guns {
                 slot,
                 firing,
                 position,
             } => {
                 let key = ExclusiveVoice::MachineGuns(car(slot));
-                emit(
-                    if firing {
-                        play(1, Some(key), 99, position, false)
-                    } else {
-                        BattleRequest::Stop(key)
-                    },
-                    position,
-                );
+                emit(if firing {
+                    play(1, Some(key), 99, position, false)
+                } else {
+                    BattleRequest::Stop(key)
+                });
             }
             BattleEvent::Actor(slot) => {
                 for (sound, position) in scene.car_sound_requests(slot) {
                     let (id, key, level) = car_sample(sound, car(slot), slot, recharge);
-                    let position = if split { player_position } else { position };
-                    emit(
-                        play(id, Some(key), level, position, sound == CarSound::Explosion),
-                        position,
-                    );
+                    if previous_view.is_some() {
+                        emit(centered(id, Some(key), level));
+                    } else {
+                        emit(play(
+                            id,
+                            Some(key),
+                            level,
+                            position,
+                            sound == CarSound::Explosion,
+                        ));
+                    }
                 }
             }
             BattleEvent::Effect { kind, position } => {
                 if let Some(id) = effect_sample(kind, recharge) {
-                    let position = if !split && kind == 36 {
-                        player_position
-                    } else {
-                        position
-                    };
+                    if kind == 36 {
+                        emit(centered(id, effect_voice(kind), 99));
+                        continue;
+                    }
                     let restart = match kind {
                         10 => Some(ExclusiveVoice::SpecialLaunch(car(0))),
                         18..=25 => Some(ExclusiveVoice::SpecialLaunch(car((kind - 17) as usize))),
@@ -186,18 +197,15 @@ pub(crate) fn battle_audio(
                         _ => None,
                     };
                     if let Some(key) = restart {
-                        emit(BattleRequest::Stop(key), position);
+                        emit(BattleRequest::Stop(key));
                     }
-                    emit(
-                        play(
-                            id,
-                            restart.or_else(|| effect_voice(kind)),
-                            effect_volume(kind),
-                            position,
-                            matches!(kind, 29 | 30 | 33 | 37),
-                        ),
+                    emit(play(
+                        id,
+                        restart.or_else(|| effect_voice(kind)),
+                        effect_volume(kind),
                         position,
-                    );
+                        matches!(kind, 29 | 30 | 33 | 37),
+                    ));
                 }
             }
             BattleEvent::DropLaunch { weapon, position } => {
@@ -209,11 +217,8 @@ pub(crate) fn battle_audio(
                     _ => continue,
                 };
                 let key = ExclusiveVoice::WeaponLaunch(weapon);
-                emit(BattleRequest::Stop(key), position);
-                emit(
-                    play(recharge + offset, Some(key), 99, position, false),
-                    position,
-                );
+                emit(BattleRequest::Stop(key));
+                emit(play(recharge + offset, Some(key), 99, position, false));
             }
             BattleEvent::WeaponImpact { weapon, position } => {
                 // Fire and rear missiles share impact ID 0x19 in UA_SOUND.c.
@@ -229,30 +234,21 @@ pub(crate) fn battle_audio(
                     10 => 0x0d,
                     _ => continue,
                 };
-                emit(
-                    BattleRequest::Stop(ExclusiveVoice::WeaponLaunch(weapon)),
+                emit(BattleRequest::Stop(ExclusiveVoice::WeaponLaunch(weapon)));
+                emit(play(
+                    if weapon == 9 { recharge + 13 } else { 3 },
+                    Some(ExclusiveVoice::ScaledEffect(id)),
+                    99,
                     position,
-                );
-                emit(
-                    play(
-                        if weapon == 9 { recharge + 13 } else { 3 },
-                        Some(ExclusiveVoice::ScaledEffect(id)),
-                        99,
-                        position,
-                        false,
-                    ),
-                    position,
-                );
+                    false,
+                ));
             }
             BattleEvent::Hover { sound, position } => {
                 let (key, id) = hover_sample(sound, recharge + 3);
-                emit(
-                    match id {
-                        Some(id) => play(id, Some(key), 99, position, false),
-                        None => BattleRequest::Stop(key),
-                    },
-                    position,
-                );
+                emit(match id {
+                    Some(id) => play(id, Some(key), 99, position, false),
+                    None => BattleRequest::Stop(key),
+                });
             }
         }
     }
@@ -766,8 +762,7 @@ pub fn advance(
             &state.listener,
             state.settings.effects_volume(),
             state.recharge_sound(),
-            state.player.position(),
-            false,
+            None,
             |slot| {
                 if slot == 0 {
                     state.player.vehicle()
@@ -775,7 +770,7 @@ pub fn advance(
                     state.opponents[slot - 1].vehicle()
                 }
             },
-            |request, _| state.sounds.push(request),
+            |request| state.sounds.push(request),
         );
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter

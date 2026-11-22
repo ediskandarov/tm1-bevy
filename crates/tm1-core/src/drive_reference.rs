@@ -1554,8 +1554,6 @@ fn positional_sound_matches_retail() {
     let node = RENDER_SCRATCH;
     let parent = node + 0x200;
     let source = node + 0x400;
-    put(&mut cpu, 0x8018c50c, node);
-    put(&mut cpu, 0x8018c51c, 6);
     put(&mut cpu, 0x8018c4b0, WORLD);
     put(&mut cpu, node + 0x10, parent);
     for i in 0..16 {
@@ -1570,13 +1568,21 @@ fn positional_sound_matches_retail() {
         cpu.call(0x8015d8a4, &[parent + 0x54, parent + 0x14]);
         let mat = ((parent + 0x14) & 0x1fffff) as usize;
         car.state[0x3d0..0x3e2].copy_from_slice(&cpu.ram[mat..mat + 18]);
-        for (mode, detached) in [
-            (CarView::Chase, false),
-            (CarView::Cockpit, false),
-            (CarView::Far, false),
-            (CarView::Chase, true),
+        for (mode, detached, view, fov) in [
+            (CarView::Chase, false, 0, 6),
+            (CarView::Chase, false, 0, 11),
+            (CarView::Chase, false, 1, 12),
+            (CarView::Cockpit, false, 0, 6),
+            (CarView::Far, false, 0, 6),
+            (CarView::Chase, true, 0, 6),
         ] {
-            let camera = VehicleCamera::new(&car, mode);
+            put(&mut cpu, 0x8018c50c + view * 4, node);
+            put(&mut cpu, 0x8018c51c + view * 4, fov);
+            let camera = if fov >= 11 {
+                VehicleCamera::duel(&car)
+            } else {
+                VehicleCamera::new(&car, mode)
+            };
             let fixed = detached.then_some([1500, -120, 8100, tilt, yaw]);
             let listener = SoundListener::new(&car, &camera, fixed);
             let (rotation, location, offset, pitch) = if let Some([x, y, z, p, h]) = fixed {
@@ -1600,7 +1606,7 @@ fn positional_sound_matches_retail() {
                 &([pitch as i16, 0, 0].map(i16::to_le_bytes)).concat(),
             );
             vec3_cpu(&mut cpu, node + 0x5c, offset);
-            cpu.call_until(0x8010a774, &[0], 0x8010a9f4);
+            cpu.call_until(0x8010a774, &[view], 0x8010a9f4);
             for d in [
                 [0, 0, 0],
                 [1, -2, 3],

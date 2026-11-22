@@ -1,8 +1,11 @@
 //! Tone allocation for the shared SPU during split-screen play.
-use super::{Layer, PreparedTone, TURBO_PROGRAM, battle_programs, engine_speed, pcm::StereoPcm};
+use super::{
+    EffectTone, Layer, PreparedTone, Sample, TURBO_PROGRAM, battle_programs, engine_speed,
+    pcm::Levels, pcm::StereoPcm,
+};
 use crate::{
     campaign::StageEntity,
-    driving::ExclusiveVoice,
+    driving::{BattleRequest, ExclusiveVoice},
     duel::{Duel, DuelEffect},
 };
 use anyhow::Result;
@@ -12,9 +15,10 @@ use tm1_core::drive::Vehicle;
 
 #[derive(Resource)]
 pub struct DuelBank {
-    programs: Vec<Vec<Layer>>,
-    second_engine: Vec<Layer>,
-    turbo: Vec<Layer>,
+    programs: Vec<Vec<EffectTone>>,
+    engines: [Vec<Layer>; 2],
+    turbo: Vec<EffectTone>,
+    menu: [Handle<AudioSource>; 2],
 }
 
 #[derive(Component)]
@@ -27,46 +31,46 @@ pub struct DuelEngine {
 #[derive(Component)]
 pub struct Voice {
     priority: u8,
-    distance: i64,
-    key: Option<ExclusiveVoice>,
+    distance: u32,
+    group: Option<(ExclusiveVoice, Levels)>,
 }
 
-pub enum Request {
-    Play {
-        id: usize,
-        key: Option<ExclusiveVoice>,
-        volume: f32,
-        position: [i32; 3],
-    },
-    Stop(ExclusiveVoice),
-    Turbo,
+#[cfg(test)]
+impl Voice {
+    pub(super) fn is_turbo(&self) -> bool {
+        matches!(self.group, Some((ExclusiveVoice::Turbo, _)))
+    }
 }
 
 impl DuelBank {
     pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
         world.init_resource::<Assets<super::pcm::StereoPcm>>();
-        let mut layers = |id, engine, looping| -> Result<Vec<Layer>> {
-            program(bank, id)?
+        let mut engines = |car: Vehicle| -> Result<Vec<Layer>> {
+            program(bank, car.sound_programs().0)?
                 .into_iter()
-                .map(|tone| Ok(PreparedTone::new(tone, engine, looping)?.register(world)))
+                .map(|tone| Ok(PreparedTone::new(tone, true, true)?.register(world)))
                 .collect()
         };
+        let engines = [engines(cars[0])?, engines(cars[1])?];
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
-            .map(|(i, id)| layers(id, i == 0, i <= 1 || id == 38))
+            .map(|(i, id)| EffectTone::load(bank, id, i == 1 || id == 38))
             .collect::<Result<_>>()?;
+        let mut menu = |id| -> Result<Handle<AudioSource>> {
+            Ok(world
+                .resource_mut::<Assets<AudioSource>>()
+                .add(Sample::load(bank, id, false)?.wave()?))
+        };
         Ok(Self {
             programs,
-            second_engine: layers(cars[1].sound_programs().0, true, true)?,
-            turbo: layers(TURBO_PROGRAM, false, true)?,
+            engines,
+            turbo: EffectTone::load(bank, TURBO_PROGRAM, true)?,
+            menu: [menu(57)?, menu(58)?],
         })
     }
 
     pub fn install(self, world: &mut World, gain: f32) {
-        for (slot, layers) in [&self.programs[0], &self.second_engine]
-            .into_iter()
-            .enumerate()
-        {
+        for (slot, layers) in self.engines.iter().enumerate() {
             for layer in layers {
                 let source = layer
                     .looping_clip
@@ -82,7 +86,7 @@ impl DuelBank {
                     Voice {
                         priority: layer.priority,
                         distance: 0,
-                        key: None,
+                        group: None,
                     },
                     AudioPlayer(source.clone()),
                     PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28 * gain)),
@@ -93,7 +97,7 @@ impl DuelBank {
     }
 
     pub fn play_score_engine(&self, commands: &mut Commands, gain: f32) {
-        for layer in &self.programs[0] {
+        for layer in &self.engines[0] {
             let mut voice = commands.spawn((
                 StageEntity,
                 crate::duel::ScoreEngine,
@@ -106,11 +110,7 @@ impl DuelBank {
     }
 
     pub fn menu_voice(&self, select: bool) -> AudioPlayer {
-        AudioPlayer::new(
-            self.programs[self.programs.len() - 2 + usize::from(select)][0]
-                .source
-                .clone(),
-        )
+        AudioPlayer::new(self.menu[usize::from(select)].clone())
     }
 }
 
@@ -118,6 +118,7 @@ pub fn mix(
     mut commands: Commands,
     duel: Res<Duel>,
     bank: Res<DuelBank>,
+    mut clips: ResMut<Assets<StereoPcm>>,
     mut last_frame: Local<Option<u32>>,
     mut playing: Query<(
         Entity,
@@ -147,82 +148,75 @@ pub fn mix(
             entity,
             engine.is_some(),
         ));
-        if let Some(key) = voice.key {
-            groups.push((key, entity));
+        if let Some((key, levels)) = &voice.group {
+            groups.push((*key, entity, levels.clone()));
         }
     }
-    let gain = duel.settings.effects_gain();
-    let listener = duel.cars[0].position();
     for request in &duel.sounds {
-        let (layers, key, volume, position) = match *request {
-            Request::Turbo => (&bank.turbo, Some(ExclusiveVoice::Turbo), 1., listener),
-            Request::Play {
-                id,
-                key,
-                volume,
-                position,
-            } => (&bank.programs[id], key, volume, position),
-            Request::Stop(key) => {
-                groups.retain(|&(group, entity)| {
+        let (layers, key, channels, percent, distance) = match request {
+            BattleRequest::Turbo => (
+                &bank.turbo,
+                Some(ExclusiveVoice::Turbo),
+                [i32::from(duel.settings.effects_volume()); 2],
+                99,
+                0,
+            ),
+            BattleRequest::Play(sound) => (
+                &bank.programs[sound.id],
+                sound.exclusive,
+                sound.channels,
+                sound.volume_percent,
+                sound.range,
+            ),
+            BattleRequest::Stop(key) => {
+                groups.retain(|(group, entity, _)| {
                     if group != key {
                         return true;
                     }
-                    ranked.retain(|entry| entry.3 != entity);
-                    commands.entity(entity).despawn();
+                    ranked.retain(|entry| entry.3 != *entity);
+                    commands.entity(*entity).despawn();
                     false
                 });
                 continue;
             }
         };
-        let volume = Volume::Linear(0.44 * gain * volume);
         if let Some(key) = key
-            && groups.iter().any(|(k, _)| *k == key)
+            && let Some((_, _, levels)) = groups.iter().find(|(k, _, _)| *k == key)
         {
-            for &(_, entity) in groups.iter().filter(|(k, _)| *k == key) {
-                if let Some(entry) = ranked.iter_mut().find(|entry| entry.3 == entity) {
+            levels.set(channels, percent);
+            for (_, entity, _) in groups.iter().filter(|(k, _, _)| *k == key) {
+                if let Some(entry) = ranked.iter_mut().find(|entry| entry.3 == *entity) {
                     entry.0 = false;
+                    entry.2 = distance;
                 }
-            }
-            if matches!(
-                key,
-                ExclusiveVoice::Contact(_) | ExclusiveVoice::ScaledEffect(_)
-            ) {
-                for &(_, entity) in groups.iter().filter(|(k, _)| *k == key) {
-                    if let Ok((_, _, _, _, mut settings, sink)) = playing.get_mut(entity) {
-                        settings.volume = volume;
-                        if let Some(mut sink) = sink {
-                            sink.set_volume(volume);
-                        }
-                    } else {
-                        commands
-                            .entity(entity)
-                            .insert(PlaybackSettings::DESPAWN.with_volume(volume));
-                    }
-                }
+                commands
+                    .entity(*entity)
+                    .entry::<Voice>()
+                    .and_modify(move |mut voice| voice.distance = distance);
             }
             continue;
         }
-        let distance = position
-            .into_iter()
-            .zip(listener)
-            .map(|(p, l)| (i64::from(p) - i64::from(l)).pow(2))
-            .sum();
-        for layer in layers {
-            let mut voice = commands.spawn((
-                StageEntity,
-                DuelEffect,
-                Voice {
-                    priority: layer.priority,
-                    distance,
-                    key,
-                },
-                PlaybackSettings::DESPAWN.with_volume(volume),
-            ));
-            layer.play(&mut voice);
-            let entity = voice.id();
-            ranked.push((false, layer.priority, distance, entity, false));
+        if channels == [0; 2] || percent <= 0 {
+            continue;
+        }
+        let levels = Levels::new(channels, percent);
+        for tone in layers {
+            let entity = commands
+                .spawn((
+                    StageEntity,
+                    DuelEffect,
+                    Voice {
+                        priority: tone.priority,
+                        distance,
+                        group: key.map(|key| (key, levels.clone())),
+                    },
+                    AudioPlayer(clips.add(tone.clip.with_levels(levels.clone()))),
+                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44)),
+                ))
+                .id();
+            ranked.push((false, tone.priority, distance, entity, false));
             if let Some(key) = key {
-                groups.push((key, entity));
+                groups.push((key, entity, levels.clone()));
             }
         }
     }
@@ -257,9 +251,125 @@ pub fn mix(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::driving::BattleSound;
     use bevy::ecs::system::RunSystemOnce;
     use std::time::Duration;
     use tm1_core::drive::{ContactVoice, Difficulty, Level};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_fire_uses_both_retail_listeners() {
+        use bevy::audio::Decodable;
+        use tm1_core::drive::{BattleEvent, SoundListener};
+        let mut world = crate::contest::menu_world();
+        crate::duel::start(
+            &mut world,
+            Level::Warehouse,
+            [Vehicle::Spectre, Vehicle::Outlaw],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let mut checked_missile = false;
+        let mut checked_guns = false;
+        for tick in 0..130 {
+            let duel = world.resource::<Duel>();
+            let views =
+                [0, 1].map(|slot| SoundListener::new(&duel.cars[slot], &duel.cameras[slot], None));
+            let mut keys = ButtonInput::default();
+            keys.press(KeyCode::Comma);
+            if tick == 0 {
+                keys.press(KeyCode::KeyF);
+            }
+            world.insert_resource(keys);
+            world.run_system_once(crate::duel::advance).unwrap();
+            world.run_system_once(mix).unwrap();
+            let duel = world.resource::<Duel>();
+            let volume = duel.settings.effects_volume();
+            let boundary = duel.scene.duel_events_before_primary_view();
+            for (index, event) in duel.scene.battle_events(&views[0]).enumerate() {
+                let (id, pos) = match event {
+                    BattleEvent::Guns {
+                        slot: 1,
+                        firing: true,
+                        position,
+                    } if !checked_guns => (1, position),
+                    BattleEvent::Effect { kind: 28, position } if index < boundary => {
+                        (15, position)
+                    }
+                    BattleEvent::Effect {
+                        kind: 55 | 56,
+                        position,
+                    } if index < boundary => (22, position),
+                    _ => continue,
+                };
+                let listener = usize::from(index < boundary);
+                let expected = views[listener].channels(pos, volume, false);
+                let range = views[listener].sound_range(pos);
+                let other = views[1 - listener].sound_range(pos);
+                assert_ne!(other, range);
+                assert!(duel.sounds.iter().any(|request|matches!(request,BattleRequest::Play(s) if s.id==id && s.range==range && s.channels==expected)),"tick {tick} sample {id}");
+                if id == 1 {
+                    checked_guns = true;
+                } else {
+                    checked_missile = true;
+                }
+            }
+            if tick == 0 {
+                let mut query = world.query::<(&Voice, &AudioPlayer<StereoPcm>)>();
+                let shots: Vec<_> = query
+                    .iter(&world)
+                    .filter(|(v, _)| {
+                        matches!(
+                            &v.group,
+                            Some((ExclusiveVoice::MachineGuns(Vehicle::Outlaw), _))
+                        )
+                    })
+                    .map(|(_, p)| p.0.clone())
+                    .collect();
+                let duel = world.resource::<Duel>();
+                let gain = duel
+                    .sounds
+                    .iter()
+                    .find_map(|r| match r {
+                        BattleRequest::Play(s)
+                            if s.exclusive
+                                == Some(ExclusiveVoice::MachineGuns(Vehicle::Outlaw)) =>
+                        {
+                            Some(s.channels)
+                        }
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_ne!(gain[0], gain[1]);
+                let bank = world.resource::<DuelBank>();
+                assert_eq!(shots.len(), bank.programs[1].len());
+                for (layer, handle) in bank.programs[1].iter().zip(shots) {
+                    let clip = world.resource::<Assets<StereoPcm>>().get(&handle).unwrap();
+                    let mut nonzero = false;
+                    for (i, (dry, wet)) in layer
+                        .clip
+                        .decoder()
+                        .zip(clip.decoder())
+                        .take(4096)
+                        .enumerate()
+                    {
+                        nonzero |= dry != 0.;
+                        assert_eq!(wet, dry * (gain[i % 2] as f32 / 33.));
+                    }
+                    assert!(nonzero);
+                }
+            }
+            if checked_missile && checked_guns {
+                break;
+            }
+        }
+        assert!(checked_guns && checked_missile);
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -286,7 +396,9 @@ mod tests {
             let mut entities = world
                 .query::<(Entity, &Voice)>()
                 .iter(world)
-                .filter(|(_, v)| v.key == Some(ExclusiveVoice::MachineGuns(car)))
+                .filter(
+                    |(_, v)| matches!(&v.group,Some((ExclusiveVoice::MachineGuns(v),_)) if *v==car),
+                )
                 .map(|(entity, _)| entity)
                 .collect::<Vec<_>>();
             entities.sort();
@@ -342,7 +454,7 @@ mod tests {
                 assert!(
                     !events
                         .iter()
-                        .any(|r| matches!(r, Request::Play{id,..} if *id == other))
+                        .any(|r| matches!(r, BattleRequest::Play(s) if s.id == other))
                 );
                 let car = if expected == 5 {
                     Vehicle::Darkside
@@ -351,29 +463,35 @@ mod tests {
                 };
                 if let Some(index) = events
                     .iter()
-                    .position(|r| matches!(r, Request::Play{id,..} if *id == expected))
+                    .position(|r| matches!(r, BattleRequest::Play(s) if s.id == expected))
                 {
                     assert!(index > 0);
                     assert!(
-                        matches!(events[index-1], Request::Stop(ExclusiveVoice::SpecialLaunch(v)) if v==car)
+                        matches!(events[index-1], BattleRequest::Stop(ExclusiveVoice::SpecialLaunch(v)) if v==car)
                     );
                     assert!(
-                        matches!(events[index], Request::Play{key:Some(ExclusiveVoice::SpecialLaunch(v)),..} if v==car)
+                        matches!(events[index], BattleRequest::Play(ref s) if s.exclusive==Some(ExclusiveVoice::SpecialLaunch(car)))
                     );
                     fired = true;
                 }
             }
             assert!(fired, "{key:?} should use sample {expected}");
         }
-        let request = |id, key, volume| Request::Play {
-            id,
-            key,
-            volume,
-            position: [0; 3],
+        let request = |id, exclusive, volume_percent, channels, range| {
+            BattleRequest::Play(BattleSound {
+                id,
+                exclusive,
+                volume_percent,
+                channels,
+                range,
+            })
         };
         // Program 32 contains nine crash tones. Two requests for this sound ID share one group.
         let crash = Some(ExclusiveVoice::Contact(ContactVoice::HeavyCrash));
-        world.resource_mut::<Duel>().sounds = vec![request(20, crash, 0.5), request(20, crash, 1.)];
+        world.resource_mut::<Duel>().sounds = vec![
+            request(20, crash, 50, [47, 25], 800),
+            request(20, crash, 99, [25, 47], 400),
+        ];
         world.run_system_once(mix).unwrap();
         assert_eq!(
             world
@@ -382,17 +500,31 @@ mod tests {
                 .count(),
             9
         );
-        for settings in world
-            .query_filtered::<&PlaybackSettings, With<DuelEffect>>()
+        use bevy::audio::Decodable;
+        let mut voices =
+            world.query_filtered::<(&Voice, &AudioPlayer<StereoPcm>), With<DuelEffect>>();
+        for ((voice, source), tone) in voices
             .iter(&world)
+            .zip(&world.resource::<DuelBank>().programs[20])
         {
-            assert_eq!(
-                settings.volume.to_linear(),
-                0.44 * world.resource::<Duel>().settings.effects_gain()
-            );
+            assert_eq!(voice.distance, 400);
+            let clip = world
+                .resource::<Assets<StereoPcm>>()
+                .get(&source.0)
+                .unwrap();
+            for (i, (dry, wet)) in tone
+                .clip
+                .decoder()
+                .zip(clip.decoder())
+                .take(2048)
+                .enumerate()
+            {
+                assert_eq!(wet, dry * ([25., 47.][i % 2] / 33.));
+            }
         }
         // Program 19 alternates three priority-21 tones with one priority-81 tone.
-        world.resource_mut::<Duel>().sounds = (0..10).map(|_| request(4, None, 1.)).collect();
+        world.resource_mut::<Duel>().sounds =
+            (0..10).map(|_| request(4, None, 99, [33; 2], 0)).collect();
         world.run_system_once(mix).unwrap();
         let priorities: Vec<_> = world
             .query_filtered::<&Voice, Or<(With<AudioPlayer>, With<AudioPlayer<StereoPcm>>)>>()

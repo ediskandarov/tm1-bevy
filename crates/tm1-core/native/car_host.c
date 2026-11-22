@@ -11,6 +11,7 @@ extern u32 gFrameCount;
 
 // The Rust owner borrows the event vector for this serialized simulation step.
 static void* step_audio;
+extern size_t tm1_event_count(const void* audio);
 void tm1_bind_step_audio(void* audio) { step_audio = audio; }
 extern void tm1_record_effect(void*, int, int, int, int);
 extern void tm1_record_guns(void*, int, int, int, int, int);
@@ -1003,13 +1004,12 @@ void VectorNormal(VECTOR* in, VECTOR* out)
     out->vy = y * factor >> shift;
     out->vz = z * factor >> shift;
 }
-static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields)
+static size_t contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields)
 {
-    CarMotion* m = is_player ? &player->motion : &ai->motion;
-    CarCollision* col = is_player ? &player->collision : &ai->collision;
     if (is_player == 2) {
         tm1_tick_carry_notice();
         arena_move_missiles();
+        size_t before_primary_view = step_audio ? tm1_event_count(step_audio) : 0;
         tm1_update_hit_lights();
         tm1_display_hit_sheet();
         arena_move_drops();
@@ -1022,26 +1022,28 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
         arena_animate_flames();
         arena_animate_effects();
         tm1_capture_car_lights();
-    } else {
-        if (is_player && player->stats.unk38) {
-            CheckHitDetection(is_player ? (Car*)player : (Car*)ai, is_player);
-        }
-        if ((s16)col->unk16 >= 3) {
-            m->lastRot = m->rot;
-            m->lastPos = m->pos;
-            m->unkA8 = m->rot2;
-            m->lastMat = m->mat2;
-        }
-        if (is_player) {
-            arena_update_weapons((Car*)player, 1);
-            player->flags[2] = fields * 760 / 100 * 32 < m->vel.vy
-                && CalcMaxRotBeforeDrift((Car*)player, 1) < abs(m->rotDelta.vz)
-                && !player->flags[13];
-        }
+        return before_primary_view;
     }
-    if (is_player != 2)
-        tm1_contact_setup(
-            is_player ? GetPlayerCs3D(player->playerIdx) : GetAICs3D(ai->playerIdx), m, is_player ? &player->stats : &ai->stats);
+    CarMotion* m = is_player ? &player->motion : &ai->motion;
+    CarCollision* col = is_player ? &player->collision : &ai->collision;
+    if (is_player && player->stats.unk38) {
+        CheckHitDetection(is_player ? (Car*)player : (Car*)ai, is_player);
+    }
+    if ((s16)col->unk16 >= 3) {
+        m->lastRot = m->rot;
+        m->lastPos = m->pos;
+        m->unkA8 = m->rot2;
+        m->lastMat = m->mat2;
+    }
+    if (is_player) {
+        arena_update_weapons((Car*)player, 1);
+        player->flags[2] = fields * 760 / 100 * 32 < m->vel.vy
+            && CalcMaxRotBeforeDrift((Car*)player, 1) < abs(m->rotDelta.vz)
+            && !player->flags[13];
+    }
+    tm1_contact_setup(
+        is_player ? GetPlayerCs3D(player->playerIdx) : GetAICs3D(ai->playerIdx), m, is_player ? &player->stats : &ai->stats);
+    return 0;
 }
 
 void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, u8 is_player,
@@ -1205,7 +1207,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
-void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
+size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio)
 {
     tm1_bind_step_audio(audio);
@@ -1225,7 +1227,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     tm1_use_scene(scene);
     for (int i = 0; i < 2; i++)
         tm1_contact_setup(GetPlayerCs3D(i), &cars[i].motion, &cars[i].stats);
-    contact_phase(cars, NULL, 2, fields);
+    size_t before_primary_view = contact_phase(cars, NULL, 2, fields);
     for (int i = 0; i < 2; i++) {
         PlayerCar* car = &cars[i];
         if (!tm1_recharge_player(car)) {
@@ -1252,4 +1254,5 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     tm1_use_scene(NULL);
     arena_player = NULL;
     trig = NULL;
+    return before_primary_view;
 }

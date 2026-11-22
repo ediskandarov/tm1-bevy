@@ -1255,6 +1255,10 @@ pub enum BattleEvent {
 // These functions only run while step_duel or step_bout lends its vector to C.
 // C treats the pointer as opaque and releases it before returning.
 #[unsafe(no_mangle)]
+extern "C" fn tm1_event_count(log: &Vec<BattleEvent>) -> usize {
+    log.len()
+}
+#[unsafe(no_mangle)]
 extern "C" fn tm1_record_effect(log: &mut Vec<BattleEvent>, kind: i32, x: i32, y: i32, z: i32) {
     log.push(BattleEvent::Effect {
         kind,
@@ -1413,6 +1417,7 @@ pub struct CollisionScene {
     gun_requests: [u8; 9],
     car_sounds: [[i32; 5]; 9],
     audio: Vec<BattleEvent>,
+    before_primary_view: usize,
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
@@ -1457,6 +1462,7 @@ impl CollisionScene {
             gun_requests: [0; 9],
             car_sounds: [[0; 5]; 9],
             audio: Vec::new(),
+            before_primary_view: 0,
             turbo_requests: [0; 2],
         })
     }
@@ -1667,6 +1673,11 @@ impl CollisionScene {
         .map(move |sound| (sound, [x, y, z]))
     }
 
+    /// RT advances missiles with the previous secondary camera before installing view zero.
+    pub fn duel_events_before_primary_view(&self) -> usize {
+        self.before_primary_view
+    }
+
     pub fn duel_gun_requests(&self) -> [Option<bool>; 2] {
         let [first, second, ..] = self.gun_sound_requests();
         [first, second]
@@ -1700,11 +1711,12 @@ impl CollisionScene {
                 turbo: *mut u8,
                 sounds: *mut [i32; 5],
                 audio: *mut std::ffi::c_void,
-            );
+            ) -> usize;
         }
         assert_eq!(self.opponent_count, 0);
         assert!((1..=5).contains(&fields));
         self.audio.clear();
+        self.before_primary_view = 0;
         if self.duel_winner.is_some() {
             return self.duel_winner;
         }
@@ -1720,7 +1732,7 @@ impl CollisionScene {
         unsafe {
             tm1_bind_difficulty(first.difficulty as i32);
             tm1_bind_level(first.level as i32);
-            tm1_duel_step(
+            self.before_primary_view = tm1_duel_step(
                 self.native.as_ptr(),
                 first.state.as_mut_ptr(),
                 second.state.as_mut_ptr(),
