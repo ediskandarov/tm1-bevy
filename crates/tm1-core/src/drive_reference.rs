@@ -201,6 +201,41 @@ fn warehouse_lineups_and_ai_profiles_original() {
     }
 }
 
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_group_spawn_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    put(&mut cpu, 0x8018c36c, 1);
+    put(&mut cpu, 0x8018c3b4, 1);
+    cpu.put(0x80170238, &3u16.to_le_bytes());
+    cpu.put(0x8017023a, &20u16.to_le_bytes());
+    for vehicle in Vehicle::ROSTER {
+        let mut player = PlayerVehicle::on_level(&exe, vehicle, Level::Warehouse).unwrap();
+        let cards: [Vehicle; 3] = vehicle.warehouse_opponents().try_into().unwrap();
+        cpu.call(0x801262ec, &[]);
+        cpu.random_state = player.seed;
+        let opponents = Opponent::spawn_lineup(&mut player, cards);
+        for (slot, opponent) in opponents.iter().enumerate() {
+            let addr = POLICE + 0x560 * slot as u32;
+            put(
+                &mut cpu,
+                0x8019f788 + 4 * slot as u32,
+                POLICE_CS + 0x200 * slot as u32,
+            );
+            cpu.put(addr, &[0; 0x560]);
+            cpu.put(addr + 6, &(slot as u16).to_le_bytes());
+            cpu.call(0x80124d34, &[addr, opponent.vehicle as u32, 1]);
+            cpu.call(0x80142064, &[addr]);
+            let base = (addr & 0x1fffff) as usize;
+            for (i, &v) in opponent.state.iter().enumerate() {
+                assert_eq!(v, cpu.ram[base + i], "{vehicle:?} slot {slot} byte {i:#x}");
+            }
+        }
+        assert_eq!(cpu.random_state, player.seed);
+    }
+}
 fn vec3(state: &mut [u8], at: usize, xyz: [i32; 3]) {
     for (i, v) in xyz.into_iter().enumerate() {
         state[at + 4 * i..at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
@@ -341,7 +376,7 @@ fn police_update_original() {
         r.player.frame = tick;
         r.sync();
         r.cpu.call(0x8011950c, &[POLICE]);
-        r.police.update(&mut r.player, 3, false, r.scene.0.as_ptr());
+        r.police.update(&mut r.player, 3, None, r.scene.0.as_ptr());
         r.compare();
     }
 }

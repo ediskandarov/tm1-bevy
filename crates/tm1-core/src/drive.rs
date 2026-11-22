@@ -305,7 +305,7 @@ unsafe extern "C" {
         table: *const i16,
         seed: *mut u32,
         kind: i32,
-        init: u8,
+        spawn_points: *mut u16,
         fields: i16,
         frame: u32,
     );
@@ -323,18 +323,35 @@ impl Opponent {
         Self::for_vehicle(player, Vehicle::Outlaw)
     }
     pub fn for_vehicle(player: &mut Taxi, vehicle: Vehicle) -> Self {
-        let mut car = Self {
-            vehicle,
-            state: [0; 0x560],
-        };
-        car.update(player, 3, true, std::ptr::null_mut());
+        let [car] = Self::spawn_lineup(player, [vehicle]);
         car
+    }
+    pub fn spawn_lineup<const N: usize>(player: &mut Taxi, vehicles: [Vehicle; N]) -> [Self; N] {
+        assert!(N <= 8);
+        let mut used = 0;
+        let mut slot = 0i16;
+        vehicles.map(|vehicle| {
+            let mut car = Self {
+                vehicle,
+                state: [0; 0x560],
+            };
+            car.state[6..8].copy_from_slice(&slot.to_le_bytes());
+            car.update(player, 3, Some(&mut used), std::ptr::null_mut());
+            slot += 1;
+            car
+        })
     }
     pub fn step(&mut self, player: &mut Taxi, fields: u8) {
         assert!((1..=5).contains(&fields));
-        self.update(player, fields, false, std::ptr::null_mut());
+        self.update(player, fields, None, std::ptr::null_mut());
     }
-    fn update(&mut self, player: &mut Taxi, fields: u8, init: bool, scene: *mut std::ffi::c_void) {
+    fn update(
+        &mut self,
+        player: &mut Taxi,
+        fields: u8,
+        spawn_points: Option<&mut u16>,
+        scene: *mut std::ffi::c_void,
+    ) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_level(player.level as i32);
@@ -345,7 +362,7 @@ impl Opponent {
                 player.trig.as_ptr(),
                 &mut player.seed,
                 self.vehicle as i32,
-                init as u8,
+                spawn_points.map_or(std::ptr::null_mut(), |p| p),
                 fields.into(),
                 player.frame,
             );
@@ -411,7 +428,7 @@ impl CollisionScene {
         self.phase(player, opponent, 2, fields);
         player.step_in_scene(input, fields, self.0.as_ptr(), Some(opponent));
         self.phase(player, opponent, 1, fields);
-        opponent.update(player, fields, false, self.0.as_ptr());
+        opponent.update(player, fields, None, self.0.as_ptr());
         self.phase(player, opponent, 0, fields);
     }
     fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {

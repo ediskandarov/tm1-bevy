@@ -363,8 +363,24 @@ void GetPlayerPosition(s16 idx, VECTOR3* out)
 }
 void tm1_ai_restore_battle(AICar*);
 
+// AICARINI searches the primary start points cyclically from its random
+// choice, then searches the remaining slots in their original order.
+static s16 reserve_ai_start(u16* used)
+{
+    int count = triggerPtStartPts.n;
+    int first = arena_rand() % count;
+    for (int i = 0; i < 15; i++) {
+        int slot = i < count ? (first + i) % count : i;
+        if (!(*used & (1u << slot))) {
+            *used |= 1u << slot;
+            return triggerPtStartPts.start[slot];
+        }
+    }
+    return 0;
+}
+
 void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16* table,
-    u32* seed, s32 kind, u8 init, s16 fields, u32 frame)
+    u32* seed, s32 kind, u16* spawn_points, s16 fields, u32 frame)
 {
     PlayerCar player;
     AICar car;
@@ -379,7 +395,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
     gUpdateRate = 60 / fields;
     tm1_use_scene(scene);
     tm1_ai_restore_battle(&car);
-    if (init) {
+    if (spawn_points) {
         car.uaIndex = kind;
         car.stats.unk38 = 1;
         arena_ai_weapon_profile(&car);
@@ -412,7 +428,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         InitTireInfo(car.tires);
         InitTireGroup(car.tires, 0);
         car.unk01 = 2;
-        car.stats.triggerPt = triggerPtStartPts.start[arena_rand() % triggerPtStartPts.n];
+        car.stats.triggerPt = reserve_ai_start(spawn_points);
         InitTriggerPoint(&car);
         InitControlPad(car.skid);
         SetBounce(&car, 2, 2, 0, 0);
