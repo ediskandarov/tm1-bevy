@@ -162,7 +162,16 @@ pub struct VehicleSounds {
 
 pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
     let pitch_steps = (range as i32 * 128 * rev.clamp(0, 99)) / 99;
-    2f32.powf(pitch_steps as f32 / (128. * 12.))
+    let speed = 2f32.powf(pitch_steps as f32 / (128. * 12.));
+    // Rodio 0.22 multiplies the reduced input and output rates in u32.
+    // Common output rates share a factor of 25 Hz with these VAB rates.
+    let rate = (44100. * speed / 25.).round() * 25.;
+    let factor = rate / 44100.;
+    if factor * 44100. < rate {
+        factor.next_up()
+    } else {
+        factor
+    }
 }
 
 fn battle_programs(
@@ -779,6 +788,31 @@ mod tests {
         let finishing = shots(&mut world);
         assert!(finishing.len() <= 22);
         assert_eq!(finishing, first[..finishing.len()]);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn engine_pitch_fits_the_audio_resampler() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let ranges = Vehicle::ROSTER
+            .into_iter()
+            .chain([Vehicle::Minion])
+            .flat_map(|car| program(&bank, car.sound_programs().0).unwrap())
+            .map(|tone| tone.high - tone.low);
+        for range in ranges {
+            for rev in 0..=99 {
+                let rate = (44100. * engine_speed(range as f32, rev)) as u32;
+                assert_eq!(rate % 25, 0);
+                for output in [44100, 48000, 88200, 96000, 192000] {
+                    let (mut a, mut b) = (rate, output);
+                    while b != 0 {
+                        (a, b) = (b, a % b);
+                    }
+                    assert!((rate / a).checked_mul(output / a - 1).is_some());
+                }
+            }
+        }
     }
 
     #[test]
