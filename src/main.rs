@@ -169,16 +169,6 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let stage = if menu || duel_car.is_some() {
-        None
-    } else {
-        Some(campaign::Stage::load(
-            &disc,
-            level,
-            vehicle,
-            campaign::Entry::New(difficulty),
-        )?)
-    };
     if duel_car.is_some() {
         eprintln!(
             "P1: WASD, Space guns, F weapon, E cycle. P2: arrows, Comma guns, Period weapon, L cycle. P or keypad Enter pauses. Enter skips the score, Esc returns to title."
@@ -210,7 +200,13 @@ fn main() -> Result<()> {
                 world.resource_mut::<duel::Duel>().pause = Some(pause::Page::Choices(0));
             }
         });
-    } else if let Some(stage) = stage {
+    } else if !menu {
+        let stage = campaign::Stage::from_world(
+            app.world(),
+            level,
+            vehicle,
+            campaign::Entry::New(difficulty),
+        )?;
         stage.install(app.world_mut());
         if boss_demo {
             app.world_mut()

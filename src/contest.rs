@@ -1305,8 +1305,8 @@ pub fn start_battle(world: &mut World) -> Result<()> {
         );
     }
     let settings = menu.settings;
-    let mut stage = Stage::load(
-        &world.resource::<Campaign>().0,
+    let mut stage = Stage::from_world(
+        world,
         menu.level,
         Vehicle::CARD_ORDER[menu.vehicle],
         campaign::Entry::New(menu.difficulty),

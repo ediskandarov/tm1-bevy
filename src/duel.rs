@@ -122,28 +122,8 @@ fn update_focus(
     }
 }
 
-fn accepts_input(duel: Res<Duel>) -> bool {
-    matches!(duel.focus, DuelFocus::Playing)
-}
-
-fn round_ticks(world: &World) -> u32 {
-    if world
-        .get_resource::<Capture>()
-        .is_some_and(|capture| capture.demo)
-    {
-        return 1;
-    }
-    let time = world.resource::<Time<Real>>();
-    let elapsed = if matches!(
-        world.get_resource::<bevy::time::TimeUpdateStrategy>(),
-        Some(bevy::time::TimeUpdateStrategy::Automatic)
-    ) {
-        time.startup().elapsed()
-    } else {
-        time.elapsed()
-    };
-    // PS1 root counter 2 runs at the system clock divided by eight.
-    (elapsed.as_nanos() * 4_233_600 / 1_000_000_000) as u32
+fn accepts_input(duel: Option<Res<Duel>>) -> bool {
+    duel.is_some_and(|duel| matches!(duel.focus, DuelFocus::Playing))
 }
 
 pub fn start(
@@ -181,11 +161,11 @@ pub fn start(
     let pedestrian_seed = world
         .get_resource::<Duel>()
         .map(|previous| previous.cars[0].rng_state())
-        .unwrap_or_else(|| round_ticks(world));
+        .unwrap_or_else(|| crate::campaign::round_ticks(world));
     let mut seed = pedestrian_seed;
     scene.start_pedestrians(level, &mut seed);
     // uaInitDB reseeds after loading the stage-specific objects.
-    let setup_seed = round_ticks(world);
+    let setup_seed = crate::campaign::round_ticks(world);
     let mut cars = PlayerVehicle::duel_players(
         &disc.read("SIPS_600.07")?,
         kinds,
@@ -230,11 +210,15 @@ pub fn start(
     world.remove_resource::<crate::contest::Contest>();
     world.insert_resource(arena);
     // InitLevel resets the shared BIOS generator once both cars are ready.
-    let battle_seed = round_ticks(world);
+    let battle_seed = crate::campaign::round_ticks(world);
     info!("Duel seeds: pedestrians={pedestrian_seed}, setup={setup_seed}, battle={battle_seed}");
     for car in &mut cars {
         car.set_round_seed(battle_seed);
     }
+    // shellInitLevel initializes one shared set of windshield holes in both modes.
+    cars[0].windshield_holes();
+    let opening_seed = cars[0].rng_state();
+    cars[1].set_rng_state(opening_seed);
     world.insert_resource(Duel {
         cars,
         cameras,
@@ -631,9 +615,12 @@ mod tests {
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(1_100_250));
-        assert_eq!(round_ticks(&world), 4_658_018_400u64 as u32);
+        assert_eq!(
+            crate::campaign::round_ticks(&world),
+            4_658_018_400u64 as u32
+        );
         world.insert_resource(Capture::new(None, true, false));
-        assert_eq!(round_ticks(&world), 1);
+        assert_eq!(crate::campaign::round_ticks(&world), 1);
     }
 
     #[test]
@@ -846,7 +833,10 @@ mod tests {
         );
         let round = world.resource::<Duel>();
         assert_eq!(round.score, [2, 4]);
-        let expected_seed = round_ticks(&world);
+        let mut expected_seed = crate::campaign::round_ticks(&world);
+        for _ in 0..12 {
+            tm1_core::drive::bios_rand(&mut expected_seed);
+        }
         assert_ne!(expected_seed, previous_seed);
         assert_eq!(
             round.cars.each_ref().map(PlayerVehicle::rng_state),

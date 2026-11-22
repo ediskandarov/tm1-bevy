@@ -533,6 +533,9 @@ impl PlayerVehicle {
         self.initial_seed = timer_ticks;
         self.seed = timer_ticks;
     }
+    pub fn set_rng_state(&mut self, seed: u32) {
+        self.seed = seed;
+    }
     pub fn rng_state(&self) -> u32 {
         self.seed
     }

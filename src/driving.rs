@@ -263,6 +263,7 @@ pub(crate) fn battle_audio(
 }
 #[derive(Resource)]
 pub struct Drive {
+    battle_seed: u32,
     pub player: PlayerVehicle,
     pub mirror: bool,
     pub windshield_holes: [[i32; 2]; 6],
@@ -427,7 +428,7 @@ impl Drive {
             }
         }
     }
-    fn tick_lost_life(&mut self, delta: Duration, selected: bool) {
+    fn tick_lost_life(&mut self, delta: Duration, selected: bool, ticks: impl FnOnce() -> u32) {
         let elapsed = self.lost_life.unwrap() + delta;
         let skipped = selected && self.lost_life.unwrap() < Duration::from_millis(500);
         if elapsed >= Duration::from_millis(1500) || skipped {
@@ -439,11 +440,18 @@ impl Drive {
                 heli.update(&self.player, 3, true);
             }
             self.camera.update(&self.player, true);
+            self.player.set_rng_state(ticks());
+            self.windshield_holes = self.player.windshield_holes();
             self.lost_life = None;
             self.restart_count = self.restart_count.wrapping_add(1);
         } else {
             self.lost_life = Some(elapsed);
         }
+    }
+    pub fn begin_battle(&mut self, ticks: u32) {
+        self.battle_seed = ticks;
+        self.player.set_rng_state(ticks);
+        self.windshield_holes = self.player.windshield_holes();
     }
     pub fn new(
         mut player: PlayerVehicle,
@@ -453,6 +461,7 @@ impl Drive {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
         let camera = tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase);
         Self {
+            battle_seed: player.rng_state(),
             windshield_holes: player.windshield_holes(),
             opponents,
             contacts,
@@ -492,6 +501,7 @@ pub fn advance(
     mut window: Single<&mut Window>,
     mut capture: ResMut<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
+    strategy: Option<Res<bevy::time::TimeUpdateStrategy>>,
 ) {
     drive.sounds.clear();
     drive.pause_sound = None;
@@ -535,6 +545,8 @@ pub fn advance(
             .filter(|&kind| kind != Vehicle::Minion)
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
+        let seed = drive.battle_seed;
+        drive.player.set_rng_state(seed);
         drive.windshield_holes = drive.player.windshield_holes();
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
@@ -641,7 +653,9 @@ pub fn advance(
                 drive.tick_boss_intro(elapsed, selected);
             }
         } else {
-            drive.tick_lost_life(elapsed, selected);
+            drive.tick_lost_life(elapsed, selected, || {
+                crate::campaign::timer_ticks(&time, strategy.as_deref(), capture.demo)
+            });
         }
         drive.remainder = Duration::ZERO;
         return;
@@ -828,6 +842,7 @@ mod tests {
         )
         .unwrap();
         let mut app = App::new();
+        app.init_resource::<Time<Real>>();
         stage.install(app.world_mut());
         app.insert_resource(Campaign(disc))
             .insert_resource(crate::smoke::Capture::new(None, false, false))
@@ -897,6 +912,7 @@ mod tests {
         world.init_resource::<Assets<crate::additive::Additive>>();
         world.init_resource::<Assets<AudioSource>>();
         world.insert_resource(Campaign(disc));
+        world.init_resource::<Time<Real>>();
         stage.install(&mut world);
         world.run_system_once(crate::render::setup).unwrap();
         world.run_system_once(crate::music::start).unwrap();
@@ -976,6 +992,10 @@ mod tests {
                 crate::campaign::Entry::New(Default::default()),
             )
             .unwrap();
+            let mut stage = stage;
+            stage.drive.begin_battle(456);
+            let opening_seed = stage.drive.player.rng_state();
+            let opening_holes = stage.drive.windshield_holes;
             let opponents = stage.drive.opponents.len();
             let mut app = App::new();
             app.insert_resource(stage.drive)
@@ -1015,9 +1035,14 @@ mod tests {
                 assert_eq!(drive.lives, 3);
                 drive.advance_death(3);
                 assert_eq!(drive.lives, 2);
-                drive.tick_lost_life(Duration::from_millis(1499), false);
+                drive.tick_lost_life(Duration::from_millis(1499), false, || unreachable!());
                 assert!(drive.lost_life.is_some());
-                drive.tick_lost_life(Duration::from_millis(1), false);
+                drive.tick_lost_life(Duration::from_millis(1), false, || 789);
+                let mut expected = 789;
+                for _ in 0..12 {
+                    tm1_core::drive::bios_rand(&mut expected);
+                }
+                assert_eq!(drive.player.rng_state(), expected);
                 assert!(drive.lost_life.is_none());
                 assert_eq!(
                     rivals,
@@ -1036,6 +1061,11 @@ mod tests {
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .release(KeyCode::KeyR);
             let start = snapshot(&app);
+            assert_eq!(start.1, opening_seed);
+            assert_eq!(
+                app.world().resource::<Drive>().windshield_holes,
+                opening_holes
+            );
             let run = |app: &mut App| {
                 app.world_mut()
                     .resource_mut::<ButtonInput<KeyCode>>()

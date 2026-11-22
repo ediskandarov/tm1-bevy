@@ -7,6 +7,33 @@ use tm1_core::drive::{Difficulty, Level, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Campaign(pub Disc);
 
+pub(crate) fn round_ticks(world: &World) -> u32 {
+    timer_ticks(
+        world.resource::<Time<Real>>(),
+        world.get_resource::<bevy::time::TimeUpdateStrategy>(),
+        world
+            .get_resource::<crate::smoke::Capture>()
+            .is_some_and(|capture| capture.demo),
+    )
+}
+
+pub(crate) fn timer_ticks(
+    time: &Time<Real>,
+    strategy: Option<&bevy::time::TimeUpdateStrategy>,
+    demo: bool,
+) -> u32 {
+    if demo {
+        return 1;
+    }
+    let elapsed = if matches!(strategy, Some(bevy::time::TimeUpdateStrategy::Automatic)) {
+        time.startup().elapsed()
+    } else {
+        time.elapsed()
+    };
+    // PS1 root counter 2 runs at the system clock divided by eight.
+    (elapsed.as_nanos() * 4_233_600 / 1_000_000_000) as u32
+}
+
 #[derive(Component)]
 pub struct StageEntity;
 
@@ -109,7 +136,33 @@ pub(crate) fn arena_art(
 }
 
 impl Stage {
+    #[cfg(test)]
     pub fn load(disc: &Disc, level: Level, vehicle: Vehicle, entry: Entry<'_>) -> Result<Self> {
+        Self::load_with_clock(disc, level, vehicle, entry, || 1)
+    }
+
+    pub fn from_world(
+        world: &World,
+        level: Level,
+        vehicle: Vehicle,
+        entry: Entry<'_>,
+    ) -> Result<Self> {
+        Self::load_with_clock(
+            &world.resource::<Campaign>().0,
+            level,
+            vehicle,
+            entry,
+            || round_ticks(world),
+        )
+    }
+
+    fn load_with_clock(
+        disc: &Disc,
+        level: Level,
+        vehicle: Vehicle,
+        entry: Entry<'_>,
+        ticks: impl Fn() -> u32,
+    ) -> Result<Self> {
         let stage = level.database(vehicle);
         let data = disc.read(&format!("UADMD/{stage}.DMD"))?;
         let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
@@ -124,7 +177,7 @@ impl Stage {
         }
         let (mut seed, mut deck) = match entry {
             Entry::Continue(drive) => (drive.player.rng_state(), drive.deck),
-            Entry::New(_) => (1, Default::default()),
+            Entry::New(_) => (ticks(), Default::default()),
         };
         let opponent_kinds = level.opponents(vehicle, &mut deck, &mut seed);
         // screenDrawCard takes one BIOS random value per settled opponent card,
@@ -161,6 +214,7 @@ impl Stage {
         )
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
         contacts.start_pedestrians(level, &mut seed);
+        let seed = ticks(); // uaInitDB reseeds after initializing pedestrians.
         let player = match entry {
             Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
             Entry::New(difficulty) => {
@@ -220,6 +274,7 @@ impl Stage {
             self.drive.settings = prev.settings;
             self.drive.player.set_pad_layout(prev.settings.layout);
         }
+        self.drive.begin_battle(round_ticks(world));
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);
         world.insert_resource(self.music);
@@ -289,16 +344,16 @@ pub fn advance(world: &mut World) {
 
 pub fn advance_to(world: &mut World, level: Level) {
     let drive = world.resource::<driving::Drive>();
-    let disc = &world.resource::<Campaign>().0;
     let lives = drive.lives;
-    let mut stage = match Stage::load(disc, level, drive.player.vehicle(), Entry::Continue(drive)) {
-        Ok(stage) => stage,
-        Err(err) => {
-            error!("Loading {level:?} failed: {err:#}");
-            world.write_message(AppExit::error());
-            return;
-        }
-    };
+    let mut stage =
+        match Stage::from_world(world, level, drive.player.vehicle(), Entry::Continue(drive)) {
+            Ok(stage) => stage,
+            Err(err) => {
+                error!("Loading {level:?} failed: {err:#}");
+                world.write_message(AppExit::error());
+                return;
+            }
+        };
     stage.drive.lives = lives;
     let from_ending = level == Level::Arena5;
     if let Err(err) = crate::transition::begin(world, stage, !from_ending, from_ending, None) {

@@ -427,6 +427,7 @@ mod tests {
         )
         .unwrap();
         let mut world = World::new();
+        world.init_resource::<Time<Real>>();
         world.init_resource::<Assets<Image>>();
         world.init_resource::<Assets<Mesh>>();
         world.init_resource::<Assets<ColorMaterial>>();
