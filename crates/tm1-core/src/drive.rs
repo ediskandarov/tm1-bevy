@@ -1,7 +1,7 @@
 //! Fixed-step vehicle, terrain, collision and projectile simulation for the JP arena.
 unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
-    fn tm1_taxi_init(state: *mut u8, seed: *mut u32);
+    fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
     fn tm1_drive_step(
         state: *mut u8,
         buttons: u16,
@@ -12,7 +12,49 @@ unsafe extern "C" {
     );
 }
 
-pub struct Taxi {
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Vehicle {
+    SweetTooth = 10,
+    YellowJacket = 20,
+    Darkside = 30,
+    CrimsonFury = 60,
+    MrGrimm = 80,
+    PitViper = 90,
+}
+impl Vehicle {
+    pub const ROSTER: [Self; 6] = [
+        Self::SweetTooth,
+        Self::YellowJacket,
+        Self::Darkside,
+        Self::CrimsonFury,
+        Self::MrGrimm,
+        Self::PitViper,
+    ];
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::SweetTooth => "sweet-tooth",
+            Self::YellowJacket => "yellow-jacket",
+            Self::Darkside => "darkside",
+            Self::CrimsonFury => "crimson-fury",
+            Self::MrGrimm => "mr-grimm",
+            Self::PitViper => "pit-viper",
+        }
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::SweetTooth => "Sweet Tooth",
+            Self::YellowJacket => "Yellow Jacket",
+            Self::Darkside => "Darkside",
+            Self::CrimsonFury => "Crimson Fury",
+            Self::MrGrimm => "Mr. Grimm",
+            Self::PitViper => "Pit Viper",
+        }
+    }
+}
+pub type Taxi = PlayerVehicle;
+pub struct PlayerVehicle {
+    vehicle: Vehicle,
     trig: Box<[i16]>,
     seed: u32,
     state: [u8; 0x4a4],
@@ -43,8 +85,11 @@ impl Input {
             | ((self.cycle_weapon as u16) << 2)
     }
 }
-impl Taxi {
+impl PlayerVehicle {
     pub fn from_executable(exe: &[u8]) -> Option<Self> {
+        Self::for_vehicle(exe, Vehicle::YellowJacket)
+    }
+    pub fn for_vehicle(exe: &[u8], vehicle: Vehicle) -> Option<Self> {
         if exe.get(..8)? != b"PS-X EXE" {
             return None;
         }
@@ -61,9 +106,10 @@ impl Taxi {
         let mut seed = 1;
         {
             let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-            unsafe { tm1_taxi_init(state.as_mut_ptr(), &mut seed) };
+            unsafe { tm1_player_init(state.as_mut_ptr(), &mut seed, vehicle as i32) };
         }
         Some(Self {
+            vehicle,
             state,
             frame: 0,
             trig,
@@ -71,12 +117,15 @@ impl Taxi {
         })
     }
 }
-impl Taxi {
+impl PlayerVehicle {
     pub fn reset(&mut self) {
         self.seed = 1;
         self.frame = 0;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { tm1_taxi_init(self.state.as_mut_ptr(), &mut self.seed) }
+        unsafe { tm1_player_init(self.state.as_mut_ptr(), &mut self.seed, self.vehicle as i32) }
+    }
+    pub fn vehicle(&self) -> Vehicle {
+        self.vehicle
     }
     pub fn rng_state(&self) -> u32 {
         self.seed
@@ -281,7 +330,7 @@ impl CollisionScene {
     }
 }
 
-impl Taxi {
+impl PlayerVehicle {
     pub fn body_stage(&self) -> usize {
         body_stage(self.health(), self.state[0x13f] as i8)
     }
@@ -310,13 +359,13 @@ impl CollisionScene {
         unsafe { tm1_effects(self.0.as_ptr(), out.as_mut_ptr()) }
     }
 }
-impl Taxi {
+impl PlayerVehicle {
     pub fn missiles(&self) -> i16 {
         i16::from_le_bytes(self.state[0x464..0x466].try_into().unwrap())
     }
 }
 
-impl Taxi {
+impl PlayerVehicle {
     pub fn rev(&self) -> i32 {
         let gear = self.state[0xa0 + 4] != 0;
         if gear && self.state[0xa0 + 13] != 0 {
@@ -340,7 +389,7 @@ impl CollisionScene {
     }
 }
 
-impl Taxi {
+impl PlayerVehicle {
     pub fn weapon(&self) -> (&'static str, i16) {
         let names = [
             "Fire missile",
@@ -354,7 +403,7 @@ impl Taxi {
             "Bomb",
             "Oil",
             "Spike",
-            "Taxi special",
+            "Special",
         ];
         let slot = self.word(0x460) as usize;
         if slot >= names.len() {

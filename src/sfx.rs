@@ -14,13 +14,22 @@ pub struct Sounds {
 }
 
 impl Sounds {
-    pub fn load(disc: &Disc) -> Result<Self> {
+    pub fn load(disc: &Disc, vehicle: tm1_core::drive::Vehicle) -> Result<Self> {
         let bank = disc.read("SND/UACORE.VAB")?;
         let mut sources = Vec::new();
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
-        // SOUND.c program map for taxi engine, gun, impact, explosion and fire missile.
-        for (id, prog) in [0, 12, 13, 29, 19].into_iter().enumerate() {
+        use tm1_core::drive::Vehicle::*;
+        // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
+        let (engine, special) = match vehicle {
+            SweetTooth => (1, 41),
+            YellowJacket => (0, 43),
+            Darkside => (2, 40),
+            CrimsonFury => (4, 42),
+            MrGrimm => (11, 47),
+            PitViper => (9, 46),
+        };
+        for (id, prog) in [engine, 12, 13, 29, 19, special].into_iter().enumerate() {
             let tones = program(&bank, prog)?;
             let mut mix = Vec::<[f32; 2]>::new();
             for t in tones {
@@ -101,7 +110,7 @@ pub fn update(
         if reset {
             let _ = sink.try_seek(sounds.engine_loop);
         }
-        sink.set_speed(2f32.powf(sounds.engine_range * drive.taxi.rev() as f32 / (99. * 12.)));
+        sink.set_speed(2f32.powf(sounds.engine_range * drive.player.rev() as f32 / (99. * 12.)));
         if pause {
             sink.pause();
         } else {
@@ -121,9 +130,9 @@ pub fn update(
         }
     }
     let mut remaining = 22usize.saturating_sub(shots.iter().count());
-    let heading = drive.taxi.heading() as f32 * std::f32::consts::TAU / 4096.;
+    let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
     for &(id, point) in &drive.sounds {
-        let car = drive.taxi.position();
+        let car = drive.player.position();
         let offset = Vec3::from_array(std::array::from_fn(|i| (point[i] - car[i]) as f32));
         let range = offset.length();
         let pan = ((offset.x * heading.cos() - offset.y * heading.sin()) / range.max(100.))

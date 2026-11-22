@@ -20,14 +20,18 @@ struct Reference {
 }
 impl Reference {
     fn new() -> Self {
+        Self::with_vehicle(Vehicle::YellowJacket)
+    }
+    fn with_vehicle(vehicle: Vehicle) -> Self {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc.read("UADMD/XARENA1.DMD").unwrap();
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
         let mut cpu = Cpu::new(&exe);
-        let scene = CollisionScene::from_dmd(&data, root(1), root(20), root(50)).unwrap();
-        let mut player = Taxi::from_executable(&exe).unwrap();
+        let scene =
+            CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(50)).unwrap();
+        let mut player = PlayerVehicle::for_vehicle(&exe, vehicle).unwrap();
         let mut police = PoliceCar::spawn(&mut player);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
@@ -42,7 +46,7 @@ impl Reference {
             (POLICE_CS + 0x108, TAXI_CS),
             (WORLD + 0x104, root(1)),
             (WORLD + 0xc0, 8),
-            (TAXI_CS + 0x104, root(20)),
+            (TAXI_CS + 0x104, root(vehicle as u16)),
             (POLICE_CS + 0x104, root(50)),
         ] {
             put(&mut cpu, at, v);
@@ -272,6 +276,42 @@ fn police_update_original() {
         r.cpu.call(0x8011950c, &[POLICE]);
         r.police.update(&mut r.player, 3, false, r.scene.0.as_ptr());
         r.compare();
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn player_special_launch_original() {
+    for vehicle in Vehicle::ROSTER {
+        let mut r = Reference::with_vehicle(vehicle);
+        for at in [0x80107f84, 0x80108034] {
+            r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        vec3(&mut r.player.state, 0x388, [2700, 2200, 400]);
+        vec3(&mut r.police.state, 0x444, [2750, 3000, 400]);
+        r.player.state[0xd2] = 1;
+        r.sync();
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        for _ in 0..3 {
+            r.cpu.call(0x8010d03c, &[]);
+            r.cpu.call(0x80137d2c, &[]);
+            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            r.compare();
+            let mut segments = [[[0; 3]; 2]; 40];
+            assert_eq!(r.scene.bullet_segments(&mut segments), 1, "{vehicle:?}");
+            for (point, offset) in [12, 0].into_iter().enumerate() {
+                for axis in 0..3 {
+                    assert_eq!(
+                        segments[0][point][axis],
+                        r.cpu.word(0x80198c28 + offset + 4 * axis as u32) as i32,
+                        "{vehicle:?}"
+                    );
+                }
+            }
+        }
     }
 }
 

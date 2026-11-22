@@ -162,7 +162,7 @@ u8 GetCtlPad(s16 button, s16 which)
     return down;
 }
 
-void tm1_taxi_init(u8* state, u32* seed)
+void tm1_player_init(u8* state, u32* seed, s32 kind)
 {
     PlayerCar car = { 0 };
     random_state = *seed;
@@ -183,18 +183,40 @@ void tm1_taxi_init(u8* state, u32* seed)
     car.weap.cur = WEAPON_SPECIAL;
     car.weap.ammo[WEAPON_SPECIAL] = 20;
     car.weap.maxAmmo = 28;
-    car.weap.unk48 = 4;
+    car.weap.unk48 = arena_player_special_cost(kind);
     car.weap.unk46 = 2;
     car.weap.ammo[0] = car.weap.totalAmmo = 2;
-    car.uaIndex = 20;
+    car.uaIndex = kind;
     car.stats.unk00 = 1;
+    car.stats.unk3C = 1;
+    car.stats.unk100 = 100;
     car.stats.unkDC = 25;
     car.stats.unkE8 = 3;
     car.stats.unkFC = 100;
     car.stats.updateRate = 60;
-    InitTaxiCab(&car.stats);
+    switch (kind) {
+    case 10:
+        InitIceCreamTruck(&car.stats);
+        break;
+    case 30:
+        InitSemiTruck(&car.stats);
+        break;
+    case 60:
+        InitLamborghini(&car.stats);
+        break;
+    case 80:
+        InitHarley(&car.stats);
+        break;
+    case 90:
+        InitDuneBuggy(&car.stats);
+        break;
+    default:
+        InitTaxiCab(&car.stats);
+        break;
+    }
     car.stats.damageThreshold = 75;
     car.stats.unk78 = abs(car.stats.unk80) + abs(car.stats.unk84);
+    RecomputeCarDeltas(&car.stats);
     car.stats.unk40 = car.stats.unk44;
     car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
     car.motion.mat = car.motion.mat2;

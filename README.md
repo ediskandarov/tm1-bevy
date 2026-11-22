@@ -1,14 +1,21 @@
-# TM1 on Bevy: Experiment
+# Twisted Metal on Bevy
 
 The macOS build runs the arena driving prototype on Metal. It reads the JP
-disc, simulates the taxi and a police opponent, and renders a chase view.
+disc, simulates the selected player vehicle and a police opponent, and renders a chase view.
 The arena includes machine guns, missiles, pickups, contact damage, sound, music and round restart.
 Initial decision date: 2026-11-22.
 
-The goal is to run one Twisted Metal arena on macOS through Bevy, using assets
-from the player's disc and preserving the original simulation behavior.
-A separate research objective is to replace the PS1 platform layer and gradually
-move from original graphics commands to Bevy meshes, materials, and scenes.
+The goal is to port the full original game. The first playable milestone is
+the arena encounter. Six vehicles are currently selectable there. With
+`TM1_CUE` set to the path of the JP disc cue, run:
+
+```sh
+cargo run --locked --offline -- "$TM1_CUE" --car sweet-tooth
+```
+
+Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`,
+`crimson-fury`, `mr-grimm` and `pit-viper`. Yellow Jacket is the default.
+Press F to fire the selected weapon and E to cycle through the inventory.
 
 Project documentation is maintained in English.
 

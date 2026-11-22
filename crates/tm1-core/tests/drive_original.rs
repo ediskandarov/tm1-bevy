@@ -13,12 +13,35 @@ fn drive_trace() {
     for entry in [0x80108378, 0x801083b0, 0x801417d0, 0x801466b0, 0x80146930] {
         cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
-    for (timing, ramp) in [
-        (&[3u8][..], false),
-        (&[3, 4, 5, 3][..], false),
-        (&[3u8][..], true),
-    ] {
-        let mut taxi = Taxi::from_executable(&exe).unwrap();
+    use tm1_core::drive::Vehicle;
+    for (vehicle, timing, ramp) in [
+        (Vehicle::YellowJacket, &[3u8][..], false),
+        (Vehicle::YellowJacket, &[3u8][..], true),
+    ]
+    .into_iter()
+    .chain(Vehicle::ROSTER.map(|car| (car, &[3, 4, 5, 3][..], false)))
+    {
+        let mut taxi = Taxi::for_vehicle(&exe, vehicle).unwrap();
+        // Construct the retail stat block independently from a cleared player slot.
+        let stats = CAR + 0x138;
+        cpu.put(stats, &[0; 0x120]);
+        cpu.put(stats, &[1]);
+        for off in [0x38, 0x4c] {
+            cpu.put(stats + off, &1i32.to_le_bytes());
+        }
+        cpu.put(0x80170238, &3u16.to_le_bytes());
+        cpu.put(0x8017023a, &20u16.to_le_bytes());
+        cpu.call(0x80124d04, &[stats, 100]);
+        cpu.call(0x80123310, &[stats, vehicle as u32]);
+        let health = cpu.word(stats + 0x44);
+        cpu.put(stats + 0x40, &health.to_le_bytes());
+        for (offset, &v) in taxi.state()[0x138..0x258].iter().enumerate() {
+            assert_eq!(
+                v,
+                cpu.ram[(stats as usize & 0x1fffff) + offset],
+                "{vehicle:?} stats+{offset:#x}"
+            );
+        }
         if ramp {
             taxi.reset_at_test_ramp();
         }
@@ -78,7 +101,7 @@ fn drive_trace() {
             }
         }
         println!(
-            "timing {timing:?}, ramp {ramp}, 360 steps, max body height {peak}, all tires airborne {airborne}"
+            "{vehicle:?}, timing {timing:?}, ramp {ramp}, 360 steps, max body height {peak}, all tires airborne {airborne}"
         );
         if ramp {
             assert!(peak > 96 && airborne);

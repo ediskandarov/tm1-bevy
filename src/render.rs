@@ -18,7 +18,7 @@ use bevy::camera::visibility::RenderLayers;
 
 #[derive(Component)]
 pub enum VehicleMesh {
-    Taxi,
+    Player,
     Police,
 }
 #[derive(Component)]
@@ -182,7 +182,7 @@ pub fn setup(
             }
             commands.spawn((
                 if car == 0 {
-                    VehicleMesh::Taxi
+                    VehicleMesh::Player
                 } else {
                     VehicleMesh::Police
                 },
@@ -266,7 +266,7 @@ pub fn hud(
         1.,
     );
     transform.scale = Vec3::splat(scale);
-    let state = if drive.taxi.health().0 <= 0 {
+    let state = if drive.player.health().0 <= 0 {
         "WRECKED   R · Restart"
     } else if drive.opponent.health().0 <= 0 {
         "ARENA CLEARED   R · Restart"
@@ -275,12 +275,13 @@ pub fn hud(
     } else {
         ""
     };
-    let (weapon, ammo) = drive.taxi.weapon();
+    let (weapon, ammo) = drive.player.weapon();
     let message = format!(
-        "Police  {}      Taxi  {}
+        "Police  {}      {}  {}
 {}  × {}     {}",
         drive.opponent.health().0.max(0),
-        drive.taxi.health().0.max(0),
+        drive.player.vehicle().name(),
+        drive.player.health().0.max(0),
         weapon,
         ammo,
         state
@@ -342,10 +343,10 @@ pub fn update(
         arena.pitch.sin(),
         arena.yaw.cos() * arena.pitch.cos(),
     );
-    let origin = world(drive.taxi.position().map(|v| v as f32));
-    let angle = drive.taxi.heading() as f32 * std::f32::consts::TAU / 4096.;
+    let origin = world(drive.player.position().map(|v| v as f32));
+    let angle = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
     let vehicle_rotation = Quat::from_rotation_y(-angle);
-    let matrix = drive.taxi.rotation();
+    let matrix = drive.player.rotation();
     let opponent_origin = world(drive.opponent.position().map(|v| v as f32));
     let opponent_matrix = drive.opponent.rotation();
     let transform = |index: usize, p: [f32; 3]| {
@@ -375,10 +376,10 @@ pub fn update(
         )
     };
     **camera = Transform::from_translation(eye).looking_at(target, Vec3::Y);
-    let active = [drive.taxi.body_stage(), drive.opponent.body_stage()];
+    let active = [drive.player.body_stage(), drive.opponent.body_stage()];
     for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
         let (selected, origin, matrix) = match vehicle {
-            VehicleMesh::Taxi => (active[0], origin, matrix),
+            VehicleMesh::Player => (active[0], origin, matrix),
             VehicleMesh::Police => (active[1], opponent_origin, opponent_matrix),
         };
         if stage.0 != selected {
@@ -416,7 +417,7 @@ pub fn update(
         let p = &arena.scene.polygons[i];
         if p.animation
             .iter()
-            .any(|frame| frame.selected(drive.taxi.frame()) != frame.child)
+            .any(|frame| frame.selected(drive.player.frame()) != frame.child)
         {
             continue;
         }
@@ -537,10 +538,14 @@ pub fn update(
             screen_batch.push(points[i].extend(0.), white, tint);
         }
     };
-    let (hp, max_hp) = drive.taxi.health();
+    let (hp, max_hp) = drive.player.health();
     let (op, op_max) = drive.opponent.health();
     for (row, value, tint) in [
-        (0, drive.taxi.gun_heat() as f32 / 199., [1., 0.62, 0.1, 1.]),
+        (
+            0,
+            drive.player.gun_heat() as f32 / 199.,
+            [1., 0.62, 0.1, 1.],
+        ),
         (1, hp as f32 / max_hp.max(1) as f32, [0.25, 0.85, 0.42, 1.]),
         (2, op as f32 / op_max.max(1) as f32, [0.95, 0.25, 0.18, 1.]),
     ] {

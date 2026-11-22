@@ -369,9 +369,35 @@ void UpdatePlayerWeaponPadStatus(PlayerCar* car)
     }
 }
 
-static void taxiSpecial(PlayerCar* car)
+// FireSpecials in INTERACT.c. Projectile, damage, life, charge cost and cooldown.
+typedef struct {
+    s32 projectile, damage, life, cost, delay;
+} ProjectileSpecial;
+static ProjectileSpecial playerProjectileSpecial(s32 kind)
 {
-    if (car->weap.ammo[WEAPON_SPECIAL] >= 4) {
+    switch (kind) {
+    case 10:
+        return (ProjectileSpecial) { 15, 30, 30, 7, 20 };
+    case 30:
+        return (ProjectileSpecial) { 4, 6, 12, 5, 10 };
+    case 60:
+        return (ProjectileSpecial) { 6, 15, 15, 3, 10 };
+    case 80:
+        return (ProjectileSpecial) { 21, 40, 20, 9, 20 };
+    case 90:
+        return (ProjectileSpecial) { 19, 15, 30, 4, 10 };
+    default:
+        return (ProjectileSpecial) { 17, 12, 30, 4, 20 };
+    }
+}
+s32 arena_player_special_cost(s32 kind)
+{
+    return playerProjectileSpecial(kind).cost;
+}
+static void firePlayerProjectileSpecial(PlayerCar* car)
+{
+    ProjectileSpecial special = playerProjectileSpecial(car->uaIndex);
+    if (car->weap.ammo[WEAPON_SPECIAL] >= special.cost) {
         VECTOR3 local = { 0, car->stats.unk112, car->stats.unk114 }, d;
         mathMulTransVec(&car->motion.mat2, &local, &d);
         d.vx += car->motion.pos.vx;
@@ -379,11 +405,13 @@ static void taxiSpecial(PlayerCar* car)
         d.vz += car->motion.pos.vz;
         VECTOR3 dir = { rsin(car->motion.rot.vz) >> 6, rsin(car->motion.rot.vz + 1024) >> 6,
             -rsin(car->motion.rot.vx) >> 6 };
-        s_create_bullet(1, &dir, &d, 17, 12, 30, 0);
-        car->weap.ammo[WEAPON_SPECIAL] -= 4;
-        arena_effect(&d, 0);
+        if (car->uaIndex == 30)
+            d.vz -= 16;
+        s_create_bullet(1, &dir, &d, special.projectile, special.damage, special.life, 0);
+        car->weap.ammo[WEAPON_SPECIAL] -= special.cost;
+        arena_effect(&d, 10);
     }
-    car->weap.fireDelay = 20;
+    car->weap.fireDelay = special.delay;
     car->flags[9] = 1;
 }
 
@@ -544,7 +572,7 @@ void arena_update_weapons(Car* car, u8 player)
     switch (pad->cur) {
     case WEAPON_SPECIAL:
         if (player)
-            taxiSpecial(p);
+            firePlayerProjectileSpecial(p);
         else
             policeSpecial(ai);
         break;

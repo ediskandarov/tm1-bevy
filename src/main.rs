@@ -15,9 +15,24 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
+    use tm1_core::drive::Vehicle;
+    let mut vehicle = Vehicle::YellowJacket;
+    if flag.as_deref() == Some(std::ffi::OsStr::new("--car")) {
+        let name = args.next();
+        vehicle = Vehicle::ROSTER
+            .into_iter()
+            .find(|v| name.as_deref() == Some(std::ffi::OsStr::new(v.slug())))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--car requires one of {}",
+                    Vehicle::ROSTER.map(Vehicle::slug).join(", ")
+                )
+            })?;
+        flag = args.next();
+    }
     if flag.as_deref() == Some(std::ffi::OsStr::new("--object-mesh")) {
         flag = args.next();
     }
@@ -53,27 +68,27 @@ fn main() -> Result<()> {
     for issue in &scene.omitted_nodes {
         eprintln!("Preview omission: {issue}");
     }
-    let taxi = tm1_core::drive::Taxi::from_executable(&disc.read("SIPS_600.07")?)
+    let player = tm1_core::drive::PlayerVehicle::for_vehicle(&disc.read("SIPS_600.07")?, vehicle)
         .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
-    let taxi_mesh = dmd.vehicle_bodies(20)?;
+    let player_mesh = dmd.vehicle_bodies(vehicle as u16)?;
     let opponent_mesh = dmd.vehicle_bodies(50)?;
     let contacts = tm1_core::drive::CollisionScene::from_dmd(
         &data,
         scene.root_id,
-        taxi_mesh[0].root_id,
+        player_mesh[0].root_id,
         opponent_mesh[0].root_id,
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
-    let arena = render::Arena::new(scene, taxi_mesh, opponent_mesh, textures)?;
+    let arena = render::Arena::new(scene, player_mesh, opponent_mesh, textures)?;
     eprintln!(
         "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview."
     );
     let mut app = App::new();
     app.insert_resource(capture)
         .insert_resource(arena)
-        .insert_resource(sfx::Sounds::load(&disc)?)
+        .insert_resource(sfx::Sounds::load(&disc, vehicle)?)
         .insert_resource(music::Music::arena(&disc)?)
-        .insert_resource(driving::Drive::new(taxi, contacts))
+        .insert_resource(driving::Drive::new(player, contacts))
         .insert_resource(ClearColor(Color::srgb(0.035, 0.045, 0.065)))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {

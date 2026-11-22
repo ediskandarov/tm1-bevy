@@ -1,6 +1,15 @@
 # Requirements
 
-## Required deliverable
+## Full-game objective
+
+Port the gameplay and player-facing functionality of the supported JP release.
+The playable arena below is the first milestone. Subsequent work covers the
+remaining vehicle roster and special weapons, levels and their interactions,
+opponents and progression, the original front end, multiplayer modes and
+endings. Verify behavior against the supported release as each path becomes
+playable. Track implemented paths and outstanding limitations in STATUS.md.
+
+## Initial arena deliverable
 
 ### R1. Platform and scope
 

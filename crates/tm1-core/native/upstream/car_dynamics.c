@@ -60,6 +60,176 @@ s32 SmoothAngleValue(s32 from, s32 to, s32 pct)
     return r;
 }
 
+void InitIceCreamTruck(CarStats* stats)
+{
+    stats->unk9C = 5;
+    stats->unkC4 = 2;
+    stats->unk88 = 0x5A;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x14;
+    stats->unk98 = stats->unk88 / 2;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x4B;
+    stats->unkE4 = 3;
+    stats->unk6C = 0x20;
+    stats->unk70 = 0x46;
+    stats->unk74 = 0x40;
+    stats->unk7C = 0x46;
+    stats->unk80 = 0x38;
+    stats->unk84 = -0x50;
+    stats->unk110 = -0x24;
+    stats->unk112 = 0x4B;
+    stats->unk114 = 8;
+    stats->dropPower = 0;
+    stats->unk11A = 0x20;
+    stats->unk11C = 0x2C;
+    stats->unk108 = 2;
+    stats->unk04 = 3;
+    stats->unk44 = 0x73;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x1E;
+    stats->unk1E = 0x5A;
+    stats->unk5C = 7;
+    stats->unk24 = 0x258;
+}
+
+void InitSemiTruck(CarStats* stats)
+{
+    stats->unk9C = 4;
+    stats->unkC4 = 5;
+    stats->unk88 = 0x5A;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x1B;
+    stats->unk98 = stats->unk88 / 2;
+    stats->unkC8 = 3;
+    stats->unkE0 = 0xF;
+    stats->unkE4 = 0xA;
+    stats->unkE8 = 2;
+    stats->unk6C = 0x20;
+    stats->unk70 = 0x37;
+    stats->unk74 = 0x40;
+    stats->unk7C = 0x6E;
+    stats->unk80 = 0x64;
+    stats->unk84 = -0x64;
+    stats->unk110 = -0x13;
+    stats->unk112 = 0x64;
+    stats->unk114 = 0xA;
+    stats->dropPower = 0;
+    stats->unk11A = 0x24;
+    stats->unk11C = 0x3A;
+    stats->unk10C = 0x960;
+    stats->unk108 = 3;
+    stats->unk04 = 3;
+    stats->unk44 = 0x8C;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x5A;
+    stats->unk1E = 0x28;
+    stats->unk5C = 6;
+    stats->unk24 = 0x258;
+}
+
+void InitLamborghini(CarStats* stats)
+{
+    stats->unk9C = 0xD;
+    stats->unkC4 = 4;
+    stats->unk88 = 0x87;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x84;
+    stats->unk98 = stats->unk88 * 3 / 4;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x14;
+    stats->unkE4 = 6;
+    stats->unk6C = 0x10;
+    stats->unk70 = 0xF;
+    stats->unk74 = 0x36;
+    stats->unk7C = 0x48;
+    stats->unk80 = 0x38;
+    stats->unk84 = -0x3D;
+    stats->unk110 = -0x1C;
+    stats->unk112 = 0x2E;
+    stats->unk114 = 4;
+    stats->dropPower = 0;
+    stats->unk11A = 4;
+    stats->unk11C = 0x1E;
+    stats->unk10C = -0x230;
+    stats->unk108 = 1;
+    stats->unk04 = 1;
+    stats->unk44 = 0x64;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x14;
+    stats->unk1E = 0xF;
+    stats->unk5C = 0x14;
+    stats->unk24 = 0x370;
+}
+
+void InitHarley(CarStats* stats)
+{
+    stats->unk9C = 7;
+    stats->unkC4 = 5;
+    stats->unk88 = 0x7D;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x6E;
+    stats->unk98 = stats->unk88 * 7 / 8;
+    stats->unkC8 = 2;
+    stats->unkE0 = -0x50;
+    stats->unkE4 = 5;
+    stats->unk6C = 0x10;
+    stats->unk70 = 7;
+    stats->unk74 = 0x32;
+    stats->unk7C = 0x35;
+    stats->unk80 = 0x2A;
+    stats->unk84 = -0x1D;
+    stats->unk110 = -0x11;
+    stats->unk112 = 0x12;
+    stats->unk114 = 0xC;
+    stats->dropPower = 0;
+    stats->unk11A = -0xA;
+    stats->unk11C = 0x46;
+    stats->unk10C = -0x320;
+    stats->unk108 = 1;
+    stats->unk04 = 1;
+    stats->unk44 = 0x64;
+    stats->unk50 = 0x32;
+    stats->unk104 = 5;
+    stats->unk1E = 0x4B;
+    stats->unk5C = 0xF;
+    stats->unk24 = 0x2D0;
+}
+
+void InitDuneBuggy(CarStats* stats)
+{
+    stats->unk9C = 5;
+    stats->unkC4 = 3;
+    stats->unk88 = 0x6E;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x37;
+    stats->unk98 = stats->unk88 * 3 / 4;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x1E;
+    stats->unkE4 = 8;
+    stats->unk6C = 0x14;
+    stats->unk70 = 0x19;
+    stats->unk74 = 0x40;
+    stats->unk7C = 0x3A;
+    stats->unk80 = 0x37;
+    stats->unk84 = -0x21;
+    stats->unk110 = -0xE;
+    stats->unk112 = 0x29;
+    stats->unk114 = 8;
+    stats->dropPower = 0;
+    stats->unk11A = 4;
+    stats->unk11C = 0x21;
+    stats->unk10C = -0x320;
+    stats->unk108 = 1;
+    stats->unk04 = 1;
+    stats->unk44 = 0x64;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0xA;
+    stats->unk1E = 0x3C;
+    stats->unk5C = 5;
+    stats->unk24 = 0x280;
+}
+
 void InitTaxiCab(CarStats* stats)
 {
     stats->unk9C = 0xA;

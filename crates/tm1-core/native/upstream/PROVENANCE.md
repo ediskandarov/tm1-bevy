@@ -18,7 +18,7 @@ provide a controlled timing probe and fixed-width math layouts, not a complete
 PS1 SDK or BIOS. The positive-domain square-root replacement is in Rust.
 
 The driving files use functions from the same pinned source. `car_dynamics.c`
-contains CAR, CAR_INIT, SMOOTH and UA pad functions. The expression
+includes the CAR_INIT stat initializers for the ice cream truck, taxi, semi, Lamborghini, Harley and dune buggy. Their projectile special parameters come from INTERACT.c. It also contains CAR, CAR_INIT, SMOOTH and UA pad functions. The expression
 `t & (t | (s32)sk)` reduces to `t`, avoiding a host pointer truncation.
 `arena_ground.c` uses BRIDGES, POTHOLES, TRIGPTS, CARUPD, CAR and SMOOTH.
 Its tire-height routine excludes the rooftop-only branch. `ai_driving.c` uses

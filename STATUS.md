@@ -1,8 +1,15 @@
 # Playable arena status
 
-The macOS application launches XARENA1 from the verified JP BIN/CUE. The player drives the taxi against the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
+The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of six vehicles and fights the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
 
 The player completed a manual keyboard playthrough, heard game sounds and reached the **Arena cleared** victory screen. Keyboard play is the accepted input configuration for this milestone.
+
+Sweet Tooth, Yellow Jacket, Darkside, Crimson Fury, Mr. Grimm and Pit Viper
+load their own driving profile, collision geometry, three damage models,
+projectile special and audio programs. Each selection was launched on the
+Apple M3 Pro Metal backend and its chase-view frame inspected. The default
+encounter still uses one police opponent. The remaining roster, arenas,
+campaign, front end and multiplayer are outstanding.
 
 ## Reference execution
 
@@ -11,6 +18,7 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Scenario | Observed result |
 | --- | --- |
 | Player dynamics | Three 360-step recordings, fixed three fields, repeating 3/4/5/3 fields, and a ramp. Full 0x4a4 bytes and RNG compared at each step. Ramp peak 164 with all four tires airborne. |
+| Six player vehicles | For each vehicle the independently initialized 288-byte stat block and 360 mixed-timing movement steps match the disc executable. A separate firing scenario compares both car records, RNG and three steps of the special projectile trajectory. |
 | Taxi and police together | 360 consecutive steps through both original update calls. Accelerate, hold the gun after step ten, steer left on steps 24–39. Cycle 4/5/3/3 fields starting at step one. Both complete car records and RNG agree after every step. |
 | Contacts | Original car-to-car and wall fixtures contact at steps 13 and 73. Both car records, RNG and normalized contact identities compared. 9,381 original world point queries included 2,742 solid contacts. |
 | Body damage | The renderer selects one of three retail DMD branches for each car. The stage matches the retail damage-update routines for every positive HP value, descending and ascending, for both cars (420 comparisons). At 75% health the body changes to damaged and below 11% it changes to critical. |

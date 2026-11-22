@@ -1,10 +1,10 @@
 use bevy::prelude::*;
 use std::time::Duration;
-use tm1_core::drive::{CollisionScene, Input, PoliceCar, Taxi};
+use tm1_core::drive::{CollisionScene, Input, PlayerVehicle, PoliceCar};
 
 #[derive(Resource)]
 pub struct Drive {
-    pub taxi: Taxi,
+    pub player: PlayerVehicle,
     pub opponent: PoliceCar,
     pub contacts: CollisionScene,
     pub sounds: Vec<(usize, [i32; 3])>,
@@ -14,12 +14,12 @@ pub struct Drive {
     was_focused: bool,
 }
 impl Drive {
-    pub fn new(mut taxi: Taxi, contacts: CollisionScene) -> Self {
-        let opponent = PoliceCar::spawn(&mut taxi);
+    pub fn new(mut player: PlayerVehicle, contacts: CollisionScene) -> Self {
+        let opponent = PoliceCar::spawn(&mut player);
         Self {
             opponent,
             contacts,
-            taxi,
+            player,
             sounds: Vec::new(),
             remainder: Duration::ZERO,
             paused: false,
@@ -50,8 +50,8 @@ pub fn advance(
     if window.focused && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select)) {
         drive.contacts.reset_projectiles();
         drive.paused = false;
-        drive.taxi.reset();
-        drive.opponent = PoliceCar::spawn(&mut drive.taxi);
+        drive.player.reset();
+        drive.opponent = PoliceCar::spawn(&mut drive.player);
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
@@ -61,7 +61,7 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    let status = if drive.taxi.health().0 <= 0 {
+    let status = if drive.player.health().0 <= 0 {
         "Wrecked • R to restart"
     } else if drive.opponent.health().0 <= 0 {
         "Arena cleared • R to restart"
@@ -71,15 +71,16 @@ pub fn advance(
         "Arena"
     };
     let title = format!(
-        "TM1 • {status}   |   Taxi {}   Police {}   |   Fire missiles {}",
-        drive.taxi.health().0.max(0),
+        "TM1 • {status}   |   {} {}   Police {}   |   Fire missiles {}",
+        drive.player.vehicle().name(),
+        drive.player.health().0.max(0),
         drive.opponent.health().0.max(0),
-        drive.taxi.missiles()
+        drive.player.missiles()
     );
     if window.title != title {
         window.title = title;
     }
-    if drive.taxi.health().0 <= 0 || drive.opponent.health().0 <= 0 {
+    if drive.player.health().0 <= 0 || drive.opponent.health().0 <= 0 {
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -116,7 +117,7 @@ pub fn advance(
             Input {
                 accelerate: true,
                 fire_guns: true,
-                cycle_weapon: state.taxi.gun_heat() == 0,
+                cycle_weapon: state.player.gun_heat() == 0,
                 missile: true,
                 ..Default::default()
             }
@@ -125,7 +126,7 @@ pub fn advance(
         };
         state
             .contacts
-            .step(&mut state.taxi, &mut state.opponent, input, 3);
+            .step(&mut state.player, &mut state.opponent, input, 3);
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
@@ -134,6 +135,7 @@ pub fn advance(
         for &[x, y, z, kind, life] in &effects[..count] {
             let id = match (kind, life) {
                 (0, 2) => 1,
+                (10, 2) => 5,
                 (1, 2) => 2,
                 (2, 7) => 3,
                 (4, 2) => 4,
@@ -142,7 +144,7 @@ pub fn advance(
             state.sounds.push((id, [x, y, z]));
         }
         drive.remainder -= STEP;
-        if drive.taxi.health().0 <= 0 || drive.opponent.health().0 <= 0 {
+        if drive.player.health().0 <= 0 || drive.opponent.health().0 <= 0 {
             break;
         }
     }
@@ -171,11 +173,14 @@ mod tests {
         let build = || {
             let mut app = App::new();
             let scene = CollisionScene::from_dmd(&data, root(1), root(20), root(50)).unwrap();
-            app.insert_resource(Drive::new(Taxi::from_executable(&exe).unwrap(), scene))
-                .insert_resource(crate::smoke::Capture::new(None, false, false))
-                .init_resource::<ButtonInput<KeyCode>>()
-                .init_resource::<Time<Real>>()
-                .add_systems(Update, advance);
+            app.insert_resource(Drive::new(
+                PlayerVehicle::from_executable(&exe).unwrap(),
+                scene,
+            ))
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, advance);
             let window = app
                 .world_mut()
                 .spawn(Window {
@@ -189,10 +194,10 @@ mod tests {
         let snapshot = |app: &App| {
             let d = app.world().resource::<Drive>();
             (
-                d.taxi.state().to_vec(),
+                d.player.state().to_vec(),
                 d.opponent.position(),
                 d.opponent.health(),
-                d.taxi.rng_state(),
+                d.player.rng_state(),
                 d.contacts.hidden_pickups(),
             )
         };
@@ -246,12 +251,12 @@ mod tests {
         app.world_mut().despawn(id);
         for step in 1..=24000 {
             tick(&mut app, 50);
-            if app.world().resource::<Drive>().taxi.health().0 <= 0 {
+            if app.world().resource::<Drive>().player.health().0 <= 0 {
                 println!("Police defeated the taxi at idle step {step}");
                 break;
             }
         }
-        assert!(app.world().resource::<Drive>().taxi.health().0 <= 0);
+        assert!(app.world().resource::<Drive>().player.health().0 <= 0);
         let wrecked = snapshot(&app);
         tick(&mut app, 5000);
         assert_eq!(snapshot(&app), wrecked);
