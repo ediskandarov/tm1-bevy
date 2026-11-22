@@ -65,6 +65,32 @@ pub enum Action {
     Select,
     Resume,
 }
+pub fn options_timed_out(
+    page: Page,
+    elapsed: &mut std::time::Duration,
+    delta: std::time::Duration,
+    input: bool,
+) -> bool {
+    if input || !matches!(page, Page::Audio(_) | Page::Controls) {
+        *elapsed = std::time::Duration::ZERO;
+        return false;
+    }
+    *elapsed += delta;
+    *elapsed >= std::time::Duration::from_secs_f64(18001. / 60.)
+}
+
+pub fn navigation_sound(page: Page, action: Action, layout_changed: bool) -> Option<bool> {
+    use Action::*;
+    match (page, action) {
+        (_, Select | Resume) => Some(true),
+        (Page::Choices(_) | Page::Audio(_), Up | Down) | (Page::Audio(0 | 1), Left | Right) => {
+            Some(false)
+        }
+        (Page::Controls, Left | Right) if layout_changed => Some(false),
+        _ => None,
+    }
+}
+
 pub fn navigate(page: Page, action: Action, settings: &mut Settings) -> Option<Page> {
     use Action::*;
     use Page::*;

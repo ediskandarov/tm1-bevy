@@ -439,7 +439,7 @@ pub fn update(
                     .channels(drive.player.position(), volume, false),
             ))
         };
-        let Some((rev, channels)) = audible else {
+        let Some((rev, channels)) = audible.filter(|_| drive.pause.is_none()) else {
             engine.order = None;
             if playing {
                 commands
@@ -803,6 +803,16 @@ mod tests {
         let finishing = shots(&mut world);
         assert!(finishing.len() <= 22);
         assert_eq!(finishing, first[..finishing.len()]);
+        world.resource_mut::<Drive>().pause = Some(crate::pause::Page::Choices(0));
+        world.run_system_once(update).unwrap();
+        assert_eq!(engines(&mut world), 0);
+        assert!(shots(&mut world).is_empty());
+        world.resource_mut::<Drive>().pause = None;
+        world.run_system_once(update).unwrap();
+        assert_eq!(engines(&mut world), 0);
+        world.run_system_once(crate::driving::advance).unwrap();
+        world.run_system_once(update).unwrap();
+        assert_eq!(engines(&mut world), 2);
     }
 
     #[test]

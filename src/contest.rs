@@ -1460,9 +1460,21 @@ mod tests {
             world.insert_resource(keys);
             world.run_system_once(duel::pause_menu).unwrap();
             world.run_system_once(duel::advance).unwrap();
+            world.run_system_once(crate::sfx::duel::mix).unwrap();
             duel::round_menu(world);
         };
+        let active_engines = |world: &mut World| {
+            world
+                .query_filtered::<Entity, (
+                    With<crate::sfx::duel::DuelEngine>,
+                    With<AudioPlayer<crate::sfx::pcm::StereoPcm>>,
+                )>()
+                .iter(world)
+                .count()
+        };
         step(&mut world, &[KeyW, ArrowUp]);
+        let engine_count = active_engines(&mut world);
+        assert!(engine_count >= 2);
         let positions = |world: &World| {
             world
                 .resource::<duel::Duel>()
@@ -1476,6 +1488,7 @@ mod tests {
             step(&mut world, &[KeyT, ShiftRight]);
         }
         assert_eq!(positions(&world), start);
+        assert_eq!(active_engines(&mut world), 0);
         step(&mut world, &[ArrowUp]);
         step(&mut world, &[Comma]);
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Controls));
@@ -1487,6 +1500,7 @@ mod tests {
             step(&mut world, &[KeyW, ArrowUp]);
         }
         assert_ne!(positions(&world), start);
+        assert_eq!(active_engines(&mut world), engine_count);
         for key in [KeyP, KeyS, KeyS, Space, KeyD] {
             step(&mut world, &[key]);
         }
@@ -1510,7 +1524,30 @@ mod tests {
             }
         }
         assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
-        for key in [KeyP, NumpadEnter, ArrowDown, Comma] {
+        let menu_voices = |world: &mut World| {
+            world
+                .query_filtered::<Entity, With<duel::PauseVoice>>()
+                .iter(world)
+                .count()
+        };
+        let before = menu_voices(&mut world);
+        step(&mut world, &[Space]);
+        assert_eq!(menu_voices(&mut world), before + 1);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(300));
+        step(&mut world, &[]);
+        assert_eq!(world.resource::<duel::Duel>().pause, Some(Pause::Audio(0)));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs_f64(1. / 60.));
+        step(&mut world, &[]);
+        assert!(world.resource::<duel::Duel>().pause.is_none());
+        assert_eq!(menu_voices(&mut world), before + 1);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        for key in [NumpadEnter, ArrowDown, Comma] {
             step(&mut world, &[key]);
         }
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Aborted));

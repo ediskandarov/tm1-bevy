@@ -42,6 +42,7 @@ pub struct Duel {
     pub(crate) pause: Option<crate::pause::Page>,
     control_slot: usize,
     abort_elapsed: Duration,
+    options_idle: Duration,
     wait_release: bool,
     layouts: [u8; 2],
     pub(crate) sounds: Vec<crate::driving::BattleRequest>,
@@ -136,6 +137,7 @@ pub fn start(
         pause: None,
         control_slot: 0,
         abort_elapsed: Duration::ZERO,
+        options_idle: Duration::ZERO,
         wait_release: false,
         layouts,
         sounds: Vec::new(),
@@ -190,6 +192,7 @@ pub fn pause_menu(
             Entity,
             Has<DuelEffect>,
             Has<DuelMusic>,
+            Has<AudioPlayer<crate::sfx::pcm::StereoPcm>>,
             &mut PlaybackSettings,
             Option<&mut AudioSink>,
         ),
@@ -257,7 +260,13 @@ pub fn pause_menu(
         } else {
             None
         };
-        if let Some(action) = action {
+        let expired = crate::pause::options_timed_out(
+            page,
+            &mut duel.options_idle,
+            time.delta(),
+            action.is_some(),
+        );
+        if let Some(action) = action.or(expired.then_some(Action::Resume)) {
             if page == Page::Choices(3) && matches!(action, Action::Select) {
                 duel.control_slot = usize::from(keys.just_pressed(Comma));
                 duel.settings.layout = duel.layouts[duel.control_slot];
@@ -269,8 +278,12 @@ pub fn pause_menu(
                 duel.layouts[slot] = layout;
                 duel.cars[slot].set_pad_layout(layout);
             }
-            if before != duel.pause || before_settings != duel.settings {
-                sound = Some(matches!(action, Action::Select | Action::Resume));
+            if !expired {
+                sound = crate::pause::navigation_sound(
+                    page,
+                    action,
+                    before_settings.layout != duel.settings.layout,
+                );
             }
         }
     } else if keys.any_just_pressed([KeyP, NumpadEnter]) {
@@ -300,10 +313,15 @@ pub fn pause_menu(
         duel.wait_release = true;
     }
     if duel.pause.is_some() || before.is_some() {
-        for (entity, effect, music, mut playback, sink) in &mut audio {
+        for (entity, effect, music, engine_playing, mut playback, sink) in &mut audio {
             if effect {
                 commands.entity(entity).despawn();
                 continue;
+            }
+            if engine_playing && duel.pause.is_some() {
+                commands
+                    .entity(entity)
+                    .remove::<(AudioPlayer<crate::sfx::pcm::StereoPcm>, AudioSink)>();
             }
             playback.paused =
                 duel.pause.is_some() && !(music && matches!(duel.pause, Some(Page::Audio(_))));

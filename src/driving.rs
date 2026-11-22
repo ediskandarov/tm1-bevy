@@ -553,27 +553,22 @@ pub fn advance(
                     .find(|(key, pad, _)| keys.just_pressed(*key) || just_pressed(*pad))
                     .map(|(_, _, a)| a)
                 };
-                let action = if action.is_none() && matches!(page, Page::Audio(_) | Page::Controls)
-                {
-                    drive.options_idle += time.delta();
-                    (drive.options_idle >= Duration::from_secs_f64(18001. / 60.))
-                        .then_some(Action::Resume)
-                } else {
-                    action
-                };
-                if let Some(action) = action {
-                    drive.options_idle = Duration::ZERO;
-                    drive.pause_sound = match action {
-                        Action::Select | Action::Resume => Some(true),
-                        Action::Up | Action::Down if !matches!(page, Page::Controls) => Some(false),
-                        Action::Left | Action::Right
-                            if matches!(page, Page::Audio(0 | 1) | Page::Controls) =>
-                        {
-                            Some(false)
-                        }
-                        _ => None,
-                    };
+                let expired = crate::pause::options_timed_out(
+                    page,
+                    &mut drive.options_idle,
+                    time.delta(),
+                    action.is_some(),
+                );
+                if let Some(action) = action.or(expired.then_some(Action::Resume)) {
+                    let old_layout = drive.settings.layout;
                     drive.pause = crate::pause::navigate(page, action, &mut drive.settings);
+                    if !expired {
+                        drive.pause_sound = crate::pause::navigation_sound(
+                            page,
+                            action,
+                            old_layout != drive.settings.layout,
+                        );
+                    }
                     if page == Page::Controls && drive.pause.is_none() {
                         let layout = drive.settings.layout;
                         drive.player.set_pad_layout(layout);
