@@ -1,4 +1,16 @@
 //! Fixed-step vehicle, terrain, collision and projectile simulation for the JP arena.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct ActorSounds {
+    position: [i32; 3],
+    flags: i32,
+    impact: i32,
+    speed: i32,
+    gear_speed: i32,
+    gear: u8,
+    turbo: u8,
+}
+
 unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
     fn tm1_bind_level(level: i32);
@@ -1404,7 +1416,7 @@ unsafe extern "C" {
         seed: *mut u32,
         turbo: *mut u8,
         guns: *mut u8,
-        sounds: *mut [i32; 5],
+        sounds: *mut ActorSounds,
         audio: *mut std::ffi::c_void,
         next_audio: *mut std::ffi::c_void,
         before_primary_view: *mut usize,
@@ -1704,7 +1716,7 @@ pub struct CollisionScene {
     duel_winner: Option<usize>,
     turbo_requests: [u8; 2],
     gun_requests: [u8; 9],
-    car_sounds: [[i32; 5]; 9],
+    car_sounds: [ActorSounds; 9],
     audio: Vec<BattleEvent>,
     next_audio: Vec<BattleEvent>,
     before_primary_view: usize,
@@ -1752,7 +1764,7 @@ impl CollisionScene {
             duel_winner: None,
             duel_updated: [0; 2],
             gun_requests: [0; 9],
-            car_sounds: [[0; 5]; 9],
+            car_sounds: [ActorSounds::default(); 9],
             audio: Vec::new(),
             next_audio: Vec::new(),
             before_primary_view: 0,
@@ -1957,8 +1969,21 @@ impl CollisionScene {
         self.audio.iter().copied().chain(motor)
     }
 
+    pub fn car_engine_request(&self, slot: usize) -> (i32, [i32; 3]) {
+        let sound = self.car_sounds[slot];
+        (
+            engine_rev(sound.speed, sound.gear_speed, sound.gear, sound.turbo),
+            sound.position,
+        )
+    }
+
     pub fn car_sound_requests(&self, slot: usize) -> impl Iterator<Item = (CarSound, [i32; 3])> {
-        let [x, y, z, flags, impact] = self.car_sounds.get(slot).copied().unwrap_or_default();
+        let ActorSounds {
+            position: [x, y, z],
+            flags,
+            impact,
+            ..
+        } = self.car_sounds.get(slot).copied().unwrap_or_default();
         let [skid, crash] = contact_sounds(flags & 1 != 0, impact as i16);
         let contact = |(voice, level)| CarSound::Contact(voice, level);
         [
@@ -2012,7 +2037,7 @@ impl CollisionScene {
                 seed: *mut u32,
                 requests: *mut u8,
                 turbo: *mut u8,
-                sounds: *mut [i32; 5],
+                sounds: *mut ActorSounds,
                 audio: *mut std::ffi::c_void,
                 next_audio: *mut std::ffi::c_void,
                 updated: *mut u8,

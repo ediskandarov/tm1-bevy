@@ -483,7 +483,7 @@ pub fn update(
         let position = rival
             .map(|r| drive.opponents[r.slot].position())
             .unwrap_or_else(|| drive.player.position());
-        let mix = sequence.engine_mix[slot].filter(|_| deferred);
+        let mix = sequence.engine_mix[slot];
         ranked.push(Candidate {
             entity,
             order: *engine.order.get_or_insert_with(|| sequence.next()),
@@ -1296,20 +1296,26 @@ mod tests {
         let mut previous = None;
         for dx in [-500, 500] {
             let mut drive = world.resource_mut::<Drive>();
-            drive.listener = tm1_core::drive::SoundListener::new(
+            let listener = tm1_core::drive::SoundListener::new(
                 &drive.player,
                 &drive.camera,
                 Some([position[0] + dx, position[1], position[2], 0, 0]),
             );
-            let channels =
-                drive
-                    .listener
-                    .channels(position, drive.settings.effects_volume(), false);
+            let channels = listener.channels(position, drive.settings.effects_volume(), false);
             assert_ne!(channels[0], channels[1]);
             if let Some(old) = previous {
                 assert_eq!(channels[0], old);
             }
             previous = Some(channels[1]);
+            let range = listener.sound_range(position);
+            drive.sounds.push(crate::driving::BattleRequest::EngineRev(
+                slot + 1,
+                crate::driving::EngineMix {
+                    rev,
+                    channels,
+                    range,
+                },
+            ));
             world.run_system_once(update).unwrap();
             let mut voices = world
                 .query::<(Entity, &RivalEngine, &AudioPlayer<pcm::StereoPcm>)>()

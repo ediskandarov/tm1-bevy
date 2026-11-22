@@ -274,12 +274,12 @@ pub fn mix(
             let Ok((_, _, Some(engine), audible)) = playing.get(entity) else {
                 continue;
             };
-            if !sequence.engines_deferred[engine.slot] {
+            if let Some(mix) = sequence.engine_mix[engine.slot] {
+                engine.register.set(engine.pitch.register(mix.rev));
+            } else if !sequence.engines_deferred[engine.slot] {
                 engine
                     .register
                     .set(engine.pitch.register(duel.cars[engine.slot].rev()));
-            } else if let Some(mix) = sequence.engine_mix[engine.slot] {
-                engine.register.set(engine.pitch.register(mix.rev));
             }
             if rank < 24 {
                 if !audible {

@@ -164,13 +164,12 @@ pub(crate) fn battle_audio(
     recharge: usize,
     previous_view: &tm1_core::drive::SoundListener,
     split_screen: bool,
-    actor: impl Fn(usize) -> (Vehicle, i32, [i32; 3]),
+    car: impl Fn(usize) -> Vehicle,
     mut emit: impl FnMut(BattleRequest),
 ) {
     use tm1_core::drive::{BattleEvent, CarSound};
     let mut queue = BattleQueue::new();
     let mut emit = |request| queue.submit(request, &mut emit);
-    let car = |slot| actor(slot).0;
     for (index, event) in scene.battle_events(listener).enumerate() {
         let listener = if index < scene.events_before_primary_view() {
             previous_view
@@ -247,7 +246,7 @@ pub(crate) fn battle_audio(
                 }) {
                     emit(effect(sound));
                 }
-                let (_, rev, position) = actor(slot);
+                let (rev, position) = scene.car_engine_request(slot);
                 let (channels, range) = if split_screen {
                     ([i32::from(volume); 2], 0)
                 } else {
@@ -1005,18 +1004,9 @@ pub fn advance(
             false,
             |slot| {
                 if slot == 0 {
-                    (
-                        state.player.vehicle(),
-                        state.player.rev(),
-                        state.player.position(),
-                    )
+                    state.player.vehicle()
                 } else {
-                    let rival = &state.opponents[slot - 1];
-                    (
-                        rival.vehicle(),
-                        rival.engine_rev().unwrap_or_default(),
-                        rival.position(),
-                    )
+                    state.opponents[slot - 1].vehicle()
                 }
             },
             |request| state.sounds.push(request),

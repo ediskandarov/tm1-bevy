@@ -1161,14 +1161,23 @@ void arena_stop_car_sounds(int slot, const VECTOR3* pos)
     arena_gun_sound(slot, 0, pos);
 }
 
+struct ActorSounds {
+    int position[3], flags, impact, speed, gear_speed;
+    u8 gear, turbo;
+};
+
 // UASetSoundFlags runs after each actor update and before its death model.
-static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motion, CarCollision* collision)
+static void capture_car_sounds(int slot, struct ActorSounds* out, u8* flags, CarMotion* motion, CarCollision* collision, CarStats* stats)
 {
-    out[0] = motion->pos.vx;
-    out[1] = motion->pos.vy;
-    out[2] = motion->pos.vz;
-    out[3] = (flags[2] != 0) | ((flags[26] != 0) << 1) | ((flags[24] != 0) << 2);
-    out[4] = (s16)collision->unk12;
+    out->position[0] = motion->pos.vx;
+    out->position[1] = motion->pos.vy;
+    out->position[2] = motion->pos.vz;
+    out->flags = (flags[2] != 0) | ((flags[26] != 0) << 1) | ((flags[24] != 0) << 2);
+    out->impact = (s16)collision->unk12;
+    out->speed = motion->vel.vy;
+    out->gear_speed = stats->unkA8;
+    out->gear = flags[4];
+    out->turbo = flags[13];
     flags[26] = flags[24] = 0;
     tm1_record_actor(step_audio, slot);
 }
@@ -1177,7 +1186,7 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
 // so CheckVRMode can use the post-impact car state.
 // The original routines can change other cars during collision and weapon updates.
 u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio, void* next_audio, size_t* before_primary_view)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], struct ActorSounds sounds[9], void* audio, void* next_audio, size_t* before_primary_view)
 {
     tm1_bind_step_audio(audio);
     gun_requests = requests;
@@ -1231,7 +1240,7 @@ u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct Colli
                 cars[i].driving = driving;
         }
     }
-    capture_car_sounds(0, sounds[0], player.flags, &player.motion, &player.collision);
+    capture_car_sounds(0, &sounds[0], player.flags, &player.motion, &player.collision, &player.stats);
     tm1_start_death(&player, 1);
     tm1_begin_radar_reports();
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
@@ -1239,7 +1248,7 @@ u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct Colli
         AICarUpdate(&cars[i]);
         contact_phase(&player, &cars[i], 0, fields);
         if (cars[i].unk40)
-            capture_car_sounds(i + 1, sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision);
+            capture_car_sounds(i + 1, &sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision, &cars[i].stats);
         if (cars[i].stats.unk40 > 0)
             tm1_report_radar(&player, &cars[i].motion.pos, i);
         tm1_start_death(&cars[i], 0);
@@ -1275,7 +1284,7 @@ store_frame:
 // Both human actors update in slot order against the same collision graph.
 // The bottom viewport processes its display-time weapons after both actors.
 size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio, void* next_audio, u8 updated[2])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], struct ActorSounds sounds[9], void* audio, void* next_audio, u8 updated[2])
 {
     tm1_bind_step_audio(audio);
     memset(sounds, 0, 9 * sizeof(*sounds));
@@ -1307,7 +1316,7 @@ size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
             tm1_contact_setup(GetPlayerCs3D(i), &car->motion, &car->stats);
             contact_phase(car, NULL, 1, fields);
         }
-        capture_car_sounds(i, sounds[i], car->flags, &car->motion, &car->collision);
+        capture_car_sounds(i, &sounds[i], car->flags, &car->motion, &car->collision, &car->stats);
         tm1_start_death(car, 1);
     }
     arena_regenerate_pickups();

@@ -4468,8 +4468,9 @@ fn compare_battle_controls(
         };
     let observe_actor_sounds = |cpu: &mut Cpu, address: u32, player: bool| {
         let mut sounds = Vec::new();
+        let mut engine = None;
         if !player && cpu.ram[((address + 0x40) & 0x1fffff) as usize] == 0 {
-            return sounds;
+            return (sounds, engine);
         }
         let offset = if player { 0x388 } else { 0x444 };
         let position = [0, 4, 8].map(|i| cpu.word(address + offset + i) as i32);
@@ -4483,7 +4484,10 @@ fn compare_battle_controls(
                 }
                 let level = cpu.word(cpu.r[29] + 16) as i32;
                 let sound = match cpu.r[4] {
-                    0x4d..=0x59 => return, // Engine pitch is checked separately.
+                    0x4d..=0x59 => {
+                        assert!(engine.replace((level.clamp(0, 99), position)).is_none());
+                        return;
+                    }
                     0x6a => CarSound::Contact(ContactVoice::LightCrash, level),
                     0x6b => CarSound::Contact(ContactVoice::MediumCrash, level),
                     0x6c => CarSound::Contact(ContactVoice::HeavyCrash, level),
@@ -4498,7 +4502,8 @@ fn compare_battle_controls(
                 sounds.push((sound, position));
             },
         );
-        sounds
+        assert!(engine.is_some());
+        (sounds, engine)
     };
     let ticks = if vehicle == Vehicle::YellowJacket {
         1200
@@ -4665,7 +4670,14 @@ fn compare_battle_controls(
                 "fragment sprites at tick {tick} secondary {secondary}"
             );
         }
-        for (slot, expected) in actor_sounds.into_iter().enumerate() {
+        for (slot, (expected, engine)) in actor_sounds.into_iter().enumerate() {
+            if let Some(engine) = engine {
+                assert_eq!(
+                    r.scene.car_engine_request(slot),
+                    engine,
+                    "{level:?} tick {tick} slot {slot}"
+                );
+            }
             assert_eq!(
                 r.scene.car_sound_requests(slot).collect::<Vec<_>>(),
                 expected,

@@ -550,10 +550,7 @@ pub fn advance(
             13,
             &previous_view,
             true,
-            |slot| {
-                let car = &duel.cars[slot];
-                (car.vehicle(), car.rev(), car.position())
-            },
+            |slot| duel.cars[slot].vehicle(),
             |request| duel.sounds.push(request),
         );
         for ((camera, car), updated) in duel
