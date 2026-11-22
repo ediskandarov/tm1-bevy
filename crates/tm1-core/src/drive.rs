@@ -1227,6 +1227,7 @@ unsafe extern "C" {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BattleEvent {
+    MonsterSmash(usize),
     DropLaunch {
         weapon: u8,
         position: [i32; 3],
@@ -1257,6 +1258,10 @@ pub enum BattleEvent {
 #[unsafe(no_mangle)]
 extern "C" fn tm1_event_count(log: &Vec<BattleEvent>) -> usize {
     log.len()
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_crush(log: &mut Vec<BattleEvent>, slot: i32) {
+    log.push(BattleEvent::MonsterSmash(slot as usize));
 }
 #[unsafe(no_mangle)]
 extern "C" fn tm1_record_effect(log: &mut Vec<BattleEvent>, kind: i32, x: i32, y: i32, z: i32) {

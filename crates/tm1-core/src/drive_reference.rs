@@ -5196,6 +5196,115 @@ fn duel_machine_gun_sound_ids_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn hammerhead_duel_crush() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let data = disc.read("UA2PLAY/XARENA1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    for slot in 0..2 {
+        for charge in [5i16, 6] {
+            let target = 1 - slot;
+            let mut kinds = [Vehicle::Outlaw; 2];
+            kinds[slot] = Vehicle::Hammerhead;
+            let mut cars =
+                PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium)
+                    .unwrap();
+            let mut scene =
+                CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+            for (i, car) in cars.iter_mut().enumerate() {
+                vec3(
+                    &mut car.state,
+                    0x388,
+                    [2700, if i == slot { 2000 } else { 2450 }, 0],
+                );
+                vec3(&mut car.state, 0x3a0, [0; 3]);
+                vec3(&mut car.state, 0x3b8, [0; 3]);
+            }
+            cars[slot].state[0x47a..0x47c].copy_from_slice(&charge.to_le_bytes());
+            // Execute InitMonsterSmash on the two retail player records. Capture the
+            // audio queue and damage call at their endpoints, before SPU or debris work.
+            let mut cpu = Cpu::new(&exe);
+            let victim = PLAYER + cars[0].state.len() as u32;
+            cpu.put(PLAYER, &cars[slot].state);
+            cpu.put(victim, &cars[target].state);
+            put(&mut cpu, 0x8018c634 + 4 * target as u32, TAXI_CS);
+            put(&mut cpu, TAXI_CS + 0xc0, 1 + target as u32);
+            for endpoint in [0x80106d60, 0x80117a68] {
+                cpu.put(endpoint, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            }
+            let mut retail_sound = Vec::new();
+            let mut damage = None;
+            cpu.call_observed(
+                0x801188b4,
+                &[PLAYER, 1, victim, 1, 0],
+                0x80000080,
+                |cpu| match cpu.pc() {
+                    0x80106d60 => retail_sound.push([cpu.r[4], cpu.r[5], cpu.r[6]]),
+                    0x80117a68 => {
+                        assert_eq!(cpu.r[4], target as u32 + 1);
+                        damage = Some(cpu.r[5] as i32);
+                    }
+                    _ => {}
+                },
+            );
+            assert_eq!(damage, (charge >= 6).then_some(12));
+            let hp = cars[target].health().0;
+            let mut hit = false;
+            let mut separated = false;
+            let mut sounds = 0;
+            for tick in 0..60 {
+                let mut input = [Input::default(); 2];
+                input[slot] = Input {
+                    accelerate: true,
+                    missile: tick == 0,
+                    ..Default::default()
+                };
+                scene.step_duel(&mut cars, input, 3);
+                sounds += scene
+                    .audio
+                    .iter()
+                    .filter(|e| **e == BattleEvent::MonsterSmash(slot))
+                    .count();
+                if cars[slot].state[0xa0 + 27] != 0 {
+                    if !hit {
+                        assert_eq!(cars[target].state[0xa0 + 28], 1);
+                        assert_eq!(
+                            cars[target].health().0,
+                            hp - damage.unwrap(),
+                            "slot {slot} tick {tick}"
+                        );
+                        assert_eq!(
+                            cars[slot].weapon().1,
+                            (cpu.word(PLAYER + 0x478) >> 16) as i16
+                        );
+                        for offset in [0x138 + 0x2a, 0x138 + 0x2c, 0x138 + 0x30] {
+                            let start = ((PLAYER & 0x1fffff) as usize) + offset;
+                            assert_eq!(
+                                cars[slot].state[offset..offset + 2],
+                                cpu.ram[start..start + 2]
+                            );
+                        }
+                    }
+                    hit = true;
+                } else if hit {
+                    separated = true;
+                    assert_eq!(cars[target].state[0xa0 + 28], 0);
+                    break;
+                }
+            }
+            assert_eq!(hit, damage.is_some(), "slot {slot} charge {charge}");
+            assert_eq!(separated, hit);
+            assert_eq!(sounds, retail_sound.len());
+            if hit {
+                assert_eq!(retail_sound, [[0x36, 0, 0]]);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn shared_duel_crossfire() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();

@@ -31,6 +31,10 @@ Wrecks and special-weapon impacts use the same eight-frame flame sequence. It re
 
 The main camera captures the particle pool immediately after animation. Vehicle updates can then create effects that appear in the mirror or second player's view during the same update. The secondary view skips age one of the last animation loop. Both views use integer projection, the initial sprite width for size, the current animation frame for UVs and the per-effect depth bias. A JP packet comparison follows muzzle flash, smoke, steam, ground fire, blue explosion and large explosion from creation to expiry. It checks visibility, all four screen corners, UVs, texture page, palette, primitive type and ordering-table bucket. The Thumper capture on Metal uses `--level warehouse --car thumper --demo-special-screenshot local/warehouse-thumper-views.png 16`.
 
+## Hammerhead in a duel
+
+An Arena replay drives Hammerhead over Outlaw with each player slot taking a turn as the attacker. It runs the JP InitMonsterSmash routine alongside the native encounter with five and six units of special ammo. Six units trigger the attack, spend the charge, and take 12 HP from Outlaw on Medium. The test compares the crush radius and lift, checks both cars’ crush flags through separation, and verifies the victim material ID passed to carTakeHit. The JP routine sends sound ID 0x36 with zero distance and pan. Both battle mixers now request Hammerhead’s program 45 centered, preserving any active instance of the sound.
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.

@@ -151,6 +151,14 @@ pub(crate) fn battle_audio(
         };
 
         match event {
+            BattleEvent::MonsterSmash(slot) => {
+                let id = if slot == 0 { 5 } else { 11 + slot };
+                emit(centered(
+                    id,
+                    Some(ExclusiveVoice::SpecialLaunch(Vehicle::Hammerhead)),
+                    99,
+                ));
+            }
             BattleEvent::Turbo(on) => emit(if on {
                 BattleRequest::Turbo
             } else {

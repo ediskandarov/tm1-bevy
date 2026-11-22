@@ -21,6 +21,14 @@ extern void tm1_record_drop_launch(void*, int, int, int, int);
 extern void tm1_record_weapon_impact(void*, int, int, int, int);
 extern void tm1_record_hover(void*, int, int, int, int);
 
+extern void tm1_record_crush(void*, int);
+
+void arena_crush_sound(int slot)
+{
+    if (step_audio)
+        tm1_record_crush(step_audio, slot);
+}
+
 void arena_record_effect(const VECTOR3* p, int kind)
 {
     if (step_audio)

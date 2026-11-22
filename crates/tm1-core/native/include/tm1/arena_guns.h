@@ -88,6 +88,7 @@ void arena_record_effect(const VECTOR3* pos, int kind);
 void arena_drop_launch_sound(const VECTOR3* pos, int weapon);
 void arena_weapon_impact_sound(const VECTOR3* pos, int weapon);
 void arena_record_hover(const VECTOR3* pos, int flags);
+void arena_crush_sound(int slot);
 void arena_special_effect(VECTOR3* pos, s32 owner);
 
 void arena_regenerate_pickups(void);

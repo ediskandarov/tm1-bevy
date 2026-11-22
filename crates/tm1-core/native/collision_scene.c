@@ -1119,8 +1119,7 @@ void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unus
         return;
     }
 
-    arena_special_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos,
-        isPlayerA ? 1 + PLAYER_CAR(carA)->playerIdx : 50 + AI_CAR(carA)->playerIdx);
+    arena_crush_sound(isPlayerA ? PLAYER_CAR(carA)->playerIdx : 1 + AI_CAR(carA)->playerIdx);
     wa->ammo[WEAPON_SPECIAL] = wa->ammo[WEAPON_SPECIAL] - 6;
     if (isPlayerB) {
         cs = GetPlayerCs3D(idx);
