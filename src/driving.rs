@@ -489,6 +489,7 @@ impl Drive {
                 heli.update(&self.player, 3, true);
             }
             self.camera.update(&self.player, true);
+            self.refresh_listener();
             self.player.set_rng_state(ticks());
             self.windshield_holes = self.player.windshield_holes();
             self.lost_life = None;
@@ -497,7 +498,12 @@ impl Drive {
             self.lost_life = Some(elapsed);
         }
     }
+    fn refresh_listener(&mut self) {
+        self.listener =
+            tm1_core::drive::SoundListener::new(&self.player, &self.camera, self.helicopter_pose());
+    }
     pub fn begin_battle(&mut self, ticks: u32) {
+        self.refresh_listener();
         self.battle_seed = ticks;
         self.player.set_rng_state(ticks);
         self.windshield_holes = self.player.windshield_holes();
@@ -617,8 +623,7 @@ pub fn advance(
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
         let seed = drive.battle_seed;
-        drive.player.set_rng_state(seed);
-        drive.windshield_holes = drive.player.windshield_holes();
+        drive.begin_battle(seed);
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
@@ -844,11 +849,7 @@ pub fn advance(
                 }
             }
         }
-        state.listener = tm1_core::drive::SoundListener::new(
-            &state.player,
-            &state.camera,
-            state.helicopter_pose(),
-        );
+        state.refresh_listener();
         state.contacts.radar.display(state.radar);
         let prepared = state
             .contacts
@@ -1343,6 +1344,7 @@ mod tests {
             let mut drive = world.resource_mut::<Drive>();
             drive.radar = false;
             drive.list_cars = true;
+            drive.camera.mode = tm1_core::drive::CarView::Far;
             // Inject the shell victory event at the end of its return delay.
             drive.lives = 2;
             drive.opponents.clear();
@@ -1351,6 +1353,12 @@ mod tests {
             crate::transition::complete(&mut world);
             let drive = world.resource::<Drive>();
             assert_eq!(drive.player.level(), level);
+            let expected = tm1_core::drive::SoundListener::new(&drive.player, &drive.camera, None);
+            assert_eq!(drive.camera.mode, tm1_core::drive::CarView::Far);
+            assert_eq!(
+                drive.listener.sound_range(drive.player.position()),
+                expected.sound_range(drive.player.position())
+            );
             assert!(!drive.radar && drive.list_cars);
             assert_eq!(drive.lives, 2);
             assert_eq!(drive.opponents.len(), count);

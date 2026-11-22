@@ -3753,62 +3753,78 @@ fn rooftop_boss_handoff_matches_retail_after_three_reserved_starts() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn campaign_player_carryover_matches_retail() {
-    let mut r = Reference::new();
-    let mut player = r.player;
-    r.cpu.put(0x801502d4, &[8, 0, 224, 3, 1, 0, 2, 36]);
-    put(&mut r.cpu, 0x8018bf9c, 60);
-    while let Some(level) = player.level().next() {
-        player.state[0x178..0x17c].copy_from_slice(&17i32.to_le_bytes());
-        player.state[0x460..0x464].copy_from_slice(&2u32.to_le_bytes());
-        player.state[0x468..0x46a].copy_from_slice(&9i16.to_le_bytes());
-        player.state[0x47a..0x47c].copy_from_slice(&1i16.to_le_bytes());
-        player.state[0x48e..0x490].copy_from_slice(&110i16.to_le_bytes());
-        let points = match level {
-            Level::Warehouse => 0x801262ec,
-            Level::Freeway => 0x801268f8,
-            Level::CityPark => 0x80127694,
-            Level::Cyburbia => 0x801281b8,
-            Level::Rooftops => 0x8012b5a4,
-            Level::Arena | Level::Arena5 => unreachable!(),
-        };
-        r.cpu.put(0x80170238, &3i16.to_le_bytes());
-        r.cpu.put(0x8017023a, &20i16.to_le_bytes());
-        r.cpu.call(points, &[]);
-        put(&mut r.cpu, 0x8018c3b4, level as u32);
-        r.cpu.put(PLAYER, &player.state);
-        r.cpu.random_state = player.seed;
-        r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 0]);
-        player = player.for_next_stage(level);
-        let base = (PLAYER & 0x1fffff) as usize;
-        for (i, v) in player.state.iter().enumerate() {
-            assert_eq!(*v, r.cpu.ram[base + i], "{level:?} player offset {i:x}");
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    for vehicle in Vehicle::ROSTER {
+        // Warehouse has a matching model for each player in its vehicle-specific database.
+        let mut r = Reference::on_difficulty(vehicle, false, Level::Warehouse, Difficulty::Hard);
+        let mut player =
+            PlayerVehicle::contest(&exe, vehicle, Level::Arena, 1, Difficulty::Hard).unwrap();
+        r.cpu.put(0x801502d4, &[8, 0, 224, 3, 1, 0, 2, 36]);
+        put(&mut r.cpu, 0x8018bf9c, 60);
+        for (level, points, fields) in [
+            (Level::Warehouse, 0x801262ec, 1),
+            (Level::Freeway, 0x801268f8, 2),
+            (Level::CityPark, 0x80127694, 3),
+            (Level::Cyburbia, 0x801281b8, 4),
+            (Level::Rooftops, 0x8012b5a4, 5),
+            (Level::Arena5, 0x80125bc0, 3),
+        ] {
+            for tick in 0..32 {
+                player.step(
+                    Input {
+                        accelerate: true,
+                        left: tick > 15,
+                        fire_guns: true,
+                        ..Default::default()
+                    },
+                    fields,
+                );
+            }
+            player.state[0x178..0x17c].copy_from_slice(&17i32.to_le_bytes());
+            player.state[0x460..0x464].copy_from_slice(&2u32.to_le_bytes());
+            player.state[0x468..0x46a].copy_from_slice(&9i16.to_le_bytes());
+            player.state[0x47a..0x47c].copy_from_slice(&1i16.to_le_bytes());
+            player.state[0x48e..0x490].copy_from_slice(&110i16.to_le_bytes());
+            r.cpu.put(0x80170238, &3i16.to_le_bytes());
+            r.cpu.put(0x8017023a, &20i16.to_le_bytes());
+            r.cpu.call(points, &[]);
+            put(&mut r.cpu, 0x8018c3b4, level as u32);
+            r.cpu.put(PLAYER, &player.state);
+            r.cpu.random_state = player.seed;
+            r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 0]);
+            player = player.for_next_stage(level);
+            let base = (PLAYER & 0x1fffff) as usize;
+            for (i, v) in player.state.iter().enumerate() {
+                assert_eq!(
+                    *v,
+                    r.cpu.ram[base + i],
+                    "{vehicle:?} {level:?} player offset {i:x}"
+                );
+            }
+            assert_eq!(player.seed, r.cpu.random_state);
+            let initial = player.state;
+            player.state.fill(0);
+            player.reset();
+            assert_eq!(player.state, initial);
+            player.step(Input::default(), fields);
+            r.cpu.put(0x80170238, &i16::from(fields).to_le_bytes());
+            r.cpu
+                .put(0x8017023a, &(60 / i16::from(fields)).to_le_bytes());
+            player.state[0x178..0x17c].copy_from_slice(&(-5i32).to_le_bytes());
+            r.cpu.put(PLAYER, &player.state);
+            r.cpu.random_state = player.seed;
+            r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 1]);
+            r.scene.respawn_player(&mut player);
+            for (i, v) in player.state.iter().enumerate() {
+                assert_eq!(
+                    *v,
+                    r.cpu.ram[base + i],
+                    "{vehicle:?} {level:?} new life offset {i:x}"
+                );
+            }
+            assert_eq!(player.seed, r.cpu.random_state);
         }
-        assert_eq!(player.seed, r.cpu.random_state);
-        let initial = player.state;
-        player.state.fill(0);
-        player.reset();
-        assert_eq!(player.state, initial);
-        let fields = match level {
-            Level::Warehouse => 1,
-            Level::Freeway => 2,
-            Level::CityPark => 3,
-            Level::Cyburbia => 4,
-            Level::Rooftops => 5,
-            _ => unreachable!(),
-        };
-        player.step(Input::default(), fields);
-        r.cpu.put(0x80170238, &i16::from(fields).to_le_bytes());
-        r.cpu
-            .put(0x8017023a, &(60 / i16::from(fields)).to_le_bytes());
-        player.state[0x178..0x17c].copy_from_slice(&(-5i32).to_le_bytes());
-        r.cpu.put(PLAYER, &player.state);
-        r.cpu.random_state = player.seed;
-        r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 1]);
-        r.scene.respawn_player(&mut player);
-        for (i, v) in player.state.iter().enumerate() {
-            assert_eq!(*v, r.cpu.ram[base + i], "{level:?} new life offset {i:x}");
-        }
-        assert_eq!(player.seed, r.cpu.random_state);
     }
 }
 
