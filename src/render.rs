@@ -80,6 +80,7 @@ pub struct Arena {
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
     body_materials: [Handle<ColorMaterial>; 3],
     mesh: Handle<Mesh>,
+    windshield_mesh: Handle<Mesh>,
     main_view: ViewMeshes,
     rear_view: ViewMeshes,
     center: Vec3,
@@ -225,6 +226,7 @@ impl Arena {
             tiles,
             body_materials: default(),
             mesh: Handle::default(),
+            windshield_mesh: Handle::default(),
             main_view: default(),
             rear_view: default(),
             center,
@@ -529,6 +531,16 @@ pub fn setup(
         }),
         RenderLayers::layer(1),
     ));
+    if duel.is_none() {
+        arena.windshield_mesh = meshes.add(Batch::default().mesh());
+        commands.spawn((
+            crate::campaign::StageEntity,
+            Mesh2d(arena.windshield_mesh.clone()),
+            MeshMaterial2d(blend.clone()),
+            Transform::from_xyz(0., 0., -1.5),
+            NoFrustumCulling,
+        ));
+    }
     arena.mesh = meshes.add(Batch::default().mesh());
     commands.spawn((
         crate::campaign::StageEntity,
@@ -964,7 +976,9 @@ pub fn update(
         .normalize();
     }
     let mut screen_batch = Batch::default();
-    draw_instruments(&mut screen_batch, &arena, &drive, &window);
+    let mut windshield = Batch::default();
+    draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
+    windshield.write(&mut meshes, &arena.windshield_mesh);
     if arena.radar {
         draw_radar(&mut screen_batch, &arena, &drive, &window);
     }
@@ -1636,6 +1650,7 @@ fn health_colors(tier: u8) -> [[u8; 3]; 2] {
 }
 fn draw_instruments(
     batch: &mut Batch,
+    windshield: &mut Batch,
     arena: &Arena,
     drive: &crate::driving::Drive,
     window: &Window,
@@ -1664,8 +1679,14 @@ fn draw_instruments(
     let white = [128; 3];
     let green = [36, 120, 36];
     if cockpit && drive.player.vehicle() != tm1_core::drive::Vehicle::MrGrimm {
+        // Reverse ordering-table traversal draws the glass before the cockpit panels.
+        let mut glass = Instruments {
+            batch: windshield,
+            arena,
+            size: hud.size,
+        };
         for &[x, y] in &drive.windshield_holes[..holes] {
-            hud.sprite(x, y, icons.hole, white, true);
+            glass.sprite(x, y, icons.hole, white, true);
         }
     } else {
         hud.bar([216, 190, 90, 10], [[10; 3]; 2]);
@@ -1840,6 +1861,13 @@ impl Batch {
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
     }
     fn write(self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
+        if self.positions.is_empty()
+            && meshes
+                .get(handle)
+                .is_some_and(|mesh| mesh.count_vertices() == 0)
+        {
+            return;
+        }
         if let Some(mut mesh) = meshes.get_mut(handle) {
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
