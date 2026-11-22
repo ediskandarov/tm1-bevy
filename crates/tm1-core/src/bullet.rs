@@ -19,7 +19,7 @@ pub enum Primitive {
     },
 }
 
-/// Project one of the bullet types launched by the cars and hover police.
+/// Project one of the bullet types launched by the cars and hover police. The bucket is shared by all vertices.
 pub fn project(
     kind: i32,
     life: i32,
@@ -27,10 +27,11 @@ pub fn project(
     tail: [i32; 3],
     focal: [i32; 2],
     center: [i32; 2],
-) -> Option<Primitive> {
+) -> Option<(u32, Primitive)> {
     if life <= 0 || !(1..=32000).contains(&head[2]) || tail[2] <= 0 {
         return None;
     }
+    let bucket = (head[2] as u32) >> 3;
     let screen = |p: [i32; 3]| {
         [
             p[0].wrapping_mul(focal[0]) / p[2],
@@ -60,13 +61,16 @@ pub fn project(
             ),
             _ => return None,
         };
-        return Some(Primitive::Sprite {
-            center: a,
-            radius: size * focal[0] / head[2],
-            group: group as usize,
-            frame: frame as usize,
-            tint,
-        });
+        return Some((
+            bucket,
+            Primitive::Sprite {
+                center: a,
+                radius: size * focal[0] / head[2],
+                group: group as usize,
+                frame: frame as usize,
+                tint,
+            },
+        ));
     }
     let b = screen(tail);
     if !inside(b) {
@@ -80,10 +84,13 @@ pub fn project(
         } else {
             [[v; 3], [w >> 1, w >> 1, w]]
         };
-        return Some(Primitive::Line {
-            points: [a, b],
-            colors,
-        });
+        return Some((
+            bucket,
+            Primitive::Line {
+                points: [a, b],
+                colors,
+            },
+        ));
     }
     let d = (a[1] - b[1]) / 12 + 1;
     let e = (a[0] - b[0]) / 12;
@@ -92,8 +99,11 @@ pub fn project(
     } else {
         [[v, v >> 1, v >> 1], [v, v >> 1, v >> 1], [v >> 1, 0, 0]]
     };
-    Some(Primitive::Triangle {
-        points: [[a[0] - d, a[1] + e], [a[0] + d, a[1] - e], b],
-        colors,
-    })
+    Some((
+        bucket,
+        Primitive::Triangle {
+            points: [[a[0] - d, a[1] + e], [a[0] + d, a[1] - e], b],
+            colors,
+        },
+    ))
 }

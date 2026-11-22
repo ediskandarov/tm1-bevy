@@ -2738,7 +2738,9 @@ fn bullet_draw_packets_original() {
                 let [r, g, b, _] = cpu.word(packet + at).to_le_bytes();
                 [r, g, b]
             };
-            match project(kind, life, head, tail, focal, center).unwrap() {
+            let (bucket, primitive) = project(kind, life, head, tail, focal, center).unwrap();
+            assert_eq!(cpu.word(ot + 4 * bucket) & 0xffffff, packet & 0xffffff);
+            match primitive {
                 Primitive::Line { points, colors } => {
                     assert_eq!(points, [8, 16].map(xy));
                     assert_eq!(colors, [4, 12].map(color));
@@ -2774,6 +2776,61 @@ fn bullet_draw_packets_original() {
                     assert_eq!(sprite.texture.page, (cpu.word(packet + 20) >> 16) as u16);
                 }
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn bullet_clipping_matches_retail_ordering_table() {
+    let mut r = Reference::new();
+    let cpu = &mut r.cpu;
+    let (center, _) = identity_projection(cpu);
+    let lens = 204;
+    for getter in [0x80109e3c, 0x80109e74] {
+        put(cpu, getter, 0x03e00008);
+        put(cpu, getter + 4, 0x24020000 | lens as u32);
+    }
+    let ot = 0x80010000;
+    let bullet = 0x80198c28;
+    let packet = RENDER_SCRATCH + 0x100;
+    put(cpu, RENDER_SCRATCH, ot);
+    put(cpu, RENDER_SCRATCH + 12, packet + 256);
+    let middle = [0, 0, lens];
+    let mut cases = Vec::new();
+    for z in [-1, 0, 1, 7, 8, 9, 31999, 32000, 32001] {
+        cases.push(([0, 0, z], middle));
+        cases.push((middle, [0, 0, z]));
+    }
+    for axis in 0..2 {
+        for edge in [-3 * center[axis], 3 * center[axis]] {
+            for offset in [-1, 0, 1] {
+                let mut endpoint = middle;
+                endpoint[axis] = edge + offset;
+                cases.push((endpoint, middle));
+                cases.push((middle, endpoint));
+            }
+        }
+    }
+    for kind in [0, 4, 17] {
+        for &(head, tail) in &cases {
+            for (i, n) in head.into_iter().chain(tail).enumerate() {
+                put(cpu, bullet + 4 * i as u32, n as u32);
+            }
+            cpu.put(bullet + 0x34, &[kind as u8]);
+            put(cpu, bullet + 0x28, 4);
+            put(cpu, RENDER_SCRATCH + 8, packet);
+            cpu.put(ot, &[0xff; 4096 * 4]);
+            cpu.call(0x8010d434, &[RENDER_SCRATCH, 0]);
+            let buckets: Vec<_> = (0..4096)
+                .filter(|&i| cpu.word(ot + 4 * i) & 0xffffff == packet & 0xffffff)
+                .collect();
+            let projected = crate::bullet::project(kind, 4, head, tail, [lens; 2], center);
+            assert_eq!(
+                buckets,
+                projected.map(|(bucket, _)| bucket).as_slice(),
+                "kind {kind}, head {head:?}, tail {tail:?}"
+            );
         }
     }
 }

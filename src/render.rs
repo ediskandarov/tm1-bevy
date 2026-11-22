@@ -1437,11 +1437,11 @@ fn draw_view(
         }
     }
     let white = arena.uv(0, Vec2::ZERO);
-    let quad = |batch: &mut Batch, points: [Vec2; 4], depths: [f32; 4], colors: [[f32; 4]; 2]| {
+    let quad = |batch: &mut Batch, points: [Vec2; 4], depth: f32, colors: [[f32; 4]; 2]| {
         for &i in indices(4) {
-            let xy = points[i] * (depths[i] / focal);
+            let xy = points[i] * (depth / focal);
             batch.push(
-                eye + forward * depths[i] + right * xy.x + up * xy.y,
+                eye + forward * depth + right * xy.x + up * xy.y,
                 white,
                 colors[i / 2],
             );
@@ -1548,7 +1548,7 @@ fn draw_view(
             quad(
                 &mut solids,
                 [a - normal, a + normal, b - normal, b + normal],
-                [depth.max(near + 0.01); 4],
+                depth.max(near + 0.01),
                 colors,
             );
         }
@@ -1557,18 +1557,15 @@ fn draw_view(
         let head = camera_point([x, y, z]);
         let tail = camera_point([px, py, pz]);
         let camera_coords = |p: Vec3| [p.x as i32, -p.y as i32, p.z as i32];
-        let Some(primitive) = tm1_core::bullet::project(
-            kind,
-            life,
-            camera_coords(head),
-            camera_coords(tail),
-            [lens; 2],
-            center,
-        ) else {
+        let head = camera_coords(head);
+        let Some((bucket, primitive)) =
+            tm1_core::bullet::project(kind, life, head, camera_coords(tail), [lens; 2], center)
+        else {
             continue;
         };
         let screen = |[x, y]: [i32; 2]| Vec2::new(x as f32, -y as f32) * pixel_scale;
-        let vertex = |point: Vec2, depth: f32| {
+        let depth = ((bucket * 8) as f32).max(near + 0.01);
+        let vertex = |point: Vec2| {
             eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
         };
         let rgb = |[r, g, b]: [u8; 3]| Color::srgb_u8(r, g, b).to_linear().to_f32_array();
@@ -1580,15 +1577,13 @@ fn draw_view(
                 quad(
                     &mut solids,
                     [a - normal, a + normal, b - normal, b + normal],
-                    [head.z, head.z, tail.z, tail.z],
+                    depth,
                     colors.map(rgb),
                 );
             }
             Primitive::Triangle { points, colors } => {
-                for ((point, color), depth) in
-                    points.into_iter().zip(colors).zip([head.z, head.z, tail.z])
-                {
-                    solids.push(vertex(screen(point), depth), white, rgb(color));
+                for (point, color) in points.into_iter().zip(colors) {
+                    solids.push(vertex(screen(point)), white, rgb(color));
                 }
             }
             Primitive::Sprite {
@@ -1615,7 +1610,7 @@ fn draw_view(
                         center[1] + if i < 2 { -radius } else { radius },
                     ];
                     batch.push(
-                        vertex(screen(point), head.z),
+                        vertex(screen(point)),
                         arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                         [r, g, b, 1.],
                     );

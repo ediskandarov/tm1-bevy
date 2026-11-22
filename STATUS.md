@@ -47,7 +47,7 @@ A successful forward launch by Thumper or Minion plays the flamethrower and vehi
 
 The main view draws bullets before their movement step. The rear-view mirror and the second duel camera use the updated positions and lifetimes, following RT.c. Machine guns draw two-color tracers. Darkside and Crimson Fury draw tapered triangles. Sweet Tooth, Yellow Jacket, Pit Viper, Mr. Grimm and Minion use the weapon sprites stored in the current stage database. The two-frame Pit Viper sequence repeats across four animation slots.
 
-A disc-backed test executes the original bullet renderer for ten projectile types over eight successive lifetime values. It compares the emitted PlayStation primitive coordinates, vertex colors, UVs, texture page and palette with the port. The special-launch replay also checks both camera snapshots against the live JP bullet record. The Metal capture at `local/warehouse-grimm-shot.png` shows the skull ahead of the motorcycle on update seven.
+A disc-backed test executes the original bullet renderer for ten projectile types over eight successive lifetime values. It compares the emitted PlayStation primitive coordinates, vertex colors, UVs, texture page and palette with the port. Bullet meshes use one depth bucket for the entire tracer, triangle or sprite. A separate JP ordering-table test exercises head and tail clipping at the viewport margins, near plane and far limit. The special-launch replay also checks both camera snapshots against the live JP bullet record. The Metal capture at `local/warehouse-grimm-shot.png` shows the skull ahead of the motorcycle on update seven.
 
 ## Vehicle debris
 
