@@ -284,7 +284,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
             start_trail(m, kind == UA_CORVETTE ? 0xcdcdff : 0x808080);
             if (i == 0 && kind != UA_BOSS_CAR) {
                 pad->ammo[WEAPON_SPECIAL] -= cost;
-                arena_effect(&m->pos, owner < 50 ? 10 : 18 + owner - 50);
+                arena_special_effect(&m->pos, owner);
             }
         }
     }

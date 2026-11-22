@@ -1112,7 +1112,8 @@ void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unus
         return;
     }
 
-    arena_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos, isPlayerA ? 10 : 18 + AI_CAR(carA)->playerIdx);
+    arena_special_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos,
+        isPlayerA ? 1 + PLAYER_CAR(carA)->playerIdx : 50 + AI_CAR(carA)->playerIdx);
     wa->ammo[WEAPON_SPECIAL] = wa->ammo[WEAPON_SPECIAL] - 6;
     if (isPlayerB) {
         cs = GetPlayerCs3D(idx);
@@ -1452,6 +1453,13 @@ uint64_t tm1_arena_switch_states(const CollisionScene* scene)
             states |= (uint64_t)scene->arena_switches[i]->sel << (8 * i);
     return states;
 }
+// The first rival sample belongs to player two in a split-screen bank.
+void arena_special_effect(VECTOR3* pos, s32 owner)
+{
+    s32 effect = owner >= 50 ? 18 + owner - 50 : (owner == 2 ? 18 : 10);
+    arena_effect(pos, effect);
+}
+
 void arena_effect(VECTOR3* pos, s32 kind)
 {
     if (!current)

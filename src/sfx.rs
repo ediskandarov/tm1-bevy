@@ -1,3 +1,4 @@
+pub mod duel;
 use anyhow::Result;
 use bevy::{
     audio::{AudioSinkPlayback, Volume},
@@ -21,9 +22,11 @@ pub struct Sample {
 }
 impl Sample {
     pub fn load(bank: &[u8], prog: usize, engine: bool) -> Result<Self> {
+        Ok(Self::from_tones(program(bank, prog)?, engine))
+    }
+    fn from_tones(tones: Vec<tm1_assets::sound::Tone>, engine: bool) -> Self {
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
-        let tones = program(bank, prog)?;
         let mut mix = Vec::<[f32; 2]>::new();
         for t in tones {
             let note = if engine {
@@ -49,11 +52,11 @@ impl Sample {
                 out[1] += v * pan.min(1.);
             }
         }
-        Ok(Self {
+        Self {
             mix,
             range: engine_range,
             loop_start: engine_loop,
-        })
+        }
     }
     pub fn wave(&self, pan: f32) -> Result<AudioSource> {
         let pcm: Vec<_> = self
@@ -71,32 +74,26 @@ pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
     2f32.powf(pitch_steps as f32 / (128. * 12.))
 }
 
+fn battle_programs(
+    vehicle: tm1_core::drive::Vehicle,
+    opponents: &[tm1_core::drive::Vehicle],
+) -> impl Iterator<Item = usize> + '_ {
+    use tm1_core::drive::Vehicle::SweetTooth;
+    let (engine, special) = vehicle.sound_programs();
+    [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
+        .into_iter()
+        .chain(opponents.iter().map(|&car| car.sound_programs().1))
+        .chain([52, 53, 27, 38, 36])
+        .chain(tm1_core::drive::ContactVoice::PROGRAMS)
+        .chain([28, SweetTooth.sound_programs().1, 57, 58])
+}
+
 impl Sounds {
     fn register(&mut self, assets: &mut Assets<AudioSource>) {
         self.voices = std::mem::take(&mut self.sources)
             .into_iter()
             .map(|s| assets.add(s))
             .collect();
-    }
-    pub fn start_duel(mut self, world: &mut World, gain: f32) {
-        let mut assets = world.resource_mut::<Assets<AudioSource>>();
-        self.register(&mut assets);
-        let (second, range, loop_start) = self.rival_engines.pop().expect("second player engine");
-        let engines = [
-            (self.voices[2].clone(), self.engine_range, self.engine_loop),
-            (assets.add(second), range, loop_start),
-        ];
-        for (slot, (source, range, start)) in engines.into_iter().enumerate() {
-            world.spawn((
-                crate::campaign::StageEntity,
-                DuelEngine { slot, range },
-                AudioPlayer::new(source),
-                PlaybackSettings::LOOP
-                    .with_start_position(start)
-                    .with_volume(Volume::Linear(0.28 * gain)),
-            ));
-        }
-        world.insert_resource(self);
     }
     pub fn menu_voice(&self, select: bool) -> AudioPlayer {
         self.centered(self.voices.len() / 5 - 2 + usize::from(select))
@@ -131,16 +128,7 @@ impl Sounds {
         let mut sources = Vec::new();
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
-        use tm1_core::drive::Vehicle::SweetTooth;
-        let (engine, special) = vehicle.sound_programs();
-        for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
-            .into_iter()
-            .chain(opponents.iter().map(|&car| car.sound_programs().1))
-            .chain([52, 53, 27, 38, 36])
-            .chain(tm1_core::drive::ContactVoice::PROGRAMS)
-            .chain([28, SweetTooth.sound_programs().1, 57, 58])
-            .enumerate()
-        {
+        for (id, prog) in battle_programs(vehicle, opponents).enumerate() {
             let sample = Sample::load(&bank, prog, id == 0)?;
             if id == 0 {
                 engine_range = sample.range;
@@ -368,10 +356,4 @@ pub fn update(
             }
         }
     }
-}
-
-#[derive(Component)]
-pub struct DuelEngine {
-    pub slot: usize,
-    pub range: f32,
 }

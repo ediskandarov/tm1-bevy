@@ -258,6 +258,7 @@ fn main() -> Result<()> {
         (
             duel::pause_menu,
             duel::advance,
+            sfx::duel::mix,
             render::duel_view,
             duel::round_menu,
         )

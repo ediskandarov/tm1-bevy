@@ -437,7 +437,7 @@ static void fireProjectileSpecial(int kind, int owner, CarStats* stats, CarMotio
             d.vz -= 16;
         s_create_bullet(owner, &dir, &d, special.projectile, special.damage, special.life, 0);
         pad->ammo[WEAPON_SPECIAL] -= special.cost;
-        arena_effect(&d, owner < 50 ? 10 : 18 + owner - 50);
+        arena_special_effect(&d, owner);
     }
     pad->fireDelay = special.delay;
     flags[9] = 1;
@@ -477,7 +477,7 @@ static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player, int slot)
     if (weapon->ammo[WEAPON_SPECIAL] >= 6 && launch_taser(player, slot)) {
         weapon->ammo[WEAPON_SPECIAL] -= player ? 6 : 3;
         VECTOR3* origin = player ? &GetPlayerInfo(slot)->motion.pos : &GetAICarInfo(slot)->motion.pos;
-        arena_effect(origin, player ? 10 : 18 + slot);
+        arena_special_effect(origin, player ? 1 + slot : 50 + slot);
     }
     weapon->fireDelay = 20;
     flags[9] = 1;
@@ -501,7 +501,7 @@ static void fireBossSpecial(int owner, CarStats* stats, CarMotion* motion, CarWe
         launch_taser(player, slot);
         arena_launch_flame(player ? GetPlayerCs3D(slot) : GetAICs3D(slot), 1);
         weapon->ammo[WEAPON_SPECIAL] -= cost;
-        arena_effect(&motion->pos, player ? 10 : 18 + slot);
+        arena_special_effect(&motion->pos, owner);
     }
     weapon->fireDelay = 20;
     flags[9] = 1;
@@ -676,7 +676,7 @@ void arena_update_weapons(Car* car, u8 player)
             if (pad->ammo[WEAPON_SPECIAL] >= 5) {
                 arena_launch_flame(player ? GetPlayerCs3D(p->playerIdx) : GetAICs3D(ai->playerIdx), 1);
                 pad->ammo[WEAPON_SPECIAL] -= 5;
-                arena_effect(&motion->pos, player ? 10 : 18 + ai->playerIdx);
+                arena_special_effect(&motion->pos, owner);
             }
             pad->fireDelay = 20;
             flags[9] = 1;

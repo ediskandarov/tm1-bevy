@@ -44,6 +44,13 @@ pub struct Duel {
     abort_elapsed: Duration,
     wait_release: bool,
     layouts: [u8; 2],
+    pub(crate) sounds: Vec<crate::sfx::duel::Request>,
+}
+
+impl Duel {
+    pub(crate) fn finished(&self) -> bool {
+        self.winner.is_some()
+    }
 }
 
 pub fn start(
@@ -95,7 +102,12 @@ pub fn start(
         &scene,
     )?;
     let music = crate::music::track(disc, crate::music::opening_track(level, true))?;
-    let sounds = crate::sfx::Sounds::load(disc, kinds[0], &kinds[1..])?;
+    let bank = disc.read("SND/UACORE.VAB")?;
+    let sounds = crate::sfx::duel::DuelBank::load(
+        &bank,
+        kinds,
+        &mut world.resource_mut::<Assets<AudioSource>>(),
+    )?;
     let settings = world
         .get_resource::<Duel>()
         .map(|d| d.settings)
@@ -132,12 +144,13 @@ pub fn start(
         abort_elapsed: Duration::ZERO,
         wait_release: false,
         layouts,
+        sounds: Vec::new(),
         settings,
     });
     world
         .run_system_once(render::setup)
         .map_err(|e| anyhow::anyhow!("render setup: {e:?}"))?;
-    sounds.start_duel(world, settings.effects_gain());
+    sounds.install(world, settings.effects_gain());
     let track = world.resource_mut::<Assets<AudioSource>>().add(music);
     world.spawn((
         StageEntity,
@@ -173,7 +186,7 @@ pub fn pause_menu(
     arena: Res<render::Arena>,
     window: Single<&Window>,
     time: Res<Time<Real>>,
-    sounds: Res<crate::sfx::Sounds>,
+    sounds: Res<crate::sfx::duel::DuelBank>,
     mut images: ResMut<Assets<Image>>,
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
     mut audio: Query<
@@ -326,9 +339,6 @@ pub fn pause_menu(
 }
 
 pub fn advance(
-    mut commands: Commands,
-    sounds: Res<crate::sfx::Sounds>,
-    mut engines: Query<(&crate::sfx::DuelEngine, &mut AudioSink)>,
     mut duel: ResMut<Duel>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time<Real>>,
@@ -339,6 +349,7 @@ pub fn advance(
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
 ) {
     use KeyCode::*;
+    duel.sounds.clear();
     if duel.pause.is_some() || (!window.focused && !capture.demo) || capture.holding_battle_frame()
     {
         return;
@@ -402,27 +413,24 @@ pub fn advance(
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
         let mut effects = [[0; 5]; 122];
         let count = duel.scene.effects(&mut effects);
-        let mut play = |id, volume| {
-            commands.spawn((
-                StageEntity,
-                DuelEffect,
-                sounds.centered(id),
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
-                    volume * duel.settings.effects_gain(),
-                )),
-            ));
-        };
         for &[x, y, z, kind, life] in &effects[..count] {
-            if let Some(mut id) = crate::driving::effect_sample(kind, life, 13) {
-                if kind == 10 && duel.cars[1].position() == [x, y, z] {
-                    id = 12;
-                }
-                play(id, 0.44);
+            if let Some(id) = crate::driving::effect_sample(kind, life, 13) {
+                duel.sounds.push(crate::sfx::duel::Request {
+                    id,
+                    key: crate::driving::effect_voice(kind),
+                    volume: crate::driving::effect_volume(kind) as f32 / 99.,
+                    position: [x, y, z],
+                });
             }
         }
         for car in &duel.cars {
             for (voice, volume) in car.contact_sounds().into_iter().flatten() {
-                play(18 + voice as usize, 0.44 * volume as f32 / 100.);
+                duel.sounds.push(crate::sfx::duel::Request {
+                    id: 18 + voice as usize,
+                    key: Some(crate::driving::ExclusiveVoice::Contact(voice)),
+                    volume: volume as f32 / 99.,
+                    position: car.position(),
+                });
             }
         }
         for (camera, car) in duel.cameras.iter_mut().zip(&duel.cars) {
@@ -431,12 +439,6 @@ pub fn advance(
         if let Some(slot) = duel.winner {
             duel.score[slot] += 1;
         }
-    }
-    for (engine, sink) in &mut engines {
-        sink.set_speed(crate::sfx::engine_speed(
-            engine.range,
-            duel.cars[engine.slot].rev(),
-        ));
     }
     if let Some(winner) = duel.winner {
         let (sprite, visibility) = &mut *hud;
@@ -498,6 +500,7 @@ pub fn round_menu(world: &mut World) {
         );
         if result.is_ok() {
             world.remove_resource::<Duel>();
+            world.remove_resource::<crate::sfx::duel::DuelBank>();
         }
         result
     } else if duel.winner.is_some()

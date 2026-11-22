@@ -21,6 +21,25 @@ pub struct BattleSound {
     pub full_range: bool,
 }
 
+pub(crate) fn effect_volume(kind: i32) -> i32 {
+    match kind {
+        1 => 84,
+        37 => 86,
+        54 => 25,
+        _ => 99,
+    }
+}
+pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
+    match kind {
+        1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
+        54 => Some(ExclusiveVoice::ScaledEffect(4)),
+        55 => Some(ExclusiveVoice::ScaledEffect(104)),
+        37 => Some(ExclusiveVoice::ScaledEffect(105)),
+        26 => Some(ExclusiveVoice::Recharge),
+        401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
+        _ => None,
+    }
+}
 pub(crate) fn effect_sample(kind: i32, life: i32, recharge: usize) -> Option<usize> {
     Some(match (kind, life) {
         (26, 2) => recharge,
@@ -572,21 +591,8 @@ pub fn advance(
                 continue;
             };
             state.sounds.push(BattleSound {
-                volume_percent: match kind {
-                    1 => 84,
-                    37 => 86,
-                    54 => 25,
-                    _ => 99,
-                },
-                exclusive: match kind {
-                    1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
-                    54 => Some(ExclusiveVoice::ScaledEffect(4)),
-                    55 => Some(ExclusiveVoice::ScaledEffect(104)),
-                    37 => Some(ExclusiveVoice::ScaledEffect(105)),
-                    26 => Some(ExclusiveVoice::Recharge),
-                    401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
-                    _ => None,
-                },
+                volume_percent: effect_volume(kind),
+                exclusive: effect_voice(kind),
                 id,
                 position: if kind == 36 {
                     state.player.position()

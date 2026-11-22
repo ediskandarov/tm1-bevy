@@ -3,6 +3,7 @@ use crate::{bytes, u16le, u32le};
 use anyhow::{Result, ensure};
 
 pub struct Tone {
+    pub priority: u8,
     pub pcm: Vec<i16>,
     pub loop_start: Option<usize>,
     pub center: u8,
@@ -74,6 +75,7 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
             }
             ensure!(!pcm.is_empty(), "empty VAB sample");
             Ok(Tone {
+                priority: t[0],
                 loop_start,
                 pcm,
                 center: t[4],
