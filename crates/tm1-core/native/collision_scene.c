@@ -550,20 +550,20 @@ void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unus
     }
 }
 
-// CARUPD.c CheckMonsterSmash, for the player and the active arena opponent.
-void tm1_check_player_smash(PlayerCar* car, AICar* other)
+// CARUPD.c CheckMonsterSmash uses the victim model position for all four tires.
+static void check_smash(CarStats* st, CarMotion* motion, CarTire* tires, u8* flags,
+    Cs* target, CarStats* victim, u8* victim_flags)
 {
-    CarStats* st = &car->stats;
     int best = 0x7fff;
-    car->flags[27] = 0;
-    if (other && st->unk30 == other->uaIndex) {
-        VECTOR3 p = GetAICs3D(other->playerIdx)->pos;
+    flags[27] = 0;
+    if (target) {
+        VECTOR3 p = target->pos;
         for (int i = 0; i < 4; i++) {
-            CarTire* tire = &car->tires[i];
+            CarTire* tire = &tires[i];
             int dx = p.vx - tire->unk38, dy = p.vy - tire->unk3C;
             int d = arena_sqrt(dx * dx + dy * dy);
             if (d < st->unk2A) {
-                car->flags[27] = 1;
+                flags[27] = 1;
                 tire->unk20 = st->unk2C - st->unk2C * d / st->unk2A / 2;
                 if (d < best)
                     best = d;
@@ -571,8 +571,8 @@ void tm1_check_player_smash(PlayerCar* car, AICar* other)
                 tire->unk20 = 0;
             }
         }
-        if (car->flags[27] && best < st->unk2A / 2) {
-            VECTOR3 pos = car->motion.pos;
+        if (flags[27] && best < st->unk2A / 2) {
+            VECTOR3 pos = motion->pos;
             pos.vx += (arena_rand() & 63) - 32;
             pos.vy += (arena_rand() & 63) - 32;
             pos.vz -= (arena_rand() & 31) + 32;
@@ -589,16 +589,44 @@ void tm1_check_player_smash(PlayerCar* car, AICar* other)
                 arena_effect(&pos, 2);
                 break;
             }
-            if (other->stats.unk4C && !(GetFrameCount() & 3) && other->stats.unk40 > 0)
-                other->stats.unk40--;
+            if (victim->unk4C && !(GetFrameCount() & 3) && victim->unk40 > 0)
+                victim->unk40--;
         }
-        if (!car->flags[27])
-            other->flags[28] = 0;
+        if (!flags[27])
+            victim_flags[28] = 0;
     }
-    if (!car->flags[27])
+    if (!flags[27])
         for (int i = 0; i < 4; i++)
-            car->tires[i].unk20 = 0;
+            tires[i].unk20 = 0;
 }
+void tm1_check_player_smash(PlayerCar* car, AICar* other)
+{
+    if (other && car->stats.unk30 != other->uaIndex)
+        other = NULL;
+    check_smash(&car->stats, &car->motion, car->tires, car->flags,
+        other ? GetAICs3D(other->playerIdx) : NULL,
+        other ? &other->stats : NULL, other ? other->flags : NULL);
+}
+
+void tm1_check_ai_smash(AICar* car)
+{
+    PlayerCar* player = GetPlayerInfo(0);
+    if (player->uaIndex == car->stats.unk30) {
+        check_smash(&car->stats, &car->motion, car->tires, car->flags,
+            GetPlayerCs3D(0), &player->stats, player->flags);
+        return;
+    }
+    for (int i = 0; i < GetNumAICars(); i++) {
+        AICar* other = GetAICarInfo(i);
+        if (other->uaIndex == car->stats.unk30) {
+            check_smash(&car->stats, &car->motion, car->tires, car->flags,
+                GetAICs3D(i), &other->stats, other->flags);
+            return;
+        }
+    }
+    check_smash(&car->stats, &car->motion, car->tires, car->flags, NULL, NULL, NULL);
+}
+
 uint64_t tm1_hidden_pickups(CollisionScene* s)
 {
     uint64_t mask = 0;

@@ -94,6 +94,7 @@ pub fn advance(
         match drive.player.level() {
             tm1_core::drive::Level::Arena => "Arena",
             tm1_core::drive::Level::Warehouse => "Warehouse",
+            tm1_core::drive::Level::Freeway => "Freeway",
         }
     };
     let title = format!(
@@ -200,70 +201,77 @@ mod tests {
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn warehouse_group_restarts_and_replays() {
+    fn group_restarts_and_replays() {
         use tm1_core::drive::Level;
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
-        let data = disc.read("UADMD/WH1.DMD").unwrap();
-        let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
-        let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let vehicle = Vehicle::YellowJacket;
-        let kinds = vehicle.warehouse_opponents();
-        let scene = CollisionScene::for_opponents(
-            &data,
-            root(1),
-            root(vehicle as u16),
-            &kinds.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
-        )
-        .unwrap();
-        let player = PlayerVehicle::on_level(&exe, vehicle, Level::Warehouse).unwrap();
-        let mut app = App::new();
-        app.insert_resource(Drive::new(player, scene, &kinds))
-            .insert_resource(crate::smoke::Capture::new(None, false, false))
-            .init_resource::<ButtonInput<KeyCode>>()
-            .init_resource::<Time<Real>>()
-            .add_systems(Update, advance);
-        app.world_mut().spawn(Window {
-            focused: true,
-            ..default()
-        });
-        tick(&mut app, 1);
-        let snapshot = |app: &App| {
-            let drive = app.world().resource::<Drive>();
-            (
-                drive.player.frame(),
-                drive.player.rng_state(),
-                drive.player.health(),
-                drive
-                    .opponents
-                    .iter()
-                    .map(|ai| (ai.vehicle(), ai.position(), ai.health()))
-                    .collect::<Vec<_>>(),
+        for (level, kinds) in [
+            (Level::Warehouse, vehicle.warehouse_opponents()),
+            (Level::Freeway, vehicle.freeway_opponents()),
+        ] {
+            let data = disc
+                .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
+                .unwrap();
+            let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+            let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
+
+            let scene = CollisionScene::for_opponents(
+                &data,
+                root(1),
+                root(vehicle as u16),
+                &kinds.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
             )
-        };
-        let start = snapshot(&app);
-        let run = |app: &mut App| {
+            .unwrap();
+            let player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
+            let mut app = App::new();
+            app.insert_resource(Drive::new(player, scene, &kinds))
+                .insert_resource(crate::smoke::Capture::new(None, false, false))
+                .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<Time<Real>>()
+                .add_systems(Update, advance);
+            app.world_mut().spawn(Window {
+                focused: true,
+                ..default()
+            });
+            tick(&mut app, 1);
+            let snapshot = |app: &App| {
+                let drive = app.world().resource::<Drive>();
+                (
+                    drive.player.frame(),
+                    drive.player.rng_state(),
+                    drive.player.health(),
+                    drive
+                        .opponents
+                        .iter()
+                        .map(|ai| (ai.vehicle(), ai.position(), ai.health()))
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let start = snapshot(&app);
+            let run = |app: &mut App| {
+                app.world_mut()
+                    .resource_mut::<ButtonInput<KeyCode>>()
+                    .press(KeyCode::KeyW);
+                for _ in 0..180 {
+                    tick(app, 50);
+                }
+            };
+            run(&mut app);
+            let played = snapshot(&app);
+            assert_eq!(played.0, 180);
+            assert_eq!(played.3.len(), kinds.len());
+            for (before, after) in start.3.iter().zip(&played.3) {
+                assert_ne!(before.1, after.1);
+            }
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
-                .press(KeyCode::KeyW);
-            for _ in 0..180 {
-                tick(app, 50);
-            }
-        };
-        run(&mut app);
-        let played = snapshot(&app);
-        assert_eq!(played.0, 180);
-        assert_eq!(played.3.len(), 3);
-        for (before, after) in start.3.iter().zip(&played.3) {
-            assert_ne!(before.1, after.1);
+                .press(KeyCode::KeyR);
+            tick(&mut app, 50);
+            assert_eq!(start, snapshot(&app));
+            run(&mut app);
+            assert_eq!(played, snapshot(&app));
         }
-        app.world_mut()
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::KeyR);
-        tick(&mut app, 50);
-        assert_eq!(start, snapshot(&app));
-        run(&mut app);
-        assert_eq!(played, snapshot(&app));
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

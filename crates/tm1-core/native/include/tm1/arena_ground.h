@@ -5,6 +5,8 @@
 #include "tm1/CARUPD.H"
 void InitLevel2TriggerPoints(void);
 void InitLevel2Bridges(void);
+void InitLevel3Curbs(void);
+void InitLevel3PotHoles(void);
 void InitLevel2Curbs(void);
 void InitLevel2PotHoles(void);
 void InitLevel1PotHoles(void);

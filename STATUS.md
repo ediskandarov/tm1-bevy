@@ -14,6 +14,10 @@ campaign, front end and multiplayer are outstanding.
 
 Launch with `--level warehouse` to drive WH1 or WH2, selected by the original vehicle-dependent shell rules, against all three original opponents for the selected player. The game reads the level geometry, sky and textures from the disc, spawns the player at the original Warehouse start, and plays CDDA track 4. Warehouse uses its own trigger points, bridges, curbs, potholes and AI lane selection. The encounter can be restarted from the keyboard. The HUD shows the nearest surviving opponent and the number of rivals left. The round ends after all three rivals are defeated or the player is wrecked. Campaign progression is outstanding.
 
+## Freeway
+
+Launch with `--level freeway`. The selected vehicle determines the XFWY1 or XFWY2 database, textures and five opponents. The level uses 50 routing points, 18 bridge records, two potholes and CDDA track 2. Metal captures on the M3 Pro show Yellow Jacket and Outlaw on the highway. The keyboard restart fixture replays the same five-car lineup.
+
 ## Reference execution
 
 The test interpreter executes instructions loaded from the verified retail executable. The two vehicle records are copied to PS1-layout memory and compared byte by byte. The RNG starts at 1 for spawning and is then shared by both cars. Tests provide the BIOS random service, relevant GTE instructions, and explicit calls or stubs for presentation endpoints. These are controlled function-level scenarios. They do not execute an entire booted PlayStation or compare PCM and draw packets.
@@ -27,6 +31,7 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Group collisions and restart | Compared 250 Warehouse point hits with retail, covering separated and overlapping cars and pairs of excluded IDs. Replayed 180 steps through the keyboard frontend after a round restart and compared all three opponents, player health and RNG. |
 | Battle selection | Checked the PlayGame scheduler against the JP instructions in 128 combinations of opponent count, occupied attack slots, surviving vehicles and elapsed fields. Compared the wait counter and every opponent record after selection. |
 | Opponent radar | For every regular vehicle, checked contact color, screen position and all four edge directions against retail hudAddRadarSig at seven headings and fourteen offsets (1,176 cases). Warehouse Metal capture shows the three opponents in their original colors. V toggles the overlay. Active Warehouse recharge stations flash on the radar. |
+| Freeway pursuit | Twelve 360-step mixed-timing encounters compared every byte of the six vehicle records, active fragment positions and RNG after each step. The Road Kill encounter exercises a computer-controlled Hammerhead driving over another vehicle. |
 | Warehouse pursuit | Twelve 360-step runs, one per player vehicle with its full three-opponent lineup. Compared starting position and heading, then all four complete vehicle records and RNG on every step. The reference executes the PlayGame battle scheduler and updates active flamethrowers and explosion particles. |
 | Contacts | Original car-to-car and wall fixtures contact at steps 13 and 73. Both car records, RNG and normalized contact identities compared. 9,381 original world point queries included 2,742 solid contacts. |
 | Warehouse recharge stations | Both DMD switches follow the gameplay state. A tire-contact fixture compared the entire player record with retail through both recharge cycles and compared both activation flags for 4,002 regeneration updates. The port plays VAB program 52 while charging. |

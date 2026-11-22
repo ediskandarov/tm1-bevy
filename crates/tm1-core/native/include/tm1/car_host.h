@@ -10,6 +10,7 @@ void mathMulTransVec(MATRIX *, VECTOR3 *, VECTOR3 *);
 void InitIceCreamTruck(CarStats *);
 void InitSemiTruck(CarStats *);
 void InitMonsterTruck(CarStats*);
+void tm1_check_ai_smash(AICar*);
 void tm1_check_player_smash(PlayerCar*, AICar*);
 void InitHumvee(CarStats*);
 void InitCorvette(CarStats*);

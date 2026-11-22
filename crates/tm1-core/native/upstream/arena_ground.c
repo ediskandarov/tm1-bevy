@@ -6,7 +6,7 @@ s16 numPotHoles, numCheckPotHoles, numCurbs, numSlickSpots;
 TriggerPt tPoints[175];
 TriggerPtGroups triggerPtGroups;
 TriggerPtStartPts triggerPtStartPts;
-Bridge bridges[13];
+Bridge bridges[59];
 PotHole potHoles[5];
 Curb curbs[8];
 SlickSpot slickSpots[1];
@@ -2225,4 +2225,577 @@ void CheckHealthStands(Car* car, u8 isPlayer)
         }
         break;
     }
+}
+
+void InitLevel3TriggerPoints(void)
+{
+    s16 i;
+    s16 j;
+
+    numTriggerPoints = 50;
+    for (i = 0; i < numTriggerPoints; i++) {
+        tPoints[i].f1A = 1;
+        tPoints[i].type = 0;
+        tPoints[i].f08 = 0;
+        for (j = 0; j < 4; j++) {
+            tPoints[i].link[j] = 0;
+            tPoints[i].dist[j] = 0x78;
+        }
+    }
+    triggerPtStartPts.n = 5;
+    for (i = 0; i < 15; i++) {
+        triggerPtStartPts.start[i] = i;
+        triggerPtStartPts.grp[i] = 0;
+    }
+    triggerPtGroups.count = 1;
+    triggerPtGroups.pos[0].vx = -0x5DC0;
+    triggerPtGroups.pos[0].vy = -0x2EE0;
+    triggerPtGroups.pos[0].vz = 0;
+    triggerPtGroups.w[0] = 0xBB80;
+    triggerPtGroups.d[0] = 0x5DC0;
+    for (i = 0; i < triggerPtGroups.count; i++) {
+        for (j = 0; j < triggerPtGroups.count; j++) {
+            triggerPtGroups.a[i][j] = -1;
+            triggerPtGroups.b[i][j] = 0;
+            triggerPtGroups.minSpeed[i][j] = 0x3C;
+        }
+    }
+    tPoints[0].vx = 0x2580;
+    tPoints[0].vy = -0x2390;
+    tPoints[0].f1A = 2;
+    tPoints[0].link[0] = 6;
+    tPoints[0].link[1] = 0x2F;
+    tPoints[0].dist[0] = 0xA0;
+    tPoints[0].dist[1] = 0xA0;
+    tPoints[1].vx = -0x4110;
+    tPoints[1].vy = 0x1630;
+    tPoints[1].f1A = 2;
+    tPoints[1].link[0] = 0x1D;
+    tPoints[1].link[1] = 0x1E;
+    tPoints[1].dist[0] = 0xA0;
+    tPoints[1].dist[1] = 0xA0;
+    tPoints[2].vx = 0x4110;
+    tPoints[2].vy = 0x1630;
+    tPoints[2].f1A = 2;
+    tPoints[2].link[0] = 0x13;
+    tPoints[2].link[1] = 0x14;
+    tPoints[2].dist[0] = 0xA0;
+    tPoints[2].dist[1] = 0xA0;
+    tPoints[3].vx = -0x2580;
+    tPoints[3].vy = -0x2390;
+    tPoints[3].f1A = 2;
+    tPoints[3].link[0] = 0x2C;
+    tPoints[3].link[1] = 0x2D;
+    tPoints[3].dist[0] = 0xA0;
+    tPoints[3].dist[1] = 0xA0;
+    tPoints[4].vx = 0;
+    tPoints[4].vy = 0x2390;
+    tPoints[4].f1A = 2;
+    tPoints[4].link[0] = 0x19;
+    tPoints[4].link[1] = 0x1A;
+    tPoints[4].dist[0] = 0xA0;
+    tPoints[4].dist[1] = 0xA0;
+    tPoints[5].vx = 0x4110;
+    tPoints[5].vy = -0xEE0;
+    tPoints[5].f1A = 3;
+    tPoints[5].link[0] = 9;
+    tPoints[5].link[1] = 0xA;
+    tPoints[5].link[2] = 0x30;
+    tPoints[5].dist[2] = 0xA0;
+    tPoints[6].vx = 0x3E20;
+    tPoints[6].vy = -0x2390;
+    tPoints[6].f1A = 2;
+    tPoints[6].link[0] = 0;
+    tPoints[6].link[1] = 7;
+    tPoints[7].vx = 0x4020;
+    tPoints[7].vy = -0x22D0;
+    tPoints[7].f1A = 2;
+    tPoints[7].link[0] = 6;
+    tPoints[7].link[1] = 8;
+    tPoints[8].vx = 0x4110;
+    tPoints[8].vy = -0x20C0;
+    tPoints[8].f1A = 2;
+    tPoints[8].link[0] = 7;
+    tPoints[8].link[1] = 9;
+    tPoints[9].vx = 0x4110;
+    tPoints[9].vy = -0x1770;
+    tPoints[9].f1A = 2;
+    tPoints[9].link[0] = 5;
+    tPoints[9].link[1] = 8;
+    tPoints[9].dist[0] = 0xA0;
+    tPoints[9].dist[1] = 0xA0;
+    tPoints[10].vx = 0x4230;
+    tPoints[10].vy = -0xCD0;
+    tPoints[10].f1A = 2;
+    tPoints[10].link[0] = 5;
+    tPoints[10].link[1] = 0xB;
+    tPoints[10].dist[0] = 0x50;
+    tPoints[10].dist[1] = 0x50;
+    tPoints[11].vx = 0x43F8;
+    tPoints[11].vy = -0xBE8;
+    tPoints[11].f1A = 2;
+    tPoints[11].link[0] = 0xA;
+    tPoints[11].link[1] = 0xC;
+    tPoints[11].dist[0] = 0x50;
+    tPoints[11].dist[1] = 0x50;
+    tPoints[12].vx = 0x45E0;
+    tPoints[12].vy = -0xB30;
+    tPoints[12].f1A = 2;
+    tPoints[12].link[0] = 0xB;
+    tPoints[12].link[1] = 0xD;
+    tPoints[12].dist[0] = 0x50;
+    tPoints[12].dist[1] = 0x50;
+    tPoints[13].vx = 0x46A0;
+    tPoints[13].vy = -0x920;
+    tPoints[13].f1A = 2;
+    tPoints[13].link[0] = 0xC;
+    tPoints[13].link[1] = 0xE;
+    tPoints[14].vx = 0x46A0;
+    tPoints[14].vy = -0x488;
+    tPoints[14].f1A = 2;
+    tPoints[14].link[0] = 0xD;
+    tPoints[14].link[1] = 0xF;
+    tPoints[15].vx = 0x45E0;
+    tPoints[15].vy = -0x2B0;
+    tPoints[15].f1A = 2;
+    tPoints[15].link[0] = 0xE;
+    tPoints[15].link[1] = 0x10;
+    tPoints[15].dist[0] = 0x50;
+    tPoints[15].dist[1] = 0x50;
+    tPoints[16].vx = 0x43D0;
+    tPoints[16].vy = -0x1E0;
+    tPoints[16].f1A = 2;
+    tPoints[16].link[0] = 0xF;
+    tPoints[16].link[1] = 0x11;
+    tPoints[16].dist[0] = 0x50;
+    tPoints[16].dist[1] = 0x50;
+    tPoints[17].vx = 0x41E0;
+    tPoints[17].vy = -0x110;
+    tPoints[17].f1A = 2;
+    tPoints[17].link[0] = 0x10;
+    tPoints[17].link[1] = 0x12;
+    tPoints[17].dist[0] = 0x50;
+    tPoints[17].dist[1] = 0x50;
+    tPoints[18].vx = 0x4110;
+    tPoints[18].vy = 0xF0;
+    tPoints[18].f1A = 3;
+    tPoints[18].link[0] = 5;
+    tPoints[18].link[1] = 0x11;
+    tPoints[18].link[2] = 0x30;
+    tPoints[19].vx = 0x4110;
+    tPoints[19].vy = 0xB90;
+    tPoints[19].f1A = 2;
+    tPoints[19].link[0] = 0x12;
+    tPoints[19].link[1] = 0x14;
+    tPoints[19].dist[0] = 0xA0;
+    tPoints[19].dist[1] = 0xA0;
+    tPoints[20].vx = 0x4110;
+    tPoints[20].vy = 0x20C0;
+    tPoints[20].f1A = 2;
+    tPoints[20].link[0] = 2;
+    tPoints[20].link[1] = 0x13;
+    tPoints[21].vx = 0x4020;
+    tPoints[21].vy = 0x22D0;
+    tPoints[21].f1A = 2;
+    tPoints[21].link[0] = 2;
+    tPoints[21].link[1] = 0x15;
+    tPoints[22].vx = 0x3E20;
+    tPoints[22].vy = 0x2390;
+    tPoints[22].f1A = 2;
+    tPoints[22].link[0] = 0x15;
+    tPoints[22].link[1] = 0x17;
+    tPoints[23].vx = 0x2580;
+    tPoints[23].vy = 0x2390;
+    tPoints[23].f1A = 2;
+    tPoints[23].link[0] = 0x16;
+    tPoints[23].link[1] = 0x18;
+    tPoints[23].dist[0] = 0xA0;
+    tPoints[23].dist[1] = 0xA0;
+    tPoints[24].vx = 0x12C0;
+    tPoints[24].vy = 0x2390;
+    tPoints[24].f1A = 2;
+    tPoints[24].link[0] = 0x17;
+    tPoints[24].link[1] = 0x19;
+    tPoints[24].dist[0] = 0xA0;
+    tPoints[24].dist[1] = 0xA0;
+    tPoints[25].vx = -0x12C0;
+    tPoints[25].vy = 0x2390;
+    tPoints[25].f1A = 2;
+    tPoints[25].link[0] = 4;
+    tPoints[25].link[1] = 0x18;
+    tPoints[25].dist[0] = 0xA0;
+    tPoints[25].dist[1] = 0xA0;
+    tPoints[26].vx = -0x2580;
+    tPoints[26].vy = 0x2390;
+    tPoints[26].f1A = 2;
+    tPoints[26].link[0] = 4;
+    tPoints[26].link[1] = 0x1B;
+    tPoints[26].dist[0] = 0xA0;
+    tPoints[26].dist[1] = 0xA0;
+    tPoints[27].vx = -0x3DF0;
+    tPoints[27].vy = 0x2390;
+    tPoints[27].f1A = 2;
+    tPoints[27].link[0] = 0x1A;
+    tPoints[27].link[1] = 0x1C;
+    tPoints[28].vx = -0x4020;
+    tPoints[28].vy = 0x22D0;
+    tPoints[28].f1A = 2;
+    tPoints[28].link[0] = 0x1B;
+    tPoints[28].link[1] = 0x1D;
+    tPoints[29].vx = -0x4110;
+    tPoints[29].vy = 0x20C0;
+    tPoints[29].f1A = 2;
+    tPoints[29].link[0] = 1;
+    tPoints[29].link[1] = 0x1C;
+    tPoints[30].vx = -0x4110;
+    tPoints[30].vy = 0xB90;
+    tPoints[30].f1A = 2;
+    tPoints[30].link[0] = 1;
+    tPoints[30].link[1] = 0x1F;
+    tPoints[30].dist[0] = 0xA0;
+    tPoints[30].dist[1] = 0xA0;
+    tPoints[31].vx = -0x4110;
+    tPoints[31].vy = 0xF0;
+    tPoints[31].f1A = 3;
+    tPoints[31].link[0] = 0x1E;
+    tPoints[31].link[1] = 0x20;
+    tPoints[31].link[2] = 0x31;
+    tPoints[32].vx = -0x41E0;
+    tPoints[32].vy = -0x110;
+    tPoints[32].f1A = 2;
+    tPoints[32].link[0] = 0x1F;
+    tPoints[32].link[1] = 0x21;
+    tPoints[32].dist[0] = 0x50;
+    tPoints[32].dist[1] = 0x50;
+    tPoints[33].vx = -0x43D0;
+    tPoints[33].vy = -0x1E0;
+    tPoints[33].f1A = 2;
+    tPoints[33].link[0] = 0x20;
+    tPoints[33].link[1] = 0x22;
+    tPoints[33].dist[0] = 0x50;
+    tPoints[33].dist[1] = 0x50;
+    tPoints[34].vx = -0x45E0;
+    tPoints[34].vy = -0x2B0;
+    tPoints[34].f1A = 2;
+    tPoints[34].link[0] = 0x21;
+    tPoints[34].link[1] = 0x23;
+    tPoints[34].dist[0] = 0x50;
+    tPoints[34].dist[1] = 0x50;
+    tPoints[35].vx = -0x46A0;
+    tPoints[35].vy = -0x488;
+    tPoints[35].f1A = 2;
+    tPoints[35].link[0] = 0x22;
+    tPoints[35].link[1] = 0x24;
+    tPoints[36].vx = -0x46A0;
+    tPoints[36].vy = -0x920;
+    tPoints[36].f1A = 2;
+    tPoints[36].link[0] = 0x23;
+    tPoints[36].link[1] = 0x25;
+    tPoints[37].vx = -0x45E0;
+    tPoints[37].vy = -0xB30;
+    tPoints[37].f1A = 2;
+    tPoints[37].link[0] = 0x24;
+    tPoints[37].link[1] = 0x26;
+    tPoints[38].vx = -0x43F8;
+    tPoints[38].vy = -0xBE8;
+    tPoints[38].f1A = 2;
+    tPoints[38].link[0] = 0x25;
+    tPoints[38].link[1] = 0x27;
+    tPoints[39].vx = -0x4230;
+    tPoints[39].vy = -0xCD0;
+    tPoints[39].f1A = 2;
+    tPoints[39].link[0] = 0x26;
+    tPoints[39].link[1] = 0x28;
+    tPoints[40].vx = -0x4110;
+    tPoints[40].vy = -0xEE0;
+    tPoints[40].f1A = 3;
+    tPoints[40].link[0] = 0x27;
+    tPoints[40].link[1] = 0x29;
+    tPoints[40].link[2] = 0x31;
+    tPoints[41].vx = -0x4110;
+    tPoints[41].vy = -0x1770;
+    tPoints[41].f1A = 2;
+    tPoints[41].link[0] = 0x28;
+    tPoints[41].link[1] = 0x2A;
+    tPoints[41].dist[0] = 0xA0;
+    tPoints[41].dist[1] = 0xA0;
+    tPoints[42].vx = -0x4110;
+    tPoints[42].vy = -0x20C0;
+    tPoints[42].f1A = 2;
+    tPoints[42].link[0] = 0x29;
+    tPoints[42].link[1] = 0x2B;
+    tPoints[43].vx = -0x4020;
+    tPoints[43].vy = -0x22D0;
+    tPoints[43].f1A = 2;
+    tPoints[43].link[0] = 0x2A;
+    tPoints[43].link[1] = 0x2C;
+    tPoints[44].vx = -0x3E20;
+    tPoints[44].vy = -0x2390;
+    tPoints[44].f1A = 2;
+    tPoints[44].link[0] = 3;
+    tPoints[44].link[1] = 0x2B;
+    tPoints[45].vx = -0x12C0;
+    tPoints[45].vy = -0x2390;
+    tPoints[45].f1A = 2;
+    tPoints[45].link[0] = 3;
+    tPoints[45].link[1] = 0x2E;
+    tPoints[45].dist[0] = 0xA0;
+    tPoints[45].dist[1] = 0xA0;
+    tPoints[46].vx = 0;
+    tPoints[46].vy = -0x2390;
+    tPoints[46].f1A = 2;
+    tPoints[46].link[0] = 0x2D;
+    tPoints[46].link[1] = 0x2F;
+    tPoints[46].dist[0] = 0xA0;
+    tPoints[46].dist[1] = 0xA0;
+    tPoints[47].vx = 0x12C0;
+    tPoints[47].vy = -0x2390;
+    tPoints[47].f1A = 2;
+    tPoints[47].link[0] = 0x2E;
+    tPoints[47].link[1] = 0;
+    tPoints[47].dist[0] = 0xA0;
+    tPoints[47].dist[1] = 0xA0;
+    tPoints[48].vx = 0x40C0;
+    tPoints[48].vy = -0x6A0;
+    tPoints[48].f1A = 2;
+    tPoints[48].link[0] = 5;
+    tPoints[48].link[1] = 0x12;
+    tPoints[48].dist[0] = 0xA0;
+    tPoints[48].dist[1] = 0xA0;
+    tPoints[49].vx = -0x4110;
+    tPoints[49].vy = 0x780;
+    tPoints[49].f1A = 2;
+    tPoints[49].link[0] = 0x1F;
+    tPoints[49].link[1] = 0x28;
+    tPoints[49].dist[0] = 0xA0;
+    tPoints[49].dist[1] = 0xA0;
+}
+
+void InitLevel3Bridges(void)
+{
+    s16 i;
+    s16 j;
+
+    numBridges = 0x12;
+    numCheckBridges = 0xC;
+
+    for (i = 0; i <= numBridges; i++) {
+        bridges[i].unk08 = 0;
+        bridges[i].unk0A = 10;
+        for (j = 0; j < 4; j++) {
+            bridges[i].obj[j] = -1;
+        }
+    }
+
+    bridges[0].rampDir = 0;
+    bridges[0].minX = -17280;
+    bridges[0].minZ = 0x228;
+    bridges[0].y0 = 0;
+    bridges[0].y1 = 0x188;
+    bridges[0].extentX = 0x4E0;
+    bridges[0].extentZ = 0x438;
+    bridges[0].obj[0] = 0x10;
+    bridges[0].unk0A = 0x1E;
+
+    bridges[1].rampDir = 1;
+    bridges[1].minX = -17280;
+    bridges[1].minZ = 0x960;
+    bridges[1].y0 = 0x188;
+    bridges[1].y1 = 0;
+    bridges[1].extentX = 0x4E0;
+    bridges[1].extentZ = 0x438;
+    bridges[1].obj[0] = 0x10;
+    bridges[1].unk0A = 0x1E;
+
+    bridges[2].rampDir = 0;
+    bridges[2].minX = 0x3EB0;
+    bridges[2].minZ = 0x1F0;
+    bridges[2].y0 = 0;
+    bridges[2].y1 = 0xC0;
+    bridges[2].extentX = 0x4E0;
+    bridges[2].extentZ = 0x470;
+    bridges[2].obj[0] = 0x11;
+    bridges[2].unk0A = 0x1E;
+
+    bridges[3].rampDir = 1;
+    bridges[3].minX = 0x3EB0;
+    bridges[3].minZ = 0x960;
+    bridges[3].y0 = 0xC0;
+    bridges[3].y1 = 0;
+    bridges[3].extentX = 0x4E0;
+    bridges[3].extentZ = 0x470;
+    bridges[3].obj[0] = 0x11;
+    bridges[3].unk0A = 0x1E;
+
+    bridges[4].rampDir = 2;
+    bridges[4].minX = 0x1230;
+    bridges[4].minZ = 0x2000;
+    bridges[4].y0 = 0;
+    bridges[4].y1 = 0x18;
+    bridges[4].extentX = 0x90;
+    bridges[4].extentZ = 0x90;
+    bridges[4].obj[0] = 0xC;
+
+    bridges[5].rampDir = 3;
+    bridges[5].minX = 0x1308;
+    bridges[5].minZ = 0x2000;
+    bridges[5].y0 = 0x18;
+    bridges[5].y1 = 0;
+    bridges[5].extentX = 0x90;
+    bridges[5].extentZ = 0x90;
+    bridges[5].obj[0] = 0xC;
+
+    bridges[6].rampDir = 2;
+    bridges[6].minX = -4944;
+    bridges[6].minZ = 0x2000;
+    bridges[6].y0 = 0;
+    bridges[6].y1 = 0x18;
+    bridges[6].extentX = 0x90;
+    bridges[6].extentZ = 0x90;
+    bridges[6].obj[0] = 0xD;
+
+    bridges[7].rampDir = 3;
+    bridges[7].minX = -4728;
+    bridges[7].minZ = 0x2000;
+    bridges[7].y0 = 0x18;
+    bridges[7].y1 = 0;
+    bridges[7].extentX = 0x90;
+    bridges[7].extentZ = 0x90;
+    bridges[7].obj[0] = 0xD;
+
+    bridges[8].rampDir = 2;
+    bridges[8].minX = 0x1230;
+    bridges[8].minZ = -8336;
+    bridges[8].y0 = 0;
+    bridges[8].y1 = 0x18;
+    bridges[8].extentX = 0x90;
+    bridges[8].extentZ = 0x90;
+    bridges[8].obj[0] = 0xE;
+
+    bridges[9].rampDir = 3;
+    bridges[9].minX = 0x1308;
+    bridges[9].minZ = -8336;
+    bridges[9].y0 = 0x18;
+    bridges[9].y1 = 0;
+    bridges[9].extentX = 0x90;
+    bridges[9].extentZ = 0x90;
+    bridges[9].obj[0] = 0xE;
+
+    bridges[10].rampDir = 2;
+    bridges[10].minX = -4944;
+    bridges[10].minZ = -8336;
+    bridges[10].y0 = 0;
+    bridges[10].y1 = 0x18;
+    bridges[10].extentX = 0x90;
+    bridges[10].extentZ = 0x90;
+    bridges[10].obj[0] = 0xF;
+
+    bridges[11].rampDir = 3;
+    bridges[11].minX = -4728;
+    bridges[11].minZ = -8336;
+    bridges[11].y0 = 0x18;
+    bridges[11].y1 = 0;
+    bridges[11].extentX = 0x90;
+    bridges[11].extentZ = 0x90;
+    bridges[11].obj[0] = 0xF;
+
+    bridges[12].rampDir = 2;
+    bridges[12].minX = 0x1278;
+    bridges[12].minZ = 0x2000;
+    bridges[12].y0 = 0x18;
+    bridges[12].y1 = 0x18;
+    bridges[12].extentX = 0x90;
+    bridges[12].extentZ = 0x90;
+    bridges[12].obj[0] = 4;
+    bridges[12].obj[1] = 5;
+    bridges[12].unk08 = 2;
+
+    bridges[13].rampDir = 2;
+    bridges[13].minX = -4872;
+    bridges[13].minZ = 0x2000;
+    bridges[13].y0 = 0x18;
+    bridges[13].y1 = 0x18;
+    bridges[13].extentX = 0x90;
+    bridges[13].extentZ = 0x90;
+    bridges[13].obj[0] = 6;
+    bridges[13].obj[1] = 7;
+    bridges[13].unk08 = 1;
+
+    bridges[14].rampDir = 2;
+    bridges[14].minX = 0x1278;
+    bridges[14].minZ = -8336;
+    bridges[14].y0 = 0x18;
+    bridges[14].y1 = 0x18;
+    bridges[14].extentX = 0x90;
+    bridges[14].extentZ = 0x90;
+    bridges[14].obj[0] = 8;
+    bridges[14].obj[1] = 9;
+    bridges[14].unk08 = 4;
+
+    bridges[15].rampDir = 2;
+    bridges[15].minX = -4872;
+    bridges[15].minZ = -8336;
+    bridges[15].y0 = 0x18;
+    bridges[15].y1 = 0x18;
+    bridges[15].extentX = 0x90;
+    bridges[15].extentZ = 0x90;
+    bridges[15].obj[0] = 0xA;
+    bridges[15].obj[1] = 0xB;
+    bridges[15].unk08 = 3;
+
+    bridges[16].rampDir = 0;
+    bridges[16].minX = -17280;
+    bridges[16].minZ = 0x660;
+    bridges[16].y0 = 0x188;
+    bridges[16].y1 = 0x188;
+    bridges[16].extentX = 0x4E0;
+    bridges[16].extentZ = 0x300;
+    bridges[16].obj[0] = 1;
+    bridges[16].obj[1] = 0;
+
+    bridges[17].rampDir = 0;
+    bridges[17].minX = 0x3EB0;
+    bridges[17].minZ = 0x660;
+    bridges[17].y0 = 0xC0;
+    bridges[17].y1 = 0xC0;
+    bridges[17].extentX = 0x4E0;
+    bridges[17].extentZ = 0x300;
+    bridges[17].obj[0] = 3;
+    bridges[17].obj[1] = 2;
+}
+
+void InitLevel3PotHoles(void)
+{
+    s16 i;
+    s16 t;
+    s32 n;
+
+    numPotHoles = 2;
+    numCheckPotHoles = 2;
+    i = 0;
+    do {
+        potHoles[i].active = 0;
+        t = i + 1;
+        do {
+        } while (0);
+        n = numPotHoles;
+        i = t;
+    } while (t < n);
+
+    potHoles[0].x = -16944;
+    potHoles[0].z = 0x720;
+    potHoles[0].a = 0x240;
+    potHoles[0].b = 0x180;
+    potHoles[0].c = -16;
+
+    potHoles[1].x = 0x3FF0;
+    potHoles[1].z = 0x720;
+    potHoles[1].a = 0x240;
+    potHoles[1].b = 0x180;
+    potHoles[1].c = -16;
+}
+
+void InitLevel3Curbs(void)
+{
+    numCurbs = 0;
 }

@@ -178,6 +178,11 @@ void tm1_bind_level(int level)
         InitLevel2Bridges();
         InitLevel2Curbs();
         InitLevel2PotHoles();
+    } else if (level == LEVEL3_FREEWAY) {
+        InitLevel3TriggerPoints();
+        InitLevel3Bridges();
+        InitLevel3Curbs();
+        InitLevel3PotHoles();
     } else {
         InitLevel1TriggerPoints();
         InitLevel1Bridges();
@@ -269,6 +274,10 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
         car.motion.pos.vx = -0x28a0;
         car.motion.pos.vy = -0x11d0;
         car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
+    } else if (current_level == LEVEL3_FREEWAY) {
+        car.motion.pos.vx = 0x1c20;
+        car.motion.pos.vy = -0x2390;
+        car.motion.rot.vz = car.motion.rot2.vz = 0x400;
     } else {
         car.motion.pos.vx = car.motion.pos.vy = 0x460;
         car.motion.rot.vz = car.motion.rot2.vz = 0x200;

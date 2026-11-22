@@ -322,6 +322,8 @@ void AICarUpdateTransition(AICar* car)
     CheckBombDamage(car, 0);
     CheckSpikeDamage(car, 0);
     CheckPotHoles(car, 0);
+    if (car->flags[27])
+        tm1_check_ai_smash(car);
 
     UpdateBounce(car, 0);
     UpdateTirePositions(car, 0);

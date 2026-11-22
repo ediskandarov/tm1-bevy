@@ -13,6 +13,7 @@ impl Music {
         // shellSoundForThisLevel selects the stage track. soundStartPlayDA
         // starts 150 sectors after INDEX 01 and ends before the next pregap.
         let track = disc.audio_track(match level {
+            tm1_core::drive::Level::Freeway => 2,
             tm1_core::drive::Level::Arena => 3,
             tm1_core::drive::Level::Warehouse => 4,
         })?;

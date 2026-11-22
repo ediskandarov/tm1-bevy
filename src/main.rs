@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse] [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
     use tm1_core::drive::{Level, Vehicle};
@@ -28,8 +28,9 @@ fn main() -> Result<()> {
         if flag.as_deref() == Some(std::ffi::OsStr::new("--level")) {
             level = match args.next().as_ref().and_then(|s| s.to_str()) {
                 Some("warehouse") => Level::Warehouse,
+                Some("freeway") => Level::Freeway,
                 Some("arena") => Level::Arena,
-                _ => anyhow::bail!("--level requires arena or warehouse"),
+                _ => anyhow::bail!("--level requires arena, warehouse or freeway"),
             };
             flag = args.next();
             continue;
@@ -91,6 +92,7 @@ fn main() -> Result<()> {
     let opponent_kinds = match level {
         Level::Arena => vec![tm1_core::drive::ArenaDeck::default().draw(vehicle, &mut seed)],
         Level::Warehouse => vehicle.warehouse_opponents(),
+        Level::Freeway => vehicle.freeway_opponents(),
     };
     let player =
         tm1_core::drive::PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
@@ -112,12 +114,19 @@ fn main() -> Result<()> {
     .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
     let arena = render::Arena::new(
         scene,
-        (level == Level::Warehouse)
+        (level != Level::Arena)
             .then(|| dmd.extract_kind(2))
             .transpose()?,
         player_mesh,
         opponent_mesh,
-        [dmd.extract_kind(201)?, dmd.extract_kind(312)?],
+        [
+            Some(dmd.extract_kind(201)?),
+            dmd.roots
+                .iter()
+                .any(|r| r.1 == 312)
+                .then(|| dmd.extract_kind(312))
+                .transpose()?,
+        ],
         dmd.explosion_frames()?,
         dmd.contrail_frames()?,
         dmd.radar_arrows()?,
@@ -134,6 +143,7 @@ fn main() -> Result<()> {
         .insert_resource(driving::Drive::new(player, contacts, &opponent_kinds))
         .insert_resource(ClearColor(match level {
             Level::Arena => Color::srgb(0.035, 0.045, 0.065),
+            Level::Freeway => Color::srgb_u8(60, 45, 20),
             Level::Warehouse => Color::srgb_u8(75, 70, 55),
         }))
         .add_plugins(DefaultPlugins.set(WindowPlugin {

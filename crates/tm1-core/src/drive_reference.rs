@@ -37,6 +37,7 @@ impl Reference {
         let opponent = match level {
             Level::Arena => Vehicle::Outlaw,
             Level::Warehouse => vehicle.warehouse_opponents()[0],
+            Level::Freeway => vehicle.freeway_opponents()[0],
         };
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
@@ -203,37 +204,44 @@ fn warehouse_lineups_and_ai_profiles_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn warehouse_group_spawn_original() {
+fn group_spawn_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
     put(&mut cpu, 0x8018c36c, 1);
-    put(&mut cpu, 0x8018c3b4, 1);
+
     cpu.put(0x80170238, &3u16.to_le_bytes());
     cpu.put(0x8017023a, &20u16.to_le_bytes());
-    for vehicle in Vehicle::ROSTER {
-        let mut player = PlayerVehicle::on_level(&exe, vehicle, Level::Warehouse).unwrap();
-        let cards: [Vehicle; 3] = vehicle.warehouse_opponents().try_into().unwrap();
-        cpu.call(0x801262ec, &[]);
-        cpu.random_state = player.seed;
-        let opponents = Opponent::spawn_lineup(&mut player, cards);
-        for (slot, opponent) in opponents.iter().enumerate() {
-            let addr = POLICE + 0x560 * slot as u32;
-            put(
-                &mut cpu,
-                0x8019f788 + 4 * slot as u32,
-                POLICE_CS + 0x200 * slot as u32,
-            );
-            cpu.put(addr, &[0; 0x560]);
-            cpu.put(addr + 6, &(slot as u16).to_le_bytes());
-            cpu.call(0x80124d34, &[addr, opponent.vehicle as u32, 1]);
-            cpu.call(0x80142064, &[addr]);
-            let base = (addr & 0x1fffff) as usize;
-            for (i, &v) in opponent.state.iter().enumerate() {
-                assert_eq!(v, cpu.ram[base + i], "{vehicle:?} slot {slot} byte {i:#x}");
+    for (level, init_points) in [(Level::Warehouse, 0x801262ec), (Level::Freeway, 0x801268f8)] {
+        put(&mut cpu, 0x8018c3b4, level as u32);
+        for vehicle in Vehicle::ROSTER {
+            let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
+            let cards = if level == Level::Freeway {
+                vehicle.freeway_opponents()
+            } else {
+                vehicle.warehouse_opponents()
+            };
+            cpu.call(init_points, &[]);
+            cpu.random_state = player.seed;
+            let opponents = Opponent::spawn_bout(&mut player, &cards);
+            for (slot, opponent) in opponents.iter().enumerate() {
+                let addr = POLICE + 0x560 * slot as u32;
+                put(
+                    &mut cpu,
+                    0x8019f788 + 4 * slot as u32,
+                    POLICE_CS + 0x200 * slot as u32,
+                );
+                cpu.put(addr, &[0; 0x560]);
+                cpu.put(addr + 6, &(slot as u16).to_le_bytes());
+                cpu.call(0x80124d34, &[addr, opponent.vehicle as u32, 1]);
+                cpu.call(0x80142064, &[addr]);
+                let base = (addr & 0x1fffff) as usize;
+                for (i, &v) in opponent.state.iter().enumerate() {
+                    assert_eq!(v, cpu.ram[base + i], "{vehicle:?} slot {slot} byte {i:#x}");
+                }
             }
+            assert_eq!(cpu.random_state, player.seed);
         }
-        assert_eq!(cpu.random_state, player.seed);
     }
 }
 #[test]
@@ -909,17 +917,41 @@ fn warehouse_encounter_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn warehouse_database_matches_retail_shell() {
+fn freeway_encounter_original() {
+    for player in Vehicle::ROSTER {
+        println!("Freeway retail encounter with {player:?}");
+        compare_encounter(player, 20, Level::Freeway);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn database_and_opponents_match_retail_shell() {
     let mut r = Reference::new();
-    put(&mut r.cpu, 0x8018c3b4, 1);
-    let address = r.cpu.word(0x8017187c + 4);
-    let start = (address & 0x1fffff) as usize;
-    for vehicle in Vehicle::ROSTER {
-        r.cpu.call(0x80152518, &[vehicle as u32]);
-        assert_eq!(
-            &r.cpu.ram[start..start + 3],
-            Level::Warehouse.database(vehicle).as_bytes()
-        );
+    for (level, masks) in [
+        (Level::Warehouse, 0x8017179cusize),
+        (Level::Freeway, 0x801717b4),
+    ] {
+        put(&mut r.cpu, 0x8018c3b4, level as u32);
+        let start = (r.cpu.word(0x8017187c + 4 * level as u32) & 0x1fffff) as usize;
+        for (i, vehicle) in Vehicle::CARD_ORDER.into_iter().enumerate() {
+            r.cpu.call(0x80152518, &[vehicle as u32]);
+            let db = level.database(vehicle);
+            assert_eq!(&r.cpu.ram[start..start + db.len()], db.as_bytes());
+            let ids = if level == Level::Freeway {
+                vehicle.freeway_opponents()
+            } else {
+                vehicle.warehouse_opponents()
+            };
+            let mask = Vehicle::CARD_ORDER
+                .iter()
+                .enumerate()
+                .fold(0u16, |mask, (i, v)| {
+                    mask | (u16::from(ids.contains(v)) << i)
+                });
+            let at = (masks & 0x1fffff) + 2 * i;
+            assert_eq!(mask.to_le_bytes(), r.cpu.ram[at..at + 2]);
+        }
     }
 }
 
@@ -1013,6 +1045,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     r.police.state[0x40] = 0;
     for entry in match level {
         Level::Arena => [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8],
+        Level::Freeway => [0x801268f8, 0x8012d3e0, 0x80130884, 0x80130c14, 0x80131310],
         Level::Warehouse => [0x801262ec, 0x8012cf58, 0x801307a4, 0x80130a98, 0x80131304],
     } {
         r.cpu.call(entry, &[]);
@@ -1024,8 +1057,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     r.cpu.put(0x8018c378, &(level as u16 + 1).to_le_bytes());
-    r.cpu
-        .put(0x8018c374, &[u8::from(level == Level::Warehouse)]);
+    r.cpu.put(0x8018c374, &[u8::from(level != Level::Arena)]);
     put(&mut r.cpu, 0x8018c3b4, level as u32);
     r.cpu.put(PLAYER + 0x388, &[0xff; 0x24]);
     r.cpu.call(0x80122ea4, &[PLAYER, 1]);
@@ -1062,14 +1094,18 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     r.sync();
     let mut lineup = Vec::new();
     let mut slots = vec![POLICE_CS];
-    if level == Level::Warehouse {
+    if level != Level::Arena {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc
             .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
             .unwrap();
         register_retail_stands(&mut r.cpu, &data);
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
-        let kinds = vehicle.warehouse_opponents();
+        let kinds = if level == Level::Freeway {
+            vehicle.freeway_opponents()
+        } else {
+            vehicle.warehouse_opponents()
+        };
         let root = |v| roots.iter().find(|r| r.1 == v).unwrap().0;
         r.scene = CollisionScene::for_opponents(
             &data,
@@ -1081,9 +1117,12 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.player.reset();
         lineup = Opponent::spawn_bout(&mut r.player, &kinds);
         r.cpu.random_state = r.player.seed;
-        slots = vec![POLICE_CS, 0x800e6000, 0x800e6200];
-        r.cpu.put(0x8018c336, &4u16.to_le_bytes());
-        r.cpu.put(0x8018c338, &3u16.to_le_bytes());
+        slots = std::iter::once(POLICE_CS)
+            .chain((0..kinds.len() as u32 - 1).map(|n| 0x800e6000 + 0x200 * n))
+            .collect();
+        r.cpu
+            .put(0x8018c336, &((1 + kinds.len()) as u16).to_le_bytes());
+        r.cpu.put(0x8018c338, &(kinds.len() as u16).to_le_bytes());
         for (i, car) in lineup.iter().enumerate() {
             let n = i as u32;
             let cs = slots[i];
@@ -1134,7 +1173,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.call(0x801351b0, &[]);
         r.cpu.call(0x801333d0, &[0x800d8000, 0]);
         r.cpu.call(0x8010e3d8, &[]);
-        r.cpu.call(0x80137d2c, &[]);
+        // animate_explosions advances active fragments once.
         r.cpu.call(0x801360bc, &[]);
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
             r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
@@ -1152,6 +1191,21 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
             r.compare();
         } else {
             r.scene.step_bout(&mut r.player, &mut lineup, input, fields);
+            let mut effects = [[0; 5]; 122];
+            let count = r.scene.effects(&mut effects);
+            let native_fragments = effects[..count]
+                .iter()
+                .filter(|e| e[3] == 7)
+                .map(|e| [e[0], e[1], e[2]]);
+            let retail_fragments = (0..20).filter_map(|i| {
+                let fragment = 0x80199db8 + 36 * i;
+                ((r.cpu.word(fragment + 28) as i32) > 0)
+                    .then(|| [0, 4, 8].map(|offset| r.cpu.word(fragment + offset) as i32))
+            });
+            assert!(
+                native_fragments.eq(retail_fragments),
+                "fragment positions at tick {tick}"
+            );
             for (addr, state) in std::iter::once((PLAYER, &r.player.state[..])).chain(
                 lineup
                     .iter()

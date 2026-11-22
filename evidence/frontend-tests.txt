@@ -1,6 +1,6 @@
 running 2 tests
-test driving::tests::warehouse_group_restarts_and_replays ... ok
+test driving::tests::group_restarts_and_replays ... ok
 Police defeated the taxi at idle step 741
 test driving::tests::presentation_clock_pause_focus_and_controller_reconnect ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.97s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s

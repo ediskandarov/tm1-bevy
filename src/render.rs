@@ -32,7 +32,7 @@ const COLUMNS: usize = 8;
 pub struct Arena {
     scene: Scene,
     sky: Option<Scene>,
-    missile_models: [Scene; 2],
+    missile_models: [Option<Scene>; 2],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     vehicle_start: usize,
@@ -59,7 +59,7 @@ impl Arena {
         sky: Option<Scene>,
         vehicle: [Scene; 3],
         opponents: Vec<[Scene; 3]>,
-        missile_models: [Scene; 2],
+        missile_models: [Option<Scene>; 2],
         explosion_frames: [SpriteFrame; 16],
         contrail_frames: [SpriteFrame; 8],
         arrows: [SpriteFrame; 4],
@@ -82,7 +82,7 @@ impl Arena {
             .polygons
             .iter()
             .chain(sky.iter().flat_map(|s| &s.polygons))
-            .chain(missile_models.iter().flat_map(|s| &s.polygons))
+            .chain(missile_models.iter().flatten().flat_map(|s| &s.polygons))
         {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
@@ -589,7 +589,9 @@ pub fn update(
     let count = drive.contacts.missile_poses(&mut poses);
     for pose in &poses[..count] {
         let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
-        let model = &arena.missile_models[usize::from(pose[0] == 312)];
+        let Some(model) = &arena.missile_models[usize::from(pose[0] == 312)] else {
+            continue;
+        };
         for p in &model.polygons {
             let batch = if p.semi_transparent && p.texture.is_some_and(|t| (t.page >> 5) & 3 == 1) {
                 &mut additive

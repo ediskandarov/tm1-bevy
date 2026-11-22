@@ -19,6 +19,7 @@ unsafe extern "C" {
 pub enum Level {
     Arena,
     Warehouse,
+    Freeway,
 }
 
 impl Level {
@@ -26,6 +27,10 @@ impl Level {
         use Vehicle::*;
         match self {
             Self::Arena => "XARENA1",
+            Self::Freeway => match vehicle {
+                SweetTooth | YellowJacket | Darkside | Hammerhead | Spectre | RoadKill => "XFWY1",
+                _ => "XFWY2",
+            },
             Self::Warehouse => match vehicle {
                 SweetTooth | YellowJacket | Darkside | Outlaw | CrimsonFury | Thumper => "WH1",
                 _ => "WH2",
@@ -84,7 +89,15 @@ impl Vehicle {
         const MASKS: [u16; 12] = [
             0x016, 0x034, 0x032, 0x016, 0x026, 0x016, 0x980, 0x940, 0x8c0, 0x1c0, 0x1c0, 0x1c0,
         ];
-        let mask = MASKS[Self::CARD_ORDER.iter().position(|v| *v == self).unwrap()];
+        self.opponents_from_masks(MASKS)
+    }
+    pub fn freeway_opponents(self) -> Vec<Self> {
+        self.opponents_from_masks([
+            0xe06, 0xe05, 0xe03, 0x1f0, 0x1e8, 0x1d8, 0x1b8, 0x178, 0x0f8, 0xc07, 0xa07, 0x607,
+        ])
+    }
+    fn opponents_from_masks(self, masks: [u16; 12]) -> Vec<Self> {
+        let mask = masks[Self::CARD_ORDER.iter().position(|v| *v == self).unwrap()];
         Self::CARD_ORDER
             .into_iter()
             .enumerate()
