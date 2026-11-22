@@ -812,6 +812,70 @@ fn control_options_match_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn rooftops_passage_view_matches_disc() {
+    use CarView::{Chase, Cockpit, Far};
+    use PlayerView::{Car, Helicopter};
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
+    r.cpu.put(PLAYER, &r.player.state);
+    put(&mut r.cpu, 0x8018c378, 6);
+    put(&mut r.cpu, 0x8018c658, RENDER_SCRATCH);
+    r.cpu.put(0x8018c364, &[1]); // helicopter unlocked
+    for entry in [0x8015060c, 0x801505c4, 0x8010ad84, 0x8010add4, 0x80144be8] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let number = |view| match view {
+        Car(mode) => mode as u32,
+        Helicopter => 4,
+    };
+    for initial in [Car(Cockpit), Car(Chase), Car(Far), Helicopter] {
+        let mut passage = RooftopPassage::default();
+        let mut view = initial;
+        put(&mut r.cpu, 0x8018c33c, 1);
+        put(&mut r.cpu, PLAYER + 0xf4, number(initial));
+        put(&mut r.cpu, PLAYER + 0xf8, number(initial));
+        for (group, direction) in [
+            (5, 0),
+            (7, 0),
+            (8, 0),
+            (5, 0),
+            (7, 0),
+            (6, 1),
+            (6, 0),
+            (6, -1),
+            (6, 0),
+            (5, 0),
+        ] {
+            let before = view;
+            view = match (direction, view) {
+                (1, Car(Cockpit)) | (-1, Car(Far)) => Car(Chase),
+                (1, Car(Chase)) | (-1, Helicopter) => Car(Far),
+                (1, Car(Far)) | (-1, Car(Cockpit)) => Helicopter,
+                (1, Helicopter) | (-1, Car(Chase)) => Car(Cockpit),
+                _ => view,
+            };
+            let selection = passage.update(group, before, view, false);
+            view = selection.unwrap_or(view);
+            r.cpu.put(PLAYER + 0xc0, &group.to_le_bytes());
+            r.cpu.put(
+                PLAYER + 0xd9,
+                &[(direction == -1).into(), (direction == 1).into()],
+            );
+            r.cpu.call(0x8014eff4, &[PLAYER]);
+            assert_eq!(
+                number(view),
+                r.cpu.word(PLAYER + 0xf4),
+                "{initial:?} group {group} direction {direction}"
+            );
+            assert_eq!(passage.return_view.is_none(), r.cpu.word(0x8018c33c) != 0);
+            if let Some(saved) = passage.return_view {
+                assert_eq!(number(saved), r.cpu.word(PLAYER + 0xf8));
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn rooftops_fall_camera_original() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
     let cs = RENDER_SCRATCH;

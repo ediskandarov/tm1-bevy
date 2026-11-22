@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 use std::time::Duration;
-use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
+use tm1_core::drive::{
+    CollisionScene, Input, Opponent, PlayerVehicle, PlayerView, RooftopPassage, Vehicle,
+};
 
 pub struct BattleSound {
     pub id: usize,
@@ -16,6 +18,7 @@ pub struct Drive {
     pub camera: tm1_core::drive::VehicleCamera,
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
+    rooftop_passage: RooftopPassage,
     helicopter: Option<tm1_core::drive::Helicopter>,
     pub deck: tm1_core::drive::ArenaDeck,
     pub opponents: Vec<Opponent>,
@@ -51,6 +54,39 @@ impl Drive {
                 self.player.level(),
                 Level::Arena | Level::Rooftops | Level::Arena5
             )
+    }
+    fn selected_view(&self) -> PlayerView {
+        if self.helicopter_active {
+            PlayerView::Helicopter
+        } else {
+            PlayerView::Car(self.camera.mode)
+        }
+    }
+    fn update_rooftop_passage(&mut self, before: PlayerView) {
+        if self.player.level() != tm1_core::drive::Level::Rooftops
+            || !self.player.accepts_view_input()
+        {
+            return;
+        }
+        let selected = self.selected_view();
+        let Some(view) = self.rooftop_passage.update(
+            self.player.ground_group(),
+            before,
+            selected,
+            self.camera.fixed_pose.is_some() && !self.helicopter_active,
+        ) else {
+            return;
+        };
+        match view {
+            PlayerView::Helicopter if !self.helicopter_active => self.toggle_helicopter(),
+            PlayerView::Car(mode) => {
+                self.camera.mode = mode;
+                if self.helicopter_active {
+                    self.toggle_helicopter();
+                }
+            }
+            _ => {}
+        }
     }
     fn cycle_camera(&mut self, forward: bool) {
         use tm1_core::drive::CarView;
@@ -192,6 +228,7 @@ impl Drive {
             mirror: false,
             helicopter_unlocked: false,
             helicopter_active: false,
+            rooftop_passage: Default::default(),
             helicopter: None,
             restart_count: 0,
             was_focused: false,
@@ -238,6 +275,7 @@ pub fn advance(
         state.player.reset();
         state.player.set_pad_layout(state.settings.layout);
         state.camera.update(&state.player, true);
+        drive.rooftop_passage = Default::default();
         drive.helicopter = None;
         drive.helicopter_active = false;
         drive.victory_fields = 0;
@@ -365,16 +403,22 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    if keys.just_pressed(KeyCode::KeyH) {
-        drive.toggle_helicopter();
+    let previous_view = drive.selected_view();
+    if drive.player.accepts_view_input() {
+        if keys.just_pressed(KeyCode::KeyH) {
+            drive.toggle_helicopter();
+        }
+        if keys.just_pressed(KeyCode::KeyB) && !drive.helicopter_active {
+            drive.mirror = !drive.mirror;
+        }
+        if keys.just_pressed(KeyCode::KeyC) {
+            drive.cycle_camera(true);
+        } else if keys.just_pressed(KeyCode::KeyZ) {
+            drive.cycle_camera(false);
+        }
     }
-    if keys.just_pressed(KeyCode::KeyB) && !drive.helicopter_active {
-        drive.mirror = !drive.mirror;
-    }
-    if keys.just_pressed(KeyCode::KeyC) {
-        drive.cycle_camera(true);
-    } else if keys.just_pressed(KeyCode::KeyZ) {
-        drive.cycle_camera(false);
+    if previous_view != drive.selected_view() {
+        drive.update_rooftop_passage(previous_view);
     }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE),
@@ -461,6 +505,7 @@ pub fn advance(
                 }
             }
         }
+        state.update_rooftop_passage(state.selected_view());
         state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);

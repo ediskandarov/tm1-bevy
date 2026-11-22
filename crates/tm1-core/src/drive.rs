@@ -474,6 +474,12 @@ impl PlayerVehicle {
     pub fn state(&self) -> &[u8] {
         &self.state
     }
+    pub fn ground_group(&self) -> i16 {
+        i16::from_le_bytes(self.state[0xc0..0xc2].try_into().unwrap())
+    }
+    pub fn accepts_view_input(&self) -> bool {
+        self.state[0xab] == 0 && self.state[0xa0] == 0
+    }
     pub fn position(&self) -> [i32; 3] {
         std::array::from_fn(|i| self.word(0x388 + i * 4))
     }
@@ -620,6 +626,49 @@ pub enum CarView {
     Cockpit = 1,
     Chase,
     Far,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PlayerView {
+    Car(CarView),
+    Helicopter,
+}
+
+#[derive(Default)]
+pub struct RooftopPassage {
+    return_view: Option<PlayerView>,
+}
+
+impl RooftopPassage {
+    /// CheckVRMode processes the pad before checking the current ground group.
+    pub fn update(
+        &mut self,
+        group: i16,
+        before: PlayerView,
+        selected: PlayerView,
+        fixed: bool,
+    ) -> Option<PlayerView> {
+        if group == 7 && self.return_view.is_none() {
+            self.return_view = Some(before);
+        }
+        let saved = self.return_view.as_mut()?;
+        if selected != before {
+            *saved = selected;
+        }
+        if group == 5 {
+            return self.return_view.take();
+        }
+        if !fixed
+            && matches!(
+                selected,
+                PlayerView::Car(CarView::Far) | PlayerView::Helicopter
+            )
+        {
+            *saved = before;
+            return Some(PlayerView::Car(CarView::Chase));
+        }
+        None
+    }
 }
 
 pub struct VehicleCamera {
