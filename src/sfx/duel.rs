@@ -25,7 +25,7 @@ pub struct DuelBank {
 pub struct DuelEngine {
     slot: usize,
     source: Handle<StereoPcm>,
-    range: f32,
+    pitch: super::EnginePitch,
 }
 
 #[derive(Component)]
@@ -83,7 +83,7 @@ impl DuelBank {
                     DuelEngine {
                         slot,
                         source: source.clone(),
-                        range: layer.range,
+                        pitch: layer.pitch,
                     },
                     Voice {
                         order: sequence.next(),
@@ -106,7 +106,7 @@ impl DuelBank {
                 StageEntity,
                 crate::duel::ScoreEngine,
                 PlaybackSettings::DESPAWN
-                    .with_speed(engine_speed(layer.range, 30))
+                    .with_speed(engine_speed(layer.pitch, 30))
                     .with_volume(Volume::Linear(0.28 * gain)),
             ));
             layer.play(&mut voice);
@@ -244,7 +244,7 @@ pub fn mix(
             else {
                 continue;
             };
-            settings.speed = engine_speed(engine.range, duel.cars[engine.slot].rev());
+            settings.speed = engine_speed(engine.pitch, duel.cars[engine.slot].rev());
             if rank < 24 {
                 if !audible {
                     commands

@@ -98,3 +98,19 @@ fn native_math_matches_original_instructions() {
         values.len()
     );
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn spu_note_and_fine_pitch_match_retail() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    for note in 0..=127 {
+        for fine in 0..=127 {
+            assert_eq!(
+                u32::from(tm1_core::sound::spu_pitch(note, fine)),
+                cpu.call(0x8016fc60, &[60, 0, u32::from(note), u32::from(fine)]),
+                "note={note} fine={fine}"
+            );
+        }
+    }
+}

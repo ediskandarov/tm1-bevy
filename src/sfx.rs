@@ -15,7 +15,7 @@ pub struct Sounds {
     rival_engines: Vec<Vec<EngineSample>>,
     voices: Vec<Handle<AudioSource>>,
     player_engine: Vec<EngineSample>,
-    screen_engine: Vec<(Handle<pcm::StereoPcm>, f32)>,
+    screen_engine: Vec<(Handle<pcm::StereoPcm>, EnginePitch)>,
 }
 
 struct EffectTone {
@@ -42,7 +42,7 @@ impl EffectTone {
 pub struct EngineSample {
     priority: u8,
     pub clip: pcm::StereoPcm,
-    pub range: f32,
+    pub pitch: EnginePitch,
 }
 impl EngineSample {
     pub fn load(bank: &[u8], car: tm1_core::drive::Vehicle) -> Result<Vec<Self>> {
@@ -56,54 +56,71 @@ impl EngineSample {
                 Ok(Self {
                     priority,
                     clip: pcm::StereoPcm::new(&sample.mix, Some(marker)),
-                    range: sample.range,
+                    pitch: sample.pitch,
                 })
             })
             .collect()
     }
 }
 
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq)]
+pub struct EnginePitch {
+    base: i32,
+    span: i32,
+}
+impl EnginePitch {
+    fn from_tone(tone: &tm1_assets::sound::Tone) -> Self {
+        Self {
+            base: 60 + i32::from(tone.low) - i32::from(tone.center),
+            span: i32::from(tone.high) - i32::from(tone.low),
+        }
+    }
+    fn register(self, rev: i32) -> u16 {
+        let steps = self.base * 128 + self.span * 128 * rev.clamp(0, 99) / 99;
+        tm1_core::sound::spu_pitch((steps / 128) as u8, (steps % 128) as u8)
+    }
+}
+fn sample_pitch(tone: &tm1_assets::sound::Tone, engine: bool) -> usize {
+    usize::from(if engine {
+        EnginePitch::from_tone(tone).register(0)
+    } else {
+        tm1_core::sound::spu_pitch(120u8.wrapping_sub(tone.center), tone.fine)
+    })
+    .clamp(1, 0x4000)
+}
 pub struct Sample {
     mix: Vec<[f32; 2]>,
-    pub range: f32,
+    pub pitch: EnginePitch,
 }
 impl Sample {
     pub fn load(bank: &[u8], prog: usize, engine: bool) -> Result<Self> {
         Ok(Self::from_tones(program(bank, prog)?, engine))
     }
     fn from_tones(tones: Vec<tm1_assets::sound::Tone>, engine: bool) -> Self {
-        let mut engine_range = 0.;
+        let mut pitch = EnginePitch::default();
         let mut mix = Vec::<[f32; 2]>::new();
         for t in tones {
-            let note = if engine {
-                engine_range = f32::from(t.high) - f32::from(t.low);
-                t.low
-            } else {
-                60
-            };
-            let rate = 2f32.powf((f32::from(note) - f32::from(t.center)) / 12.);
-            let n = (t.pcm.len() as f32 / rate).ceil() as usize;
+            if engine {
+                pitch = EnginePitch::from_tone(&t);
+            }
+            let increment = sample_pitch(&t, engine);
+            let n = (t.pcm.len() * 4096).div_ceil(increment);
             mix.resize(mix.len().max(n), [0.; 2]);
             let pan = f32::from(t.pan) / 64.;
             let gain = f32::from(t.volume) / 127.;
             for (i, out) in mix[..n].iter_mut().enumerate() {
-                let at = (i as f32 * rate) as usize;
+                let at = i * increment / 4096;
                 let v = t.pcm[at.min(t.pcm.len() - 1)] as f32 * gain;
                 out[0] += v * (2. - pan).min(1.);
                 out[1] += v * pan.min(1.);
             }
         }
-        Self {
-            mix,
-            range: engine_range,
-        }
+        Self { mix, pitch }
     }
     fn single(tone: tm1_assets::sound::Tone, engine: bool) -> (Self, Option<usize>) {
-        let first_loop_frame = tone.loop_start.map(|frame| {
-            let note = if engine { tone.low } else { 60 };
-            let rate = 2.0_f32.powf((f32::from(note) - f32::from(tone.center)) / 12.);
-            (frame as f64 / f64::from(rate)).ceil() as usize
-        });
+        let first_loop_frame = tone
+            .loop_start
+            .map(|frame| (frame * 4096).div_ceil(sample_pitch(&tone, engine)));
         (Sample::from_tones(vec![tone], engine), first_loop_frame)
     }
     pub fn wave(&self) -> Result<AudioSource> {
@@ -124,14 +141,14 @@ struct PreparedTone {
     wave: AudioSource,
     looping_clip: Option<pcm::StereoPcm>,
     priority: u8,
-    range: f32,
+    pitch: EnginePitch,
 }
 
 struct Layer {
     source: Handle<AudioSource>,
     looping_clip: Option<Handle<pcm::StereoPcm>>,
     priority: u8,
-    range: f32,
+    pitch: EnginePitch,
 }
 
 impl PreparedTone {
@@ -148,7 +165,7 @@ impl PreparedTone {
             looping_clip: first_loop_frame
                 .map(|frame| pcm::StereoPcm::new(&sample.mix, Some(frame))),
             priority,
-            range: sample.range,
+            pitch: sample.pitch,
         })
     }
     fn register(self, world: &mut World) -> Layer {
@@ -158,7 +175,7 @@ impl PreparedTone {
                 .looping_clip
                 .map(|clip| world.resource_mut::<Assets<pcm::StereoPcm>>().add(clip)),
             priority: self.priority,
-            range: self.range,
+            pitch: self.pitch,
         }
     }
 }
@@ -176,9 +193,9 @@ pub struct VehicleSounds {
     turbo: Vec<Layer>,
 }
 
-pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
-    let pitch_steps = (range as i32 * 128 * rev.clamp(0, 99)) / 99;
-    let speed = 2f32.powf(pitch_steps as f32 / (128. * 12.));
+pub(crate) fn engine_speed(pitch: EnginePitch, rev: i32) -> f32 {
+    let speed = f32::from(pitch.register(rev).clamp(1, 0x4000))
+        / f32::from(pitch.register(0).clamp(1, 0x4000));
     // Rodio 0.22 multiplies the reduced input and output rates in u32.
     // Common output rates share a factor of 25 Hz with these VAB rates.
     let rate = (44100. * speed / 25.).round() * 25.;
@@ -241,11 +258,11 @@ impl Sounds {
     pub fn ending_engine(&self, gain: f32) -> Vec<(AudioPlayer<pcm::StereoPcm>, PlaybackSettings)> {
         self.screen_engine
             .iter()
-            .map(|(source, range)| {
+            .map(|(source, pitch)| {
                 (
                     AudioPlayer(source.clone()),
                     PlaybackSettings::ONCE
-                        .with_speed(engine_speed(*range, 30))
+                        .with_speed(engine_speed(*pitch, 30))
                         .with_volume(Volume::Linear(0.28 * gain)),
                 )
             })
@@ -306,7 +323,7 @@ pub struct EngineTone {
     priority: u8,
     source: Handle<pcm::StereoPcm>,
     levels: pcm::Levels,
-    range: f32,
+    pitch: EnginePitch,
 }
 #[derive(Component)]
 pub struct OneShot {
@@ -365,7 +382,7 @@ pub fn start(
         );
         for EngineSample {
             clip,
-            range,
+            pitch,
             priority,
         } in tones
         {
@@ -377,19 +394,19 @@ pub fn start(
                     order: slot.is_none().then(|| sequence.next()),
                     source: source.clone(),
                     levels: levels.clone(),
-                    range,
+                    pitch,
                 },
             ));
             if let Some(slot) = slot {
                 entity.insert(RivalEngine { slot });
             } else {
-                sounds.screen_engine.push((clips.add(clip), range));
+                sounds.screen_engine.push((clips.add(clip), pitch));
                 entity.insert((
                     Engine,
                     AudioPlayer(source),
                     PlaybackSettings::ONCE
                         .with_volume(Volume::Linear(0.28))
-                        .with_speed(engine_speed(range, drive.player.rev())),
+                        .with_speed(engine_speed(pitch, drive.player.rev())),
                 ));
             }
         }
@@ -463,7 +480,7 @@ pub fn update(
             engine: true,
         });
         engine.levels.set(channels, 99);
-        let speed = engine_speed(engine.range, rev);
+        let speed = engine_speed(engine.pitch, rev);
         if reset && playing {
             commands.entity(entity).remove::<AudioSink>();
         }
@@ -650,6 +667,32 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn effect_fine_tune_reaches_the_pcm_and_loop_length() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let tone = program(&bank, 44).unwrap().remove(0);
+        assert_eq!((tone.center, tone.fine), (69, 18));
+        // SOUND.c sets note 51, fine 18 on this voice (pitch register 2453).
+        let increment = 2453;
+        let frames = (tone.pcm.len() * 4096).div_ceil(increment);
+        let marker = tone.loop_start.map(|i| (i * 4096).div_ceil(increment));
+        let samples: Vec<_> = (0..1024)
+            .map(|i| {
+                let v = f32::from(tone.pcm[i * increment / 4096]) * (f32::from(tone.volume) / 127.);
+                v * (f32::from(tone.pan) / 64.).min(1.)
+            })
+            .collect();
+        let (sample, loop_start) = Sample::single(tone, false);
+        assert_eq!(sample.mix.len(), frames);
+        assert_eq!(loop_start, marker);
+        assert!(samples.iter().any(|v| *v != 0.));
+        for (actual, want) in sample.mix.iter().zip(samples) {
+            assert_eq!(actual[1], want);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn actor_signatures_and_wrecks_select_the_disc_programs() {
         use tm1_core::drive::CarSound;
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
@@ -820,14 +863,14 @@ mod tests {
     fn engine_pitch_fits_the_audio_resampler() {
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let bank = disc.read("SND/UACORE.VAB").unwrap();
-        let ranges = Vehicle::ROSTER
+        let pitches = Vehicle::ROSTER
             .into_iter()
             .chain([Vehicle::Minion])
             .flat_map(|car| program(&bank, car.sound_programs().0).unwrap())
-            .map(|tone| tone.high - tone.low);
-        for range in ranges {
+            .map(|tone| EnginePitch::from_tone(&tone));
+        for pitch in pitches {
             for rev in 0..=99 {
-                let rate = (44100. * engine_speed(range as f32, rev)) as u32;
+                let rate = (44100. * engine_speed(pitch, rev)) as u32;
                 assert_eq!(rate % 25, 0);
                 for output in [44100, 48000, 88200, 96000, 192000] {
                     let (mut a, mut b) = (rate, output);
@@ -871,9 +914,9 @@ mod tests {
         let mut battle = world
             .query_filtered::<(&EngineTone, &AudioPlayer<pcm::StereoPcm>), With<Engine>>()
             .iter(&world)
-            .map(|(tone, player)| (tone.range as i32, player.0.clone()))
+            .map(|(tone, player)| (tone.pitch, player.0.clone()))
             .collect::<Vec<_>>();
-        battle.sort_by_key(|(range, _)| *range);
+        battle.sort_by_key(|(pitch, _)| pitch.span);
         crate::ending::begin(&mut world).unwrap();
         let mut reward = world.query_filtered::<(&PlaybackSettings,&AudioPlayer<pcm::StereoPcm>), With<crate::ending::EndingEngine>>()
             .iter(&world).map(|(setting,player)| (setting.speed,player.0.clone())).collect::<Vec<_>>();
@@ -883,10 +926,10 @@ mod tests {
         assert_eq!(battle.len(), 2);
         assert_eq!(reward.len(), 2);
         let clips = world.resource::<Assets<pcm::StereoPcm>>();
-        for ((tone, (range, driving)), (speed, ending)) in tones.into_iter().zip(battle).zip(reward)
+        for ((tone, (pitch, driving)), (speed, ending)) in tones.into_iter().zip(battle).zip(reward)
         {
-            assert_eq!(range, i32::from(tone.high - tone.low));
-            assert_eq!(speed, engine_speed(range as f32, 30));
+            assert_eq!(pitch, EnginePitch::from_tone(&tone));
+            assert_eq!(speed, engine_speed(pitch, 30));
             let (dry, marker) = Sample::single(tone, true);
             let mut drive = clips.get(&driving).unwrap().decoder();
             let mut screen = clips.get(&ending).unwrap().decoder();
