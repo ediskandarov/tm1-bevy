@@ -184,6 +184,26 @@ impl Vehicle {
         Self::Hammerhead,
         Self::RoadKill,
     ];
+    pub fn sound_programs(self) -> (usize, usize) {
+        use Vehicle::*;
+        // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
+        match self {
+            SweetTooth => (1, 41),
+            YellowJacket => (0, 43),
+            Darkside => (2, 40),
+            Hammerhead => (3, 45),
+            Warthog => (5, 48),
+            Spectre => (6, 50),
+            RoadKill => (10, 44),
+            Thumper => (8, 49),
+            Outlaw => (7, 39),
+            CrimsonFury => (4, 42),
+            MrGrimm => (11, 47),
+            PitViper => (9, 46),
+            Minion => (55, 56),
+        }
+    }
+
     pub fn warehouse_opponents(self) -> Vec<Self> {
         const MASKS: [u16; 12] = [
             0x016, 0x034, 0x032, 0x016, 0x026, 0x016, 0x980, 0x940, 0x8c0, 0x1c0, 0x1c0, 0x1c0,
@@ -1332,14 +1352,27 @@ impl PlayerVehicle {
     }
 }
 
+fn engine_rev(speed: i32, gear_speed: i32, gear: u8, turbo: u8) -> i32 {
+    if gear != 0 && turbo != 0 {
+        return 99;
+    }
+    (speed.abs() * 49 / gear_speed.max(1) + if gear != 0 { 49 } else { 0 }).clamp(0, 99)
+}
 impl PlayerVehicle {
     pub fn rev(&self) -> i32 {
-        let gear = self.state[0xa0 + 4] != 0;
-        if gear && self.state[0xa0 + 13] != 0 {
-            return 99;
-        }
-        (self.word(0x398).abs() * 49 / self.word(0x1e0).max(1) + if gear { 49 } else { 0 })
-            .clamp(0, 99)
+        engine_rev(
+            self.word(0x398),
+            self.word(0x1e0),
+            self.state[0xa4],
+            self.state[0xad],
+        )
+    }
+}
+impl Opponent {
+    pub fn engine_rev(&self) -> Option<i32> {
+        let word = |offset| i32::from_le_bytes(self.state[offset..offset + 4].try_into().unwrap());
+        (self.state[0x40] != 0)
+            .then(|| engine_rev(word(0x454), word(0x2b4), self.state[0x6a], self.state[0x73]))
     }
 }
 

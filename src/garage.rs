@@ -38,7 +38,7 @@ impl Garage {
         let mut cars = Vec::new();
         let mut bios = Vec::new();
         for (i, car) in Vehicle::CARD_ORDER.into_iter().enumerate() {
-            let (engine, signature) = crate::sfx::programs(car);
+            let (engine, signature) = car.sound_programs();
             let motor = crate::sfx::Sample::load(&bank, engine, true)?;
             audio.push((
                 motor.wave(0.)?,
@@ -103,7 +103,7 @@ impl Garage {
                         world,
                         engine,
                         PlaybackSettings::LOOP
-                            .with_speed(2f32.powf(range * 30. / (99. * 12.)))
+                            .with_speed(crate::sfx::engine_speed(*range, 30))
                             .with_volume(Volume::Linear(0.28 * gain)),
                     ),
                     spawn(

@@ -206,6 +206,64 @@ impl Reference {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn engine_requests_match_disc() {
+    let mut r = Reference::new();
+    let table = r.cpu.call(0x801073bc, &[]);
+    for car in Vehicle::ROSTER.into_iter().chain([Vehicle::Minion]) {
+        for player in [false, true] {
+            let (address, state, flag, velocity, gear_limit, name) = if player {
+                (PLAYER, &mut r.player.state[..], 0xa0, 0x398, 0x1e0, 0x94)
+            } else {
+                (POLICE, &mut r.police.state[..], 0x66, 0x454, 0x2b4, 0x3c)
+            };
+            state[name..name + 4].copy_from_slice(&(car as i32).to_le_bytes());
+            state[gear_limit..gear_limit + 4].copy_from_slice(&120i32.to_le_bytes());
+            r.cpu.put(address, state);
+            for speed in [-200i32, -75, 0, 61, 120, 300] {
+                for (gear, turbo) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                    let state = if player {
+                        &mut r.player.state[..]
+                    } else {
+                        &mut r.police.state[..]
+                    };
+                    state[velocity..velocity + 4].copy_from_slice(&speed.to_le_bytes());
+                    state[flag + 4] = gear;
+                    state[flag + 13] = turbo;
+                    r.cpu.put(address, state);
+                    let mut rev = None;
+                    r.cpu.call_observed(
+                        0x80150790,
+                        &[0, address, player as u32],
+                        0x80000080,
+                        |cpu| {
+                            if cpu.pc() == 0x80106d60 && cpu.r[7] == 1 {
+                                let record = (table + 6 * cpu.r[4]) as usize & 0x1fffff;
+                                assert_eq!(
+                                    cpu.ram[record + 2] as usize,
+                                    car.sound_programs().0,
+                                    "{car:?}"
+                                );
+                                rev = Some((cpu.word(cpu.r[29] + 16) as i32).clamp(0, 99));
+                            }
+                        },
+                    );
+                    r.police.state[0x40] = 1;
+                    let port = if player {
+                        Some(r.player.rev())
+                    } else {
+                        r.police.engine_rev()
+                    };
+                    assert_eq!(port, rev, "{car:?} speed {speed} gear {gear} turbo {turbo}");
+                }
+            }
+        }
+    }
+    r.police.state[0x40] = 0;
+    assert_eq!(r.police.engine_rev(), None);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn hud_opponent_matches_disc() {
     let mut r = Reference::new();
     let mut opponents = Opponent::spawn_bout(&mut r.player, &[Vehicle::Outlaw, Vehicle::Darkside]);

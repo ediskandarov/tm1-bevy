@@ -717,6 +717,13 @@ mod tests {
             );
             assert_eq!(
                 world
+                    .query_filtered::<Entity, With<crate::sfx::RivalEngine>>()
+                    .iter(&world)
+                    .count(),
+                count + usize::from(level == Level::Rooftops)
+            );
+            assert_eq!(
+                world
                     .query_filtered::<Entity, With<crate::render::HudLabel>>()
                     .iter(&world)
                     .count(),

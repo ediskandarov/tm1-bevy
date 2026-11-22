@@ -38,6 +38,7 @@ pub fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
     sinks: Query<&AudioSink>,
+    rival_engines: Query<&SpatialAudioSink, With<crate::sfx::RivalEngine>>,
     pads: Query<&Gamepad>,
     engine: Query<&AudioSink, With<crate::sfx::Engine>>,
     music: Query<&AudioSink, With<crate::music::ArenaMusic>>,
@@ -59,9 +60,16 @@ pub fn capture(
         if capture.demo && capture.attempts == 1 {
             eprintln!(
                 "Active audio sinks: {}, connected gamepads: {}",
-                sinks.iter().count(),
+                sinks.iter().count() + rival_engines.iter().count(),
                 pads.iter().count()
             );
+            for sink in &rival_engines {
+                eprintln!(
+                    "Rival engine playback {:?}, speed {:.3}",
+                    sink.position(),
+                    sink.speed()
+                );
+            }
             if let (Ok(engine), Ok(music)) = (engine.single(), music.single()) {
                 eprintln!(
                     "Engine playback {:?}, music playback {:?}",

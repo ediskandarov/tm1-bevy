@@ -8,29 +8,10 @@ use tm1_assets::{disc::Disc, sound::program};
 #[derive(Resource)]
 pub struct Sounds {
     sources: Vec<AudioSource>,
+    rival_engines: Vec<(AudioSource, f32, std::time::Duration)>,
     voices: Vec<Handle<AudioSource>>,
     engine_range: f32,
     engine_loop: std::time::Duration,
-}
-
-pub fn programs(car: tm1_core::drive::Vehicle) -> (usize, usize) {
-    use tm1_core::drive::Vehicle::*;
-    // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
-    match car {
-        SweetTooth => (1, 41),
-        YellowJacket => (0, 43),
-        Darkside => (2, 40),
-        Hammerhead => (3, 45),
-        Warthog => (5, 48),
-        Spectre => (6, 50),
-        RoadKill => (10, 44),
-        Thumper => (8, 49),
-        Outlaw => (7, 39),
-        CrimsonFury => (4, 42),
-        MrGrimm => (11, 47),
-        PitViper => (9, 46),
-        Minion => (55, 56),
-    }
 }
 
 pub struct Sample {
@@ -85,12 +66,17 @@ impl Sample {
     }
 }
 
+pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
+    let pitch_steps = (range as i32 * 128 * rev.clamp(0, 99)) / 99;
+    2f32.powf(pitch_steps as f32 / (128. * 12.))
+}
+
 impl Sounds {
     pub fn ending_engine(&self, gain: f32) -> (AudioPlayer, PlaybackSettings) {
         (
             AudioPlayer::new(self.voices[2].clone()),
             PlaybackSettings::LOOP
-                .with_speed(2f32.powf(self.engine_range * 30. / (99. * 12.)))
+                .with_speed(engine_speed(self.engine_range, 30))
                 .with_volume(Volume::Linear(0.28 * gain)),
         )
     }
@@ -114,11 +100,11 @@ impl Sounds {
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
         use tm1_core::drive::Vehicle::SweetTooth;
-        let (engine, special) = programs(vehicle);
+        let (engine, special) = vehicle.sound_programs();
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
-            .chain(opponents.iter().map(|&car| programs(car).1))
-            .chain([52, 53, 27, 38, 36, programs(SweetTooth).1, 57, 58])
+            .chain(opponents.iter().map(|&car| car.sound_programs().1))
+            .chain([52, 53, 27, 38, 36, SweetTooth.sound_programs().1, 57, 58])
             .enumerate()
         {
             let sample = Sample::load(&bank, prog, id == 0)?;
@@ -131,8 +117,14 @@ impl Sounds {
                 sources.push(sample.wave(pan)?);
             }
         }
+        let mut rival_engines = Vec::with_capacity(opponents.len());
+        for car in opponents {
+            let sample = Sample::load(&bank, car.sound_programs().0, true)?;
+            rival_engines.push((sample.wave(0.)?, sample.range, sample.loop_start));
+        }
         Ok(Self {
             sources,
+            rival_engines,
             voices: Vec::new(),
             engine_range,
             engine_loop,
@@ -141,6 +133,13 @@ impl Sounds {
 }
 #[derive(Component)]
 pub struct Engine;
+#[derive(Component)]
+pub struct RivalEngine {
+    slot: usize,
+    source: Handle<AudioSource>,
+    range: f32,
+    loop_start: std::time::Duration,
+}
 #[derive(Component)]
 pub struct OneShot(Option<crate::driving::ExclusiveVoice>);
 pub fn start(
@@ -153,6 +152,19 @@ pub fn start(
         .into_iter()
         .map(|s| assets.add(s))
         .collect();
+    commands.spawn((crate::campaign::StageEntity, SpatialListener::new(1.0)));
+    for (slot, (source, range, loop_start)) in sounds.rival_engines.drain(..).enumerate() {
+        commands.spawn((
+            crate::campaign::StageEntity,
+            Transform::default(),
+            RivalEngine {
+                slot,
+                source: assets.add(source),
+                range,
+                loop_start,
+            },
+        ));
+    }
     commands.spawn((
         crate::campaign::StageEntity,
         Engine,
@@ -169,6 +181,13 @@ pub fn update(
     window: Single<&Window>,
     mut engine: Query<&mut AudioSink, With<Engine>>,
     shots: Query<(Entity, Option<&AudioSink>, &OneShot), Without<Engine>>,
+    mut rivals: Query<(
+        Entity,
+        &RivalEngine,
+        &mut Transform,
+        Has<AudioPlayer>,
+        Option<&mut SpatialAudioSink>,
+    )>,
     mut restart: Local<u32>,
 ) {
     let reset = *restart != drive.restart_count;
@@ -179,11 +198,73 @@ pub fn update(
         if reset {
             let _ = sink.try_seek(sounds.engine_loop);
         }
-        sink.set_speed(2f32.powf(sounds.engine_range * drive.player.rev() as f32 / (99. * 12.)));
+        sink.set_speed(engine_speed(sounds.engine_range, drive.player.rev()));
         if pause {
             sink.pause();
         } else {
             sink.play();
+        }
+    }
+    let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
+    let listener = drive.player.position();
+    let right = Vec3::new(heading.cos(), -heading.sin(), 0.);
+    let mix_position = |point: [i32; 3]| {
+        let offset = Vec3::from_array(std::array::from_fn(|i| (point[i] - listener[i]) as f32));
+        let distance = offset.length();
+        let pan = (offset.dot(right) / distance.max(100.)).clamp(-1., 1.);
+        (pan, (1. - distance / 6000.).clamp(0., 1.))
+    };
+    let occupied = shots.iter().count()
+        + rivals
+            .iter()
+            .filter(|(_, _, _, playing, _)| *playing)
+            .count();
+    let mut free_engine_slots = 22usize.saturating_sub(occupied);
+    let mut active_engines = 0;
+    for (entity, engine, mut transform, playing, sink) in &mut rivals {
+        let audible = drive.opponents.get(engine.slot).and_then(|ai| {
+            let rev = ai.engine_rev()?;
+            let (pan, attenuation) = mix_position(ai.position());
+            (attenuation > 0.).then_some((rev, 0.28 * gain * attenuation, pan))
+        });
+        let Some((rev, volume, pan)) = audible else {
+            if playing {
+                commands
+                    .entity(entity)
+                    .remove::<(AudioPlayer, SpatialAudioSink)>();
+            }
+            continue;
+        };
+        if !playing {
+            if free_engine_slots == 0 {
+                continue;
+            }
+            free_engine_slots -= 1;
+        }
+        active_engines += 1;
+        transform.translation = Vec3::X * pan;
+        let speed = engine_speed(engine.range, rev);
+        if let Some(mut sink) = sink {
+            sink.set_speed(speed);
+            sink.set_volume(Volume::Linear(volume));
+            if reset {
+                let _ = sink.try_seek(std::time::Duration::ZERO);
+            }
+            if pause {
+                sink.pause();
+            } else {
+                sink.play();
+            }
+        } else if !playing {
+            let mut settings = PlaybackSettings::LOOP
+                .with_spatial(true)
+                .with_start_position(engine.loop_start)
+                .with_speed(speed)
+                .with_volume(Volume::Linear(volume));
+            settings.paused = pause;
+            commands
+                .entity(entity)
+                .insert((AudioPlayer::new(engine.source.clone()), settings));
         }
     }
     *restart = drive.restart_count;
@@ -209,26 +290,16 @@ pub fn update(
     if drive.sounds.is_empty() {
         return;
     }
-    let mut remaining = 22usize.saturating_sub(shots.iter().count());
-    let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
+    let mut remaining = 22usize.saturating_sub(shots.iter().count() + active_engines);
     let mut active: Vec<_> = shots
         .iter()
         .filter_map(|(_, _, shot)| shot.0.filter(|_| !reset))
         .collect();
     for sound in &drive.sounds {
         let id = sound.id;
-        let point = sound.position;
-        let car = drive.player.position();
-        let offset = Vec3::from_array(std::array::from_fn(|i| (point[i] - car[i]) as f32));
-        let range = offset.length();
-        let pan = ((offset.x * heading.cos() - offset.y * heading.sin()) / range.max(100.))
-            .clamp(-1., 1.);
+        let (pan, attenuation) = mix_position(sound.position);
         let bin = (pan * 2.).round() as i32 + 2;
-        let attenuation = if sound.full_range {
-            1.
-        } else {
-            (1. - range / 6000.).clamp(0., 1.)
-        };
+        let attenuation = if sound.full_range { 1. } else { attenuation };
         let volume = attenuation * if id == 2 { 0.16 } else { 0.44 };
         if sound.exclusive.is_some_and(|voice| active.contains(&voice)) {
             continue;
