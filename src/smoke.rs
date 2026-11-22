@@ -77,12 +77,15 @@ pub fn capture(
                     sink.speed()
                 );
             }
-            if let (Ok(engine), Ok(music)) = (engine.single(), music.single()) {
+            for engine in &engine {
                 eprintln!(
-                    "Engine playback {:?}, music playback {:?}",
+                    "Player engine playback {:?}, speed {:.3}",
                     engine.position(),
-                    music.position()
+                    engine.speed()
                 );
+            }
+            if let Ok(music) = music.single() {
+                eprintln!("Music playback {:?}", music.position());
             }
             if capture.realtime {
                 eprintln!(

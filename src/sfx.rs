@@ -13,16 +13,36 @@ pub struct Sounds {
     turbo: Vec<PreparedTone>,
     guns: Vec<pcm::StereoPcm>,
     effects: Vec<pcm::StereoPcm>,
-    rival_engines: Vec<Vec<(pcm::StereoPcm, f32)>>,
+    rival_engines: Vec<Vec<EngineSample>>,
     voices: Vec<Handle<AudioSource>>,
-    engine_range: f32,
-    engine_loop: std::time::Duration,
+    player_engine: Vec<EngineSample>,
+    screen_engine: Vec<(Handle<pcm::StereoPcm>, f32)>,
+}
+
+pub struct EngineSample {
+    pub clip: pcm::StereoPcm,
+    pub range: f32,
+}
+impl EngineSample {
+    pub fn load(bank: &[u8], car: tm1_core::drive::Vehicle) -> Result<Vec<Self>> {
+        program(bank, car.sound_programs().0)?
+            .into_iter()
+            .map(|tone| {
+                let (sample, marker) = Sample::single(tone, true);
+                let marker = marker
+                    .ok_or_else(|| anyhow::anyhow!("missing engine VAB loop point for {car:?}"))?;
+                Ok(Self {
+                    clip: pcm::StereoPcm::new(&sample.mix, Some(marker)),
+                    range: sample.range,
+                })
+            })
+            .collect()
+    }
 }
 
 pub struct Sample {
     mix: Vec<[f32; 2]>,
     pub range: f32,
-    loop_start: std::time::Duration,
 }
 impl Sample {
     pub fn load(bank: &[u8], prog: usize, engine: bool) -> Result<Self> {
@@ -30,7 +50,6 @@ impl Sample {
     }
     fn from_tones(tones: Vec<tm1_assets::sound::Tone>, engine: bool) -> Self {
         let mut engine_range = 0.;
-        let mut engine_loop = std::time::Duration::ZERO;
         let mut mix = Vec::<[f32; 2]>::new();
         for t in tones {
             let note = if engine {
@@ -40,11 +59,6 @@ impl Sample {
                 60
             };
             let rate = 2f32.powf((f32::from(note) - f32::from(t.center)) / 12.);
-            if engine {
-                engine_loop = std::time::Duration::from_secs_f64(
-                    t.loop_start.unwrap_or(0) as f64 / (44100. * f64::from(rate)),
-                );
-            }
             let n = (t.pcm.len() as f32 / rate).ceil() as usize;
             mix.resize(mix.len().max(n), [0.; 2]);
             let pan = f32::from(t.pan) / 64.;
@@ -59,7 +73,6 @@ impl Sample {
         Self {
             mix,
             range: engine_range,
-            loop_start: engine_loop,
         }
     }
     fn single(tone: tm1_assets::sound::Tone, engine: bool) -> (Self, Option<usize>) {
@@ -89,7 +102,6 @@ struct PreparedTone {
     looping_clip: Option<pcm::StereoPcm>,
     priority: u8,
     range: f32,
-    loop_start: std::time::Duration,
 }
 
 struct Layer {
@@ -97,7 +109,6 @@ struct Layer {
     looping_clip: Option<Handle<pcm::StereoPcm>>,
     priority: u8,
     range: f32,
-    loop_start: std::time::Duration,
 }
 
 impl PreparedTone {
@@ -105,13 +116,16 @@ impl PreparedTone {
         let priority = tone.priority;
         let (sample, marker) = Sample::single(tone, engine);
         let first_loop_frame = marker.filter(|_| looping);
+        anyhow::ensure!(
+            !engine || first_loop_frame.is_some(),
+            "missing VAB engine loop point"
+        );
         Ok(Self {
             wave: sample.wave()?,
             looping_clip: first_loop_frame
                 .map(|frame| pcm::StereoPcm::new(&sample.mix, Some(frame))),
             priority,
             range: sample.range,
-            loop_start: sample.loop_start,
         })
     }
     fn register(self, world: &mut World) -> Layer {
@@ -122,7 +136,6 @@ impl PreparedTone {
                 .map(|clip| world.resource_mut::<Assets<pcm::StereoPcm>>().add(clip)),
             priority: self.priority,
             range: self.range,
-            loop_start: self.loop_start,
         }
     }
 }
@@ -185,13 +198,18 @@ impl Sounds {
     pub fn centered(&self, id: usize) -> AudioPlayer {
         AudioPlayer::new(self.voices[id].clone())
     }
-    pub fn ending_engine(&self, gain: f32) -> (AudioPlayer, PlaybackSettings) {
-        (
-            AudioPlayer::new(self.voices[0].clone()),
-            PlaybackSettings::LOOP
-                .with_speed(engine_speed(self.engine_range, 30))
-                .with_volume(Volume::Linear(0.28 * gain)),
-        )
+    pub fn ending_engine(&self, gain: f32) -> Vec<(AudioPlayer<pcm::StereoPcm>, PlaybackSettings)> {
+        self.screen_engine
+            .iter()
+            .map(|(source, range)| {
+                (
+                    AudioPlayer(source.clone()),
+                    PlaybackSettings::ONCE
+                        .with_speed(engine_speed(*range, 30))
+                        .with_volume(Volume::Linear(0.28 * gain)),
+                )
+            })
+            .collect()
     }
 
     pub fn signature(&self) -> AudioPlayer {
@@ -211,28 +229,16 @@ impl Sounds {
         let bank = disc.read("SND/UACORE.VAB")?;
         let mut sources = Vec::new();
         let mut effects = Vec::new();
-        let mut engine_range = 0.;
-        let mut engine_loop = std::time::Duration::ZERO;
         for (id, prog) in battle_programs(vehicle, opponents).enumerate() {
             let sample = Sample::load(&bank, prog, id == 0)?;
-            if id == 0 {
-                engine_range = sample.range;
-                engine_loop = sample.loop_start;
-            }
             effects.push(pcm::StereoPcm::new(&sample.mix, None));
             sources.push(sample.wave()?);
         }
-        let mut rival_engines = Vec::with_capacity(opponents.len());
-        for car in opponents {
-            let mut tones = Vec::new();
-            for tone in program(&bank, car.sound_programs().0)? {
-                let (sample, marker) = Sample::single(tone, true);
-                let marker = marker
-                    .ok_or_else(|| anyhow::anyhow!("missing engine VAB loop point for {car:?}"))?;
-                tones.push((pcm::StereoPcm::new(&sample.mix, Some(marker)), sample.range));
-            }
-            rival_engines.push(tones);
-        }
+        let player_engine = EngineSample::load(&bank, vehicle)?;
+        let rival_engines = opponents
+            .iter()
+            .map(|&car| EngineSample::load(&bank, car))
+            .collect::<Result<_>>()?;
         Ok(Self {
             sources,
             effects,
@@ -249,8 +255,8 @@ impl Sounds {
                 .collect::<Result<_>>()?,
             rival_engines,
             voices: Vec::new(),
-            engine_range,
-            engine_loop,
+            player_engine,
+            screen_engine: Vec::new(),
         })
     }
 }
@@ -259,6 +265,9 @@ pub struct Engine;
 #[derive(Component)]
 pub struct RivalEngine {
     pub(super) slot: usize,
+}
+#[derive(Component)]
+pub struct EngineTone {
     source: Handle<pcm::StereoPcm>,
     levels: pcm::Levels,
     range: f32,
@@ -273,28 +282,47 @@ pub fn start(
     mut clips: ResMut<Assets<pcm::StereoPcm>>,
 ) {
     sounds.register(&mut assets);
-    for (slot, tones) in sounds.rival_engines.drain(..).enumerate() {
-        let levels = pcm::Levels::new([0; 2], 99);
-        for (clip, range) in tones {
-            commands.spawn((
+    let player = std::mem::take(&mut sounds.player_engine);
+    let rivals = std::mem::take(&mut sounds.rival_engines);
+    let engines = std::iter::once((None, player)).chain(
+        rivals
+            .into_iter()
+            .enumerate()
+            .map(|(slot, tones)| (Some(slot), tones)),
+    );
+    for (slot, tones) in engines {
+        let levels = pcm::Levels::new(
+            drive.listener.channels(
+                drive.player.position(),
+                drive.settings.effects_volume(),
+                false,
+            ),
+            99,
+        );
+        for EngineSample { clip, range } in tones {
+            let source = clips.add(clip.with_levels(levels.clone()));
+            let mut entity = commands.spawn((
                 crate::campaign::StageEntity,
-                RivalEngine {
-                    slot,
-                    source: clips.add(clip.with_levels(levels.clone())),
+                EngineTone {
+                    source: source.clone(),
                     levels: levels.clone(),
                     range,
                 },
             ));
+            if let Some(slot) = slot {
+                entity.insert(RivalEngine { slot });
+            } else {
+                sounds.screen_engine.push((clips.add(clip), range));
+                entity.insert((
+                    Engine,
+                    AudioPlayer(source),
+                    PlaybackSettings::ONCE
+                        .with_volume(Volume::Linear(0.28))
+                        .with_speed(engine_speed(range, drive.player.rev())),
+                ));
+            }
         }
     }
-    commands.spawn((
-        crate::campaign::StageEntity,
-        Engine,
-        AudioPlayer::new(sounds.voices[0].clone()),
-        PlaybackSettings::LOOP
-            .with_start_position(sounds.engine_loop)
-            .with_volume(Volume::Linear(0.28 * drive.settings.effects_gain())),
-    ));
 }
 pub fn update(
     mut commands: Commands,
@@ -303,45 +331,45 @@ pub fn update(
     mut clips: ResMut<Assets<pcm::StereoPcm>>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
-    mut engine: Query<&mut AudioSink, With<Engine>>,
     mut shots: Query<(Entity, Option<&mut AudioSink>, &OneShot), Without<Engine>>,
-    mut rivals: Query<
+    mut engines: Query<
         (
             Entity,
-            &RivalEngine,
+            &EngineTone,
+            Option<&RivalEngine>,
             Has<AudioPlayer<pcm::StereoPcm>>,
             Option<&mut AudioSink>,
         ),
-        (Without<Engine>, Without<OneShot>),
+        Without<OneShot>,
     >,
     mut restart: Local<u32>,
 ) {
     let reset = *restart != drive.restart_count;
     let pause = drive.lives == 0 || drive.pause.is_some() || !window.focused;
     let gain = drive.settings.effects_gain();
-    if let Ok(mut sink) = engine.single_mut() {
-        sink.set_volume(Volume::Linear(0.28 * gain));
-        if reset {
-            let _ = sink.try_seek(sounds.engine_loop);
-        }
-        sink.set_speed(engine_speed(sounds.engine_range, drive.player.rev()));
-        if pause {
-            sink.pause();
-        } else {
-            sink.play();
-        }
-    }
     let volume = drive.settings.effects_volume();
-    let occupied =
-        shots.iter().count() + rivals.iter().filter(|(_, _, playing, _)| *playing).count();
-    let mut free_engine_slots = 22usize.saturating_sub(occupied);
+    let occupied = shots.iter().count()
+        + engines
+            .iter()
+            .filter(|(_, _, _, playing, _)| *playing)
+            .count();
+    let mut free_engine_slots = 24usize.saturating_sub(occupied);
     let mut active_engines = 0;
-    for (entity, engine, playing, sink) in &mut rivals {
-        let audible = drive.opponents.get(engine.slot).and_then(|ai| {
-            let rev = ai.engine_rev()?;
-            let channels = drive.listener.channels(ai.position(), volume, false);
-            (channels != [0; 2]).then_some((rev, channels))
-        });
+    for (entity, engine, rival, playing, sink) in &mut engines {
+        let audible = if let Some(rival) = rival {
+            drive.opponents.get(rival.slot).and_then(|ai| {
+                let rev = ai.engine_rev()?;
+                let channels = drive.listener.channels(ai.position(), volume, false);
+                (channels != [0; 2]).then_some((rev, channels))
+            })
+        } else {
+            Some((
+                drive.player.rev(),
+                drive
+                    .listener
+                    .channels(drive.player.position(), volume, false),
+            ))
+        };
         let Some((rev, channels)) = audible else {
             if playing {
                 commands
@@ -402,7 +430,7 @@ pub fn update(
     if drive.vehicle_sounds.is_empty() && drive.sounds.is_empty() {
         return;
     }
-    let mut remaining = 22usize.saturating_sub(shots.iter().count() + active_engines);
+    let mut remaining = 24usize.saturating_sub(shots.iter().count() + active_engines);
     let mut active: Vec<_> = shots
         .iter()
         .filter_map(|(entity, _, shot)| {
@@ -499,6 +527,73 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn road_kill_uses_both_engine_tones_in_battle_and_at_the_reward() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::Drive;
+        use bevy::audio::Decodable;
+
+        let mut world = crate::contest::menu_world();
+        let disc = &world.resource::<Campaign>().0;
+        let car = Vehicle::RoadKill;
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let tones = program(&bank, car.sound_programs().0).unwrap();
+        assert_eq!(tones.len(), 2);
+        let stage =
+            Stage::load(disc, Level::Rooftops, car, Entry::New(Difficulty::Medium)).unwrap();
+        crate::campaign::replace(&mut world, stage);
+        let mut drive = world.resource_mut::<Drive>();
+        let [x, y, z] = drive.player.position();
+        drive.listener = tm1_core::drive::SoundListener::new(
+            &drive.player,
+            &drive.camera,
+            Some([x + 500, y, z, 0, 0]),
+        );
+        let channels = drive
+            .listener
+            .channels([x, y, z], drive.settings.effects_volume(), false);
+        assert_ne!(channels[0], channels[1]);
+        world.run_system_once(update).unwrap();
+        let mut battle = world
+            .query_filtered::<(&EngineTone, &AudioPlayer<pcm::StereoPcm>), With<Engine>>()
+            .iter(&world)
+            .map(|(tone, player)| (tone.range as i32, player.0.clone()))
+            .collect::<Vec<_>>();
+        battle.sort_by_key(|(range, _)| *range);
+        crate::ending::begin(&mut world).unwrap();
+        let mut reward = world.query_filtered::<(&PlaybackSettings,&AudioPlayer<pcm::StereoPcm>), With<crate::ending::EndingEngine>>()
+            .iter(&world).map(|(setting,player)| (setting.speed,player.0.clone())).collect::<Vec<_>>();
+        reward.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut tones = tones;
+        tones.sort_by_key(|t| t.high - t.low);
+        assert_eq!(battle.len(), 2);
+        assert_eq!(reward.len(), 2);
+        let clips = world.resource::<Assets<pcm::StereoPcm>>();
+        for ((tone, (range, driving)), (speed, ending)) in tones.into_iter().zip(battle).zip(reward)
+        {
+            assert_eq!(range, i32::from(tone.high - tone.low));
+            assert_eq!(speed, engine_speed(range as f32, 30));
+            let (dry, marker) = Sample::single(tone, true);
+            let mut drive = clips.get(&driving).unwrap().decoder();
+            let mut screen = clips.get(&ending).unwrap().decoder();
+            for frame in dry
+                .mix
+                .iter()
+                .chain(dry.mix[marker.unwrap()..].iter().take(1024))
+            {
+                for (sample, level) in frame.iter().zip(channels) {
+                    let sample = sample.clamp(-32768., 32767.) / 32768.;
+                    assert_eq!(screen.next(), Some(sample));
+                    assert_eq!(
+                        drive.next(),
+                        Some(sample * ((level * 99) as f32 / (33. * 99.)))
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

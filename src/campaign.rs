@@ -242,7 +242,9 @@ pub fn advance(world: &mut World) {
             let sounds = world.resource::<sfx::Sounds>();
             let engine = sounds.ending_engine(gain);
             let signature = sounds.lost_game_signature();
-            world.spawn((StageEntity, LostGame, engine));
+            for tone in engine {
+                world.spawn((StageEntity, LostGame, tone));
+            }
             world.spawn((
                 StageEntity,
                 signature,

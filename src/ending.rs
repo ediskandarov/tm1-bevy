@@ -260,7 +260,9 @@ pub fn begin(world: &mut World) -> Result<()> {
         .settings
         .effects_gain();
     let engine = world.resource::<crate::sfx::Sounds>().ending_engine(gain);
-    world.spawn((StageEntity, EndingEngine, engine));
+    for tone in engine {
+        world.spawn((StageEntity, EndingEngine, tone));
+    }
     ending.image = spawn_screen(world, EndingScreen, ending.reward.clone());
     world.insert_resource(ending);
     Ok(())
@@ -361,11 +363,9 @@ pub fn update(
             && first_frame < signature_field
             && ending.frame >= signature_field
         {
-            commands.spawn((
-                StageEntity,
-                EndingEngine,
-                sounds.ending_engine(drive.settings.effects_gain()),
-            ));
+            for tone in sounds.ending_engine(drive.settings.effects_gain()) {
+                commands.spawn((StageEntity, EndingEngine, tone));
+            }
             commands.spawn((
                 StageEntity,
                 sounds.signature(),

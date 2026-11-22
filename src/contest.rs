@@ -1492,7 +1492,7 @@ mod tests {
         }
         for (player, playback, engine) in world
             .query_filtered::<(
-                &AudioPlayer,
+                Option<&AudioPlayer>,
                 &PlaybackSettings,
                 Has<crate::sfx::duel::DuelEngine>,
             ), Or<(With<duel::DuelMusic>, With<crate::sfx::duel::DuelEngine>)>>()
@@ -1502,7 +1502,7 @@ mod tests {
             if !engine {
                 let audio = world
                     .resource::<Assets<AudioSource>>()
-                    .get(&player.0)
+                    .get(&player.unwrap().0)
                     .unwrap();
                 let disc = &world.resource::<Campaign>().0;
                 let track = disc.audio_track(7).unwrap();

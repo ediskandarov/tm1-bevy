@@ -1,5 +1,5 @@
 //! Tone allocation for the shared SPU during split-screen play.
-use super::{Layer, PreparedTone, TURBO_PROGRAM, battle_programs, engine_speed};
+use super::{Layer, PreparedTone, TURBO_PROGRAM, battle_programs, engine_speed, pcm::StereoPcm};
 use crate::{
     campaign::StageEntity,
     driving::ExclusiveVoice,
@@ -20,7 +20,7 @@ pub struct DuelBank {
 #[derive(Component)]
 pub struct DuelEngine {
     slot: usize,
-    source: Handle<AudioSource>,
+    source: Handle<StereoPcm>,
     range: f32,
 }
 
@@ -68,11 +68,15 @@ impl DuelBank {
             .enumerate()
         {
             for layer in layers {
+                let source = layer
+                    .looping_clip
+                    .as_ref()
+                    .expect("engine loop validated during load");
                 world.spawn((
                     StageEntity,
                     DuelEngine {
                         slot,
-                        source: layer.source.clone(),
+                        source: source.clone(),
                         range: layer.range,
                     },
                     Voice {
@@ -80,10 +84,8 @@ impl DuelBank {
                         distance: 0,
                         key: None,
                     },
-                    AudioPlayer::new(layer.source.clone()),
-                    PlaybackSettings::LOOP
-                        .with_start_position(layer.loop_start)
-                        .with_volume(Volume::Linear(0.28 * gain)),
+                    AudioPlayer(source.clone()),
+                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28 * gain)),
                 ));
             }
         }
@@ -121,7 +123,7 @@ pub fn mix(
         Entity,
         &Voice,
         Option<&DuelEngine>,
-        Has<AudioPlayer>,
+        Has<AudioPlayer<StereoPcm>>,
         &mut PlaybackSettings,
         Option<&mut AudioSink>,
     )>,
@@ -237,12 +239,14 @@ pub fn mix(
                 if !audible {
                     commands
                         .entity(entity)
-                        .insert(AudioPlayer::new(engine.source.clone()));
+                        .insert(AudioPlayer(engine.source.clone()));
                 } else if let Some(sink) = sink {
                     sink.set_speed(settings.speed);
                 }
             } else if audible {
-                commands.entity(entity).remove::<(AudioPlayer, AudioSink)>();
+                commands
+                    .entity(entity)
+                    .remove::<(AudioPlayer<StereoPcm>, AudioSink)>();
             }
         } else if rank >= 24 {
             commands.entity(entity).despawn();
@@ -376,7 +380,7 @@ mod tests {
         world.resource_mut::<Duel>().sounds = (0..10).map(|_| request(4, None, 1.)).collect();
         world.run_system_once(mix).unwrap();
         let priorities: Vec<_> = world
-            .query_filtered::<&Voice, With<AudioPlayer>>()
+            .query_filtered::<&Voice, Or<(With<AudioPlayer>, With<AudioPlayer<StereoPcm>>)>>()
             .iter(&world)
             .map(|v| v.priority)
             .collect();
@@ -390,7 +394,8 @@ mod tests {
         }
         world.resource_mut::<Duel>().sounds.clear();
         world.run_system_once(mix).unwrap();
-        let mut engines = world.query_filtered::<(&DuelEngine, Has<AudioPlayer>), With<Voice>>();
+        let mut engines =
+            world.query_filtered::<(&DuelEngine, Has<AudioPlayer<StereoPcm>>), With<Voice>>();
         let slots: Vec<_> = engines
             .iter(&world)
             .map(|(engine, audible)| {

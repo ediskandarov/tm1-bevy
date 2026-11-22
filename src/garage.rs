@@ -12,8 +12,8 @@ use tm1_core::drive::Vehicle;
 pub struct Garage {
     backdrop: Vec<u8>,
     demo_backdrop: Vec<u8>,
-    audio: Vec<(AudioSource, AudioSource, f32)>,
-    voices: Option<(usize, [Entity; 2])>,
+    audio: Vec<(Vec<crate::sfx::EngineSample>, AudioSource)>,
+    voices: Option<(usize, Vec<Entity>)>,
     cars: Vec<Scene>,
     bios: Vec<Vec<u8>>,
     portraits: Vec<Vec<u8>>,
@@ -38,12 +38,10 @@ impl Garage {
         let mut cars = Vec::new();
         let mut bios = Vec::new();
         for (i, car) in Vehicle::CARD_ORDER.into_iter().enumerate() {
-            let (engine, signature) = car.sound_programs();
-            let motor = crate::sfx::Sample::load(&bank, engine, true)?;
+            let (_, signature) = car.sound_programs();
             audio.push((
-                motor.wave()?,
+                crate::sfx::EngineSample::load(&bank, car)?,
                 crate::sfx::Sample::load(&bank, signature, false)?.wave()?,
-                motor.range,
             ));
             cars.push(dmd.garage_vehicle(car as u16)?);
             bios.push(screen::background(
@@ -67,7 +65,9 @@ impl Garage {
         })
     }
     pub fn voices(&self) -> impl Iterator<Item = Entity> {
-        self.voices.iter().flat_map(|(_, voices)| *voices)
+        self.voices
+            .iter()
+            .flat_map(|(_, voices)| voices.iter().copied())
     }
     pub fn sound(&mut self, world: &mut World, index: Option<usize>, gain: f32) {
         if self.voices.as_ref().map(|v| v.0) == index {
@@ -79,37 +79,39 @@ impl Garage {
             }
         }
         if let Some(i) = index {
-            let (motor, signature, range) = &self.audio[i];
-            let mut audio = world.resource_mut::<Assets<AudioSource>>();
-            let engine = audio.add(motor.clone());
-            let signature = audio.add(signature.clone());
-            let spawn = |world: &mut World, handle, settings| {
+            let (engine, signature) = &self.audio[i];
+            use bevy::audio::Volume;
+            world.init_resource::<Assets<crate::sfx::pcm::StereoPcm>>();
+            let mut voices = Vec::with_capacity(engine.len() + 1);
+            for tone in engine {
+                let handle = world
+                    .resource_mut::<Assets<crate::sfx::pcm::StereoPcm>>()
+                    .add(tone.clip.clone());
+                voices.push(
+                    world
+                        .spawn((
+                            crate::campaign::StageEntity,
+                            AudioPlayer(handle),
+                            PlaybackSettings::ONCE
+                                .with_speed(crate::sfx::engine_speed(tone.range, 30))
+                                .with_volume(Volume::Linear(0.28 * gain)),
+                        ))
+                        .id(),
+                );
+            }
+            let handle = world
+                .resource_mut::<Assets<AudioSource>>()
+                .add(signature.clone());
+            voices.push(
                 world
                     .spawn((
                         crate::campaign::StageEntity,
                         AudioPlayer::new(handle),
-                        settings,
-                    ))
-                    .id()
-            };
-            use bevy::audio::Volume;
-            self.voices = Some((
-                i,
-                [
-                    spawn(
-                        world,
-                        engine,
-                        PlaybackSettings::LOOP
-                            .with_speed(crate::sfx::engine_speed(*range, 30))
-                            .with_volume(Volume::Linear(0.28 * gain)),
-                    ),
-                    spawn(
-                        world,
-                        signature,
                         PlaybackSettings::ONCE.with_volume(Volume::Linear(0.44 * gain)),
-                    ),
-                ],
-            ));
+                    ))
+                    .id(),
+            );
+            self.voices = Some((i, voices));
         }
     }
     pub fn bio(&self, i: usize) -> Vec<u8> {
