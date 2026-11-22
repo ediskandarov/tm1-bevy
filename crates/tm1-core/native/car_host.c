@@ -201,6 +201,9 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     case 30:
         InitSemiTruck(&car.stats);
         break;
+    case UA_POLICE_CAR:
+        InitPoliceCar(&car.stats);
+        break;
     case 60:
         InitLamborghini(&car.stats);
         break;

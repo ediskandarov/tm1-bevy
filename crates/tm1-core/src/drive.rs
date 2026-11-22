@@ -18,15 +18,17 @@ pub enum Vehicle {
     SweetTooth = 10,
     YellowJacket = 20,
     Darkside = 30,
+    Outlaw = 50,
     CrimsonFury = 60,
     MrGrimm = 80,
     PitViper = 90,
 }
 impl Vehicle {
-    pub const ROSTER: [Self; 6] = [
+    pub const ROSTER: [Self; 7] = [
         Self::SweetTooth,
         Self::YellowJacket,
         Self::Darkside,
+        Self::Outlaw,
         Self::CrimsonFury,
         Self::MrGrimm,
         Self::PitViper,
@@ -36,6 +38,7 @@ impl Vehicle {
             Self::SweetTooth => "sweet-tooth",
             Self::YellowJacket => "yellow-jacket",
             Self::Darkside => "darkside",
+            Self::Outlaw => "outlaw",
             Self::CrimsonFury => "crimson-fury",
             Self::MrGrimm => "mr-grimm",
             Self::PitViper => "pit-viper",
@@ -46,6 +49,7 @@ impl Vehicle {
             Self::SweetTooth => "Sweet Tooth",
             Self::YellowJacket => "Yellow Jacket",
             Self::Darkside => "Darkside",
+            Self::Outlaw => "Outlaw",
             Self::CrimsonFury => "Crimson Fury",
             Self::MrGrimm => "Mr. Grimm",
             Self::PitViper => "Pit Viper",
@@ -321,6 +325,12 @@ impl CollisionScene {
             tm1_world_point(self.0.as_ptr(), point.as_mut_ptr(), result.as_mut_ptr());
         }
         result
+    }
+    pub fn taser_arcs(&self, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
+        unsafe extern "C" {
+            fn tm1_taser_arcs(scene: *mut std::ffi::c_void, arcs: *mut [[i32; 3]; 16]) -> usize;
+        }
+        unsafe { tm1_taser_arcs(self.0.as_ptr(), arcs.as_mut_ptr()) }
     }
     pub fn bullet_segments(&self, segments: &mut [[[i32; 3]; 2]; 40]) -> usize {
         unsafe extern "C" {

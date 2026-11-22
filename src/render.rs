@@ -459,19 +459,33 @@ pub fn update(
         }
     }
     let white = arena.uv(0, Vec2::ZERO);
-    let mut quad = |points: [Vec2; 4], depths: [f32; 4], tint: [f32; 4]| {
+    let mut quad = |points: [Vec2; 4], depths: [f32; 4], colors: [[f32; 4]; 2]| {
         for &i in indices(4) {
             let xy = points[i] * (depths[i] / focal);
             transparent.push(
                 eye + forward * depths[i] + right * xy.x + up * xy.y,
                 white,
-                tint,
+                colors[i / 2],
             );
         }
     };
     let mut segments = [[[0; 3]; 2]; 40];
     let count = drive.contacts.bullet_segments(&mut segments);
-    for segment in &segments[..count] {
+    let mut arcs = [[[0; 3]; 16]; 3];
+    let arc_count = drive.contacts.taser_arcs(&mut arcs);
+    let bullets = segments[..count]
+        .iter()
+        .map(|&s| (s, [[1., 0.82, 0.22, 1.]; 2]));
+    let electricity = arcs[..arc_count].iter().flat_map(|arc| {
+        arc.windows(2).enumerate().map(|(j, points)| {
+            let colors = [j, j + 1].map(|index| {
+                let brightness = (250 - index * 12) as f32 / 255.;
+                [brightness, brightness, 1., 1.]
+            });
+            ([points[0], points[1]], colors)
+        })
+    });
+    for (segment, tint) in bullets.chain(electricity) {
         let mut v = segment.map(|p| {
             let d = world(p.map(|n| n as f32)) - eye;
             Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
@@ -490,7 +504,7 @@ pub fn update(
         quad(
             [a - normal, a + normal, b - normal, b + normal],
             [v[0].z, v[0].z, v[1].z, v[1].z],
-            [1., 0.82, 0.22, 1.],
+            tint,
         );
     }
     let mut effects = [[0; 5]; 122];
@@ -521,7 +535,7 @@ pub fn update(
                 center + Vec2::X * radius,
             ],
             [depth; 4],
-            tint,
+            [tint; 2],
         );
     }
     let scale = (window.height() / 800.).clamp(0.6, 1.8);

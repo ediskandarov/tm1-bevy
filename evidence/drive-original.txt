@@ -1,22 +1,23 @@
 
-running 13 tests
+running 14 tests
 test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... ok
 test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
 test drive::vehicle_body_thresholds ... ok
 test tests::original_timer_rounding_and_clamp ... ok
 test tests::unsigned_clock_wrap_and_replay_reset ... ok
-test drive::reference::bullet_impact_original ... ok
-test drive::reference::damage_body_switch_matches_retail ... ok
-test drive::reference::arena_animation_matches_retail ... ok
 test drive::reference::fire_missile_impact_original ... ok
-vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
 test drive::reference::police_update_original ... ok
+test drive::reference::arena_animation_matches_retail ... ok
+test drive::reference::bullet_impact_original ... ok
+vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
+test drive::reference::damage_body_switch_matches_retail ... ok
 test drive::reference::coupled_arena_original ... ok
 wall fixture at tick 73, taxi [3946, 3946, 16], police [4096, 2896, 0]
 test drive::reference::vehicle_and_wall_contact_original ... ok
+test drive::reference::outlaw_taser_original ... ok
 test drive::reference::player_special_launch_original ... ok
 
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.07s
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.59s
 
 
 running 4 tests
@@ -29,6 +30,7 @@ YellowJacket, timing [3], ramp true, 360 steps, max body height 164, all tires a
 SweetTooth, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 76, all tires airborne false
 YellowJacket, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 112, all tires airborne true
 Darkside, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 36, all tires airborne false
+Outlaw, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 81, all tires airborne true
 CrimsonFury, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 147, all tires airborne true
 MrGrimm, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 91, all tires airborne false
 PitViper, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 79, all tires airborne false
@@ -36,7 +38,7 @@ test drive_trace ... ok
 9381 original HDP world queries, 2742 solid contacts
 test world_projectile_contacts ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.91s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.87s
 
 
 running 2 tests
@@ -44,7 +46,7 @@ test mips::executes_branch_and_load_delay_slots ... ok
 Original MIPS vs native C: 8192 matrix cases, 4096 normalization cases, 4444 square-root cases; seed 0x544d3101
 test native_math_matches_original_instructions ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.76s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
 
 
 running 0 tests

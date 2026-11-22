@@ -31,7 +31,10 @@ s32 CAR_HD(VECTOR3 *,s32,s32);
 void arena_launch_missile(CarStats *,CarMotion *,CarWeap *,u8 *,u8);
 void arena_update_weapons(Car *,u8);
 typedef struct {VECTOR3 pos; s32 life,power,kind,idx,type;} DropWeap;
-typedef struct {s32 life,target;} ArenaTaser;
+typedef struct {
+    s32 life, owner, target, visible;
+    VECTOR3 points[16];
+} ArenaTaser;
 DropWeap *arena_drops(void);
 ArenaTaser *arena_tasers(void);
 void arena_move_drops(void);

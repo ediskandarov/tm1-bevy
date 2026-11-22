@@ -527,6 +527,15 @@ void tm1_world_point(CollisionScene* s, VECTOR3* point, s32* result)
     result[2] = hit.tag0;
     result[3] = hit.tag1;
 }
+size_t tm1_taser_arcs(CollisionScene* s, VECTOR3 (*out)[16])
+{
+    size_t count = 0;
+    for (size_t i = 0; i < 3; i++)
+        if (s->tasers[i].visible)
+            memcpy(out[count++], s->tasers[i].points, sizeof s->tasers[i].points);
+    return count;
+}
+
 size_t tm1_bullet_segments(CollisionScene* s, VECTOR3 (*segments)[2])
 {
     size_t count = 0;

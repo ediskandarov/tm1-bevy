@@ -392,7 +392,7 @@ static ProjectileSpecial playerProjectileSpecial(s32 kind)
 }
 s32 arena_player_special_cost(s32 kind)
 {
-    return playerProjectileSpecial(kind).cost;
+    return kind == UA_POLICE_CAR ? 6 : playerProjectileSpecial(kind).cost;
 }
 static void firePlayerProjectileSpecial(PlayerCar* car)
 {
@@ -415,64 +415,73 @@ static void firePlayerProjectileSpecial(PlayerCar* car)
     car->flags[9] = 1;
 }
 
-static void policeSpecial(AICar* car)
+static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player)
 {
     ArenaTaser* tasers = arena_tasers();
-    if (car->weap.ammo[WEAPON_SPECIAL] >= 6)
+    if (weapon->ammo[WEAPON_SPECIAL] >= 6) {
         for (int i = 0; i < 3; i++) {
             if (tasers[i].life > 0)
                 continue;
-            VECTOR3 *p = &GetPlayerCs3D(0)->pos, *q = &car->motion.pos;
-            int d = abs(q->vx - p->vx);
-            if (abs(q->vy - p->vy) > d)
-                d = abs(q->vy - p->vy);
-            if (abs(q->vz - p->vz) > d)
-                d = abs(q->vz - p->vz);
+            Cs* owner = player ? GetPlayerCs3D(0) : GetAICs3D(0);
+            Cs* other = player ? GetAICs3D(0) : GetPlayerCs3D(0);
+            VECTOR3* origin = player ? &GetPlayerInfo(0)->motion.pos : &GetAICarInfo(0)->motion.pos;
+            int distance = abs(BIGGER(origin->vx - other->pos.vx,
+                BIGGER(origin->vy - other->pos.vy, origin->vz - other->pos.vz)));
+            int in_range = (distance >> 3) < 81 && (!player || GetAICarInfo(0)->stats.unk40 > 0);
             tasers[i].life = 10;
-            tasers[i].target = (d >> 3) < 81 ? 1 : -1;
-            car->weap.ammo[WEAPON_SPECIAL] -= 3;
+            tasers[i].owner = owner->unkC0;
+            tasers[i].target = in_range ? other->unkC0 : -1;
+            weapon->ammo[WEAPON_SPECIAL] -= player ? 6 : 3;
+            if (player)
+                arena_effect(origin, 10);
             break;
         }
-    car->weap.fireDelay = 20;
-    car->flags[9] = 1;
+    }
+    weapon->fireDelay = 20;
+    flags[9] = 1;
 }
 void arena_move_tasers(void)
 {
     ArenaTaser* tasers = arena_tasers();
-    for (int i = 0; i < 3; i++)
-        if (tasers[i].life > 0) {
-            VECTOR3 origin = GetAICs3D(0)->pos, end;
-            if (tasers[i].target == 1)
-                end = GetPlayerCs3D(0)->pos;
-            else {
-                end.vx = origin.vx + (rsin(tasers[i].life * 400 + 1024) >> 4);
-                end.vy = origin.vy + (rsin(tasers[i].life * 400) >> 4);
-                end.vz = 0;
-            }
-            VECTOR3 pt[16];
-            pt[0] = origin;
-            pt[0].vz += 30;
-            pt[15] = end;
-            for (int j = 1; j < 15; j++) {
-                pt[j].vx = origin.vx + (end.vx - origin.vx) * j / 16;
-                pt[j].vy = origin.vy + (end.vy - origin.vy) * j / 16;
-                pt[j].vz = origin.vz + 30 + (end.vz - origin.vz) * j / 16;
-                pt[j].vz -= 32 - (arena_rand() & 63);
-                pt[j].vy -= 8 - (arena_rand() & 15);
-                pt[j].vx -= 8 - (arena_rand() & 15);
-                arena_effect(&pt[j], 5);
-            }
-            if (arena_rand() & 1)
-                do_puff(&pt[15]);
-            else {
-                (void)arena_rand();
-                arena_effect(&pt[15], 5);
-            }
-            do_simple_spark(&pt[(arena_rand() & 7) + 8]);
-            do_simple_spark(&pt[arena_rand() & 15]);
-            if (--tasers[i].life == 0 && tasers[i].target >= 0)
-                carTakeHit(1, 8, NULL, 0);
+    for (int i = 0; i < 3; i++) {
+        tasers[i].visible = tasers[i].life > 0;
+        if (!tasers[i].visible)
+            continue;
+        VECTOR3 origin
+            = tasers[i].owner == 1 ? GetPlayerInfo(0)->motion.pos : GetAICarInfo(0)->motion.pos,
+            end;
+        if (tasers[i].target == 1)
+            end = GetPlayerInfo(0)->motion.pos;
+        else if (tasers[i].target == 50)
+            end = GetAICarInfo(0)->motion.pos;
+        else {
+            end.vx = origin.vx + (rsin(tasers[i].life * 400 + 1024) >> 4);
+            end.vy = origin.vy + (rsin(tasers[i].life * 400) >> 4);
+            end.vz = 0;
         }
+        VECTOR3* pt = tasers[i].points;
+        pt[0] = origin;
+        pt[0].vz += 30;
+        pt[15] = end;
+        for (int j = 1; j < 15; j++) {
+            pt[j].vx = origin.vx + (end.vx - origin.vx) * j / 16;
+            pt[j].vy = origin.vy + (end.vy - origin.vy) * j / 16;
+            pt[j].vz = origin.vz + 30 + (end.vz - origin.vz) * j / 16;
+            pt[j].vz -= 32 - (arena_rand() & 63);
+            pt[j].vy -= 8 - (arena_rand() & 15);
+            pt[j].vx -= 8 - (arena_rand() & 15);
+        }
+        if (arena_rand() & 1)
+            do_puff(&pt[15]);
+        else {
+            (void)arena_rand();
+            arena_effect(&pt[15], 5);
+        }
+        do_simple_spark(&pt[(arena_rand() & 7) + 8]);
+        do_simple_spark(&pt[arena_rand() & 15]);
+        if (--tasers[i].life == 0 && tasers[i].target >= 0)
+            carTakeHit(tasers[i].target, 8, NULL, 0);
+    }
 }
 #define dropweapon (arena_drops())
 s32 FindFreeDropWeap(void)
@@ -571,10 +580,10 @@ void arena_update_weapons(Car* car, u8 player)
         return;
     switch (pad->cur) {
     case WEAPON_SPECIAL:
-        if (player)
+        if (player && p->uaIndex != UA_POLICE_CAR)
             firePlayerProjectileSpecial(p);
         else
-            policeSpecial(ai);
+            firePoliceSpecial(pad, player ? p->flags : ai->flags, player);
         break;
     case WEAPON_FIRE_MISSILE:
     case WEAPON_HOMING_MISSILE:
