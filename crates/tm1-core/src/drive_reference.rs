@@ -5891,6 +5891,49 @@ fn duel_machine_gun_sound_ids_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn retail_muted_turbo_request_and_voice_stop() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let system = 0x8016fecc;
+    let request_count = 0x8018bf7c;
+    let queue = 0x801984e8;
+    put(&mut cpu, system + 4, 0); // SFX volume
+    put(&mut cpu, system + 24, 3357 * 3357);
+    put(&mut cpu, request_count, u32::MAX);
+    cpu.call(0x80106d60, &[0x82, 0, 0, 0, 0, 0]);
+    assert_eq!(cpu.word(request_count), 1);
+    assert_eq!(cpu.word(queue), 0x82);
+    assert_eq!(cpu.word(queue + 24), 2); // play
+    cpu.call(0x80106e88, &[0x82, 0, 0, 0]);
+    assert_eq!(cpu.word(request_count), 2);
+    assert_eq!(cpu.word(queue + 28), 0x82);
+    assert_eq!(cpu.word(queue + 28 + 24), 3); // stop
+
+    let voice_table = 0x80196390;
+    let tone = RENDER_SCRATCH;
+    cpu.put(voice_table, &[1; 24]);
+    cpu.put(tone + 4, &[7]);
+    put(&mut cpu, tone + 0x54, 1);
+    cpu.put(system + 40, &24u16.to_le_bytes());
+    // Observe only the two SDK endpoints. The game releases and silences the slot.
+    for entry in [0x8016bfc0, 0x8016c494] {
+        cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let mut events = Vec::new();
+    for (entry, args) in [(0x80104834, &[tone][..]), (0x801047d8, &[][..])] {
+        cpu.call_observed(entry, args, 0x80000080, |cpu| match cpu.pc() {
+            0x8016bfc0 => events.push((cpu.pc(), cpu.r[4], 0, 0)),
+            0x8016c494 => events.push((cpu.pc(), cpu.r[4], cpu.r[5], cpu.r[6])),
+            _ => {}
+        });
+    }
+    assert_eq!(events, [(0x8016bfc0, 7, 0, 0), (0x8016c494, 7, 0, 0)]);
+    assert_eq!(cpu.word(tone + 0x54), 0);
+    assert_eq!(cpu.word(system + 40) & 0xffff, 23);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn hammerhead_duel_crush() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();

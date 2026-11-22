@@ -203,9 +203,6 @@ pub fn mix(
             }
             continue;
         }
-        if channels == [0; 2] || percent <= 0 {
-            continue;
-        }
         let levels = Levels::new(channels, percent);
         for tone in layers {
             let order = sequence.next();
@@ -551,7 +548,10 @@ mod tests {
         let mut requests = Vec::new();
         for i in 0..10 {
             let range = (i % 3) * 128;
-            requests.push(request(4, None, 99, [33; 2], range));
+            // In-range requests compete for hardware voices even at zero gain.
+            let channels = if i % 2 == 0 { [0; 2] } else { [33; 2] };
+            let percent = if i % 2 == 0 { 99 } else { 0 };
+            requests.push(request(4, None, percent, channels, range));
             for tone in &world.resource::<DuelBank>().programs[4] {
                 serial += 1;
                 expected.push((serial, tone.priority, range));

@@ -406,9 +406,8 @@ pub fn update(
     for (entity, mut engine, rival, playing, sink) in &mut engines {
         let audible = if let Some(rival) = rival {
             drive.opponents.get(rival.slot).and_then(|ai| {
-                let rev = ai.engine_rev()?;
-                let channels = drive.listener.channels(ai.position(), volume, false);
-                (channels != [0; 2]).then_some((rev, channels))
+                ai.engine_rev()
+                    .map(|rev| (rev, drive.listener.channels(ai.position(), volume, false)))
             })
         } else {
             Some((
@@ -551,9 +550,6 @@ pub fn update(
         {
             refresh_requested(&mut ranked, &active, key, sound.range);
             control.set(sound.channels, sound.volume_percent);
-            continue;
-        }
-        if sound.channels == [0; 2] || sound.volume_percent <= 0 {
             continue;
         }
         let control = pcm::Levels::new(sound.channels, sound.volume_percent);
@@ -1125,7 +1121,7 @@ mod tests {
             .iter()
             .map(|tone| tone.clip.decoder())
             .collect();
-        world.resource_mut::<Drive>().sounds = vec![impact([12, 55]), impact([47, 19])];
+        world.resource_mut::<Drive>().sounds = vec![impact([0, 0])];
         world.run_system_once(update).unwrap();
         let voices = |world: &mut World| {
             let mut voices: Vec<_> = world
@@ -1143,9 +1139,9 @@ mod tests {
             .iter()
             .map(|(_, _, h)| clips.get(h).unwrap().decoder())
             .collect();
-        for channels in [[47, 19], [25, 51]] {
+        for channels in [[0, 0], [47, 19], [25, 51]] {
             world.resource_mut::<Drive>().sounds = vec![impact(channels)];
-            if channels[0] == 25 {
+            if channels != [0; 2] {
                 world.run_system_once(update).unwrap();
                 assert_eq!(voices(&mut world), first);
             }
