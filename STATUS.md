@@ -161,6 +161,8 @@ The Rooftops boss introduction uses the five original lines, font and screen coo
 
 After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. After credits, Easy and Medium return to the title screen. Hard continues to Arena 5 with the same driver, remaining lives, inventory and opponent deck.
 
+The first credits draw advances the car before projection. Subsequent draws compose the fixed-point view rotation with the transposed vehicle rotation, following viewProc and csUpdMat. A disc-backed test runs the first 1,600 calls to screenCarEndingDrawCar for each of the three motion profiles and checks the composed rotation and local eye on every draw. The credits and showroom use the focal length and aspect correction of JP single-screen view entry 6.
+
 The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The opening sequence section records the title movie checks.
 
 ## Difficulty

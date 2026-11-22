@@ -115,24 +115,24 @@ void do_smoke(VECTOR3* pos)
     arena_effect(pos, 8);
 }
 
-static s32 sine(s16 angle)
+static s32 sine(const s16* table, s16 angle)
 {
-    s32 value = ROT_TABLE[2 * (abs((int)angle) & 4095)];
+    s32 value = table[2 * (abs((int)angle) & 4095)];
     return angle < 0 ? -value : value;
 }
-static s32 cosine(s16 angle)
+static s32 cosine(const s16* table, s16 angle)
 {
-    return ROT_TABLE[2 * (abs((int)angle) & 4095) + 1];
+    return table[2 * (abs((int)angle) & 4095) + 1];
 }
 static s32 mul(s32 a, s32 b)
 {
     return (a * b) >> 12;
 }
-void RotMatrixYXZ(const SVECTOR* a, MATRIX* m)
+void tm1_rotation_yxz(const s16* table, const s16* angles, MATRIX* m)
 {
-    s32 sx = sine(a->vx), cx = cosine(a->vx);
-    s32 sy = sine(a->vy), cy = cosine(a->vy);
-    s32 sz = sine(a->vz), cz = cosine(a->vz);
+    s32 sx = sine(table, angles[0]), cx = cosine(table, angles[0]);
+    s32 sy = sine(table, angles[1]), cy = cosine(table, angles[1]);
+    s32 sz = sine(table, angles[2]), cz = cosine(table, angles[2]);
     s32 yx = mul(sy, sx), cx2 = mul(cy, sx);
     m->m[0][0] = mul(cy, cz) + mul(yx, sz);
     m->m[0][1] = -mul(cy, sz) + mul(yx, cz);
@@ -143,6 +143,12 @@ void RotMatrixYXZ(const SVECTOR* a, MATRIX* m)
     m->m[2][0] = -mul(sy, cz) + mul(cx2, sz);
     m->m[2][1] = mul(cx2, cz) + mul(sy, sz);
     m->m[2][2] = mul(cy, cx);
+}
+
+void RotMatrixYXZ(const SVECTOR* a, MATRIX* m)
+{
+    const s16 angles[3] = { a->vx, a->vy, a->vz };
+    tm1_rotation_yxz(ROT_TABLE, angles, m);
 }
 
 static struct {

@@ -749,6 +749,20 @@ impl PlayerVehicle {
         (self.word(0x398) / 32) * 100 / (i32::from(fields) * 19)
     }
 
+    pub fn rotation_yxz(&self, angles: [i16; 3]) -> crate::math::Matrix {
+        unsafe extern "C" {
+            fn tm1_rotation_yxz(
+                table: *const i16,
+                angles: *const i16,
+                matrix: *mut crate::math::Matrix,
+            );
+        }
+        let table = &self.trig[(0x80184d58u32 - 0x80183f14) as usize / 2..];
+        let mut matrix = crate::math::Matrix::default();
+        unsafe { tm1_rotation_yxz(table.as_ptr(), angles.as_ptr(), &mut matrix) };
+        matrix
+    }
+
     /// Signed X rotation in DMD coordinates, after transposing the SDK matrix.
     pub fn wheel_sin_cos(&self, angle: i64) -> [i16; 2] {
         let i =

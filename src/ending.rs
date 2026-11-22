@@ -14,7 +14,7 @@ use tm1_assets::{
     screen::{self, Face, Fonts, HEIGHT, WIDTH},
     texture::Vram,
 };
-use tm1_core::drive::Vehicle;
+use tm1_core::drive::{PlayerVehicle, Vehicle};
 
 #[derive(PartialEq, Eq, Debug, Clone, Copy)]
 enum Phase {
@@ -151,50 +151,54 @@ impl Ending {
             Phase::Finished => {}
         }
     }
-    fn credits_frame(&self, out: &mut [u8]) {
+    fn credits_frame(&self, out: &mut [u8], player: &PlayerVehicle) {
         out.copy_from_slice(&self.backdrop);
-        self.draw_car(out);
+        self.draw_car(out, player);
         self.credits.draw(out, &self.fonts);
     }
-    fn draw_car(&self, out: &mut [u8]) {
-        let (eye, angles, spin, start, step) = match self.vehicle {
-            Vehicle::Outlaw => (
-                Vec3::new(0., -240., 128.),
-                Vec3::ZERO,
-                Vec3::new(11., 22., 11.),
-                -1280.,
-                2.,
-            ),
-            Vehicle::RoadKill => (
-                Vec3::new(0., 0., 112.),
-                Vec3::new(79., 0., -34.),
-                Vec3::ZERO,
-                -480.,
-                16.,
-            ),
-            _ => (
-                Vec3::new(40., 0., 48.),
-                Vec3::new(-102., 0., -22.),
-                Vec3::ZERO,
-                240.,
-                8.,
-            ),
+    fn car_transform(&self, player: &PlayerVehicle) -> (tm1_core::math::Matrix, [i32; 3]) {
+        use tm1_core::math::{Matrix, multiply, multiply_long};
+        // screenCarEndingDrawCar advances the CS before the first submission.
+        let draw = self.frame as i32 + 1;
+        let (eye, angles, spin, y) = match self.vehicle {
+            Vehicle::Outlaw => ([0, -240, 128], [0; 3], [11, 22, 11], -1280 + 2 * draw),
+            Vehicle::RoadKill => ([0, 0, 112], [79, 0, -34], [0; 3], -480 + 16 * draw),
+            _ => ([40, 0, 48], [-102, 0, -22], [0; 3], 240 + 8 * draw),
         };
-        let rotation = |a: Vec3| {
-            let r = a * (std::f32::consts::TAU / 4096.);
-            Quat::from_euler(EulerRot::YXZ, r.y, r.x, r.z)
+        let model = player.rotation_yxz(spin.map(|v| (v * draw) as i16));
+        let view = player.rotation_yxz(angles);
+        let relative = [-eye[0], y - eye[1], self.height - eye[2]];
+        let world_pos = multiply(&model, relative, false);
+        // csUpdMat composes the view with the transposed CS matrix.
+        let mut combined = Matrix {
+            rotation: std::array::from_fn(|i| {
+                std::array::from_fn(|j| {
+                    ((0..3)
+                        .map(|k| i32::from(view.rotation[i][k]) * i32::from(model.rotation[j][k]))
+                        .sum::<i32>()
+                        >> 12) as i16
+                })
+            }),
+            ..Default::default()
         };
-        let origin = Vec3::new(0., start + step * self.frame as f32, self.height as f32);
-        let camera = rotation(angles).inverse();
-        let model = rotation(spin * self.frame as f32);
+        combined.translation = multiply_long(&combined, world_pos);
+        (combined, world_pos.map(|v| -v))
+    }
+    fn draw_car(&self, out: &mut [u8], player: &PlayerVehicle) {
+        let (combined, local_eye) = self.car_transform(player);
         draw_model(
             out,
             &self.car,
             &self.textures,
             self.frame,
-            model.inverse() * (eye - origin),
+            Vec3::from_array(local_eye.map(|v| v as f32)),
             3,
-            |p| camera * (origin - eye + model * p),
+            |p| {
+                Vec3::from_array(std::array::from_fn(|i| {
+                    let row = Vec3::from_array(combined.rotation[i].map(f32::from));
+                    combined.translation[i] as f32 + row.dot(p) / 4096.
+                }))
+            },
         );
     }
 }
@@ -225,7 +229,12 @@ pub(crate) fn draw_model(
         for (i, v) in poly.vertices.iter().enumerate() {
             let p = transform(Vec3::from(v.position));
             z[i] = p.y;
-            screen[i] = Vec2::new(160. + 256. * p.x / p.y, 120. - 256. * p.z / p.y);
+            // uaInitView selects FOV entry 6 for the single-screen car databases.
+            let focal = 228.;
+            screen[i] = Vec2::new(
+                160. + focal * (4096. / 3690.) * p.x / p.y,
+                120. - focal * p.z / p.y,
+            );
         }
         for &[a, b, c] in &[[0, 1, 2], [2, 1, 3]][..poly.vertices.len().saturating_sub(2)] {
             if z[a].min(z[b]).min(z[c]) < 1. {
@@ -409,9 +418,9 @@ pub fn update(
     }
     if ending.phase == Phase::Credits {
         let signature_field = match ending.vehicle {
-            Vehicle::Outlaw => 721,
-            Vehicle::RoadKill => 61,
-            _ => 31,
+            Vehicle::Outlaw => 720,
+            Vehicle::RoadKill => 60,
+            _ => 30,
         };
         if before == Phase::Credits
             && first_frame < signature_field
@@ -439,7 +448,7 @@ pub fn update(
             .get_mut(&ending.image)
             .and_then(|i| i.into_inner().data.as_mut())
         {
-            ending.credits_frame(data);
+            ending.credits_frame(data, &drive.player);
         }
     }
 }
@@ -466,6 +475,61 @@ pub fn finish(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn credit_poses_follow_the_jp_draw_loop() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let player = PlayerVehicle::from_executable(&exe).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        let state = 0x80010000;
+        let cs = 0x80010200;
+        let view = 0x80010400;
+        cpu.put(state + 0x12c, &u32::to_le_bytes(cs));
+        let matrix = |cpu: &crate::reference_cpu::Cpu, base: u32| -> [[i32; 3]; 3] {
+            std::array::from_fn(|i| {
+                std::array::from_fn(|j| {
+                    let p = base + 2 * (i * 3 + j) as u32;
+                    ((cpu.word(p & !3) >> (8 * (p & 3))) as i16) as i32
+                })
+            })
+        };
+        for (car, setup) in [
+            (Vehicle::Outlaw, 0x8013f83c),
+            (Vehicle::RoadKill, 0x8013f8a8),
+            (Vehicle::YellowJacket, 0x8013f7d0),
+        ] {
+            let mut ending = Ending::load(&disc, car, 0, 32).unwrap();
+            cpu.call(setup, &[]);
+            cpu.put(cs + 0x54, &[0; 8]);
+            cpu.put(cs + 0x60, &cpu.word(0x8018c5b8).to_le_bytes());
+            cpu.call(0x8015d8a4, &[0x8018c5a8, view]);
+            let camera = matrix(&cpu, view);
+            for frame in 0..1600 {
+                cpu.call_until(0x8013fce0, &[state], 0x8010a774);
+                ending.frame = frame;
+                let (actual, eye) = ending.car_transform(&player);
+                let rotation = matrix(&cpu, cs + 0x14);
+                let position = [0, cpu.word(cs + 0x60) as i32, 32];
+                for i in 0..3 {
+                    let local = (0..3)
+                        .map(|k| {
+                            rotation[i][k]
+                                * (cpu.word(0x8019cd24 + 4 * k as u32) as i32 - position[k])
+                        })
+                        .sum::<i32>()
+                        / 4096;
+                    assert_eq!(eye[i], local);
+                    for j in 0..3 {
+                        let element =
+                            (0..3).map(|k| camera[i][k] * rotation[j][k]).sum::<i32>() >> 12;
+                        assert_eq!(i32::from(actual.rotation[i][j]), element);
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -606,7 +670,8 @@ mod tests {
         assert_eq!(ending.phase, Phase::Credits);
         assert_eq!(ending.credits.lines.len(), 153);
         let mut pixels = ending.backdrop.clone();
-        ending.draw_car(&mut pixels);
+        let player = PlayerVehicle::from_executable(&disc.read("SIPS_600.07").unwrap()).unwrap();
+        ending.draw_car(&mut pixels, &player);
         assert_ne!(pixels.as_slice(), ending.backdrop.as_slice());
         ending.field(EndingInput {
             up: true,
