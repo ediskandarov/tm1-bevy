@@ -98,6 +98,7 @@ pub(crate) fn arena_art(
         dmd.flame_frames()?,
         dmd.burn_frames()?,
         [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],
+        dmd.drop_sprites()?,
         dmd.contrail_frames()?,
         dmd.dashboard_icons()?,
         dmd.radar_arrows()?,

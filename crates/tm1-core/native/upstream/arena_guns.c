@@ -589,24 +589,32 @@ static void launchDrop(
     flags[9] = 1;
     pad->ammo[pad->cur]--;
     pad->totalAmmo--;
+    arena_drop_launch_sound(&d->pos, d->kind);
 }
 void arena_move_drops(void)
 {
     for (int i = 0; i < 12; i++) {
         DropWeap* d = &dropweapon[i];
+        d->drawn_kind = 0;
         if (d->life <= 0)
             continue;
         if (d->power < d->pos.vz)
             d->pos.vz = d->pos.vz - 12 >= d->power ? d->pos.vz - 12 : d->power;
+        d->drawn_kind = d->kind;
+        d->drawn_pos = d->pos;
         --d->life;
         d->pos.vz += 30;
         int hit = CAR_HD(&d->pos, d->life >= 360 ? d->idx : 0, 2);
         d->pos.vz -= 30;
         if (hit && hit != 8) {
+            arena_weapon_impact_sound(&d->pos, d->kind);
             if (d->kind == WEAPON_SPIKE)
                 do_smoke(&d->pos);
             if (d->kind == WEAPON_BOMB) {
-                arena_effect(&d->pos, 2);
+                VECTOR3 above = d->pos;
+                above.vz += 50;
+                arena_effect(&above, 37);
+                arena_effect(&d->pos, 37);
             } else
                 for (int j = 0; j < 6; j++) {
                     VECTOR3 p = d->pos;

@@ -432,7 +432,7 @@ void move_missile(Missile* m)
     if (m->trail.visible)
         update_trail(m);
     if (exploded)
-        arena_missile_impact_sound(&m->cs->pos, m->unk48);
+        arena_weapon_impact_sound(&m->cs->pos, m->unk48);
 }
 void arena_move_missiles(void)
 {

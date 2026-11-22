@@ -176,7 +176,17 @@ fn battle_programs(
         .chain(opponents.iter().map(|&car| car.sound_programs().1))
         .chain([52, 53, 27, 38, 36])
         .chain(tm1_core::drive::ContactVoice::PROGRAMS)
-        .chain([28, 54, SweetTooth.sound_programs().1, 57, 58])
+        .chain([
+            28,
+            54,
+            25,
+            24,
+            23,
+            22,
+            SweetTooth.sound_programs().1,
+            57,
+            58,
+        ])
 }
 
 impl Sounds {

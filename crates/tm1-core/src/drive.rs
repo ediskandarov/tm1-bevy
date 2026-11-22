@@ -1183,7 +1183,11 @@ unsafe extern "C" {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BattleEvent {
-    MissileImpact {
+    DropLaunch {
+        weapon: u8,
+        position: [i32; 3],
+    },
+    WeaponImpact {
         weapon: u8,
         position: [i32; 3],
     },
@@ -1214,14 +1218,27 @@ extern "C" fn tm1_record_effect(log: &mut Vec<BattleEvent>, kind: i32, x: i32, y
     });
 }
 #[unsafe(no_mangle)]
-extern "C" fn tm1_record_missile_impact(
+extern "C" fn tm1_record_drop_launch(
     log: &mut Vec<BattleEvent>,
     weapon: i32,
     x: i32,
     y: i32,
     z: i32,
 ) {
-    log.push(BattleEvent::MissileImpact {
+    log.push(BattleEvent::DropLaunch {
+        weapon: weapon as u8,
+        position: [x, y, z],
+    });
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_weapon_impact(
+    log: &mut Vec<BattleEvent>,
+    weapon: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) {
+    log.push(BattleEvent::WeaponImpact {
         weapon: weapon as u8,
         position: [x, y, z],
     });
@@ -1818,6 +1835,12 @@ impl Opponent {
 }
 
 impl CollisionScene {
+    pub fn drawn_drops(&self, out: &mut [[i32; 4]; 12]) -> usize {
+        unsafe extern "C" {
+            fn tm1_drawn_drops(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;
+        }
+        unsafe { tm1_drawn_drops(self.native.as_ptr(), out.as_mut_ptr()) }
+    }
     pub fn effects(&self, out: &mut [[i32; 5]; 122]) -> usize {
         unsafe extern "C" {
             fn tm1_effects(scene: *mut std::ffi::c_void, out: *mut [i32; 5]) -> usize;

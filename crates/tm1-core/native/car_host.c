@@ -15,7 +15,8 @@ extern void tm1_record_effect(void*, int, int, int, int);
 extern void tm1_record_guns(void*, int, int, int, int, int);
 extern void tm1_record_turbo(void*, int);
 extern void tm1_record_actor(void*, int);
-extern void tm1_record_missile_impact(void*, int, int, int, int);
+extern void tm1_record_drop_launch(void*, int, int, int, int);
+extern void tm1_record_weapon_impact(void*, int, int, int, int);
 extern void tm1_record_hover(void*, int, int, int, int);
 
 void arena_record_effect(const VECTOR3* p, int kind)
@@ -23,10 +24,15 @@ void arena_record_effect(const VECTOR3* p, int kind)
     if (step_audio)
         tm1_record_effect(step_audio, kind, p->vx, p->vy, p->vz);
 }
-void arena_missile_impact_sound(const VECTOR3* p, int weapon)
+void arena_drop_launch_sound(const VECTOR3* p, int weapon)
 {
-    if (step_audio && (unsigned)weapon <= WEAPON_REAR_MISSILE)
-        tm1_record_missile_impact(step_audio, weapon, p->vx, p->vy, p->vz);
+    if (step_audio)
+        tm1_record_drop_launch(step_audio, weapon, p->vx, p->vy, p->vz);
+}
+void arena_weapon_impact_sound(const VECTOR3* p, int weapon)
+{
+    if (step_audio && (unsigned)weapon <= WEAPON_SPIKE)
+        tm1_record_weapon_impact(step_audio, weapon, p->vx, p->vy, p->vz);
 }
 void arena_record_hover(const VECTOR3* p, int flags)
 {

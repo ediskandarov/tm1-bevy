@@ -11,7 +11,7 @@ pub enum ExclusiveVoice {
     Recharge,
     Hover,
     HoverGuns,
-    MissileLaunch(u8),
+    WeaponLaunch(u8),
     CarExplosion,
     Signature(Vehicle),
     Pickup(i32),
@@ -44,7 +44,7 @@ pub(crate) fn effect_volume(kind: i32) -> i32 {
 }
 pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
     match kind {
-        12..=17 => Some(ExclusiveVoice::MissileLaunch((kind - 12) as u8)),
+        12..=17 => Some(ExclusiveVoice::WeaponLaunch((kind - 12) as u8)),
         1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
         54 => Some(ExclusiveVoice::ScaledEffect(4)),
         55 | 56 => Some(ExclusiveVoice::ScaledEffect(104)),
@@ -61,7 +61,7 @@ pub(crate) fn hover_sample(
     use tm1_core::drive::HoverSound;
     match sound {
         HoverSound::Guns(firing) => (ExclusiveVoice::HoverGuns, firing.then_some(1)),
-        HoverSound::Launch => (ExclusiveVoice::MissileLaunch(0), Some(4)),
+        HoverSound::Launch => (ExclusiveVoice::WeaponLaunch(0), Some(4)),
         HoverSound::Motor => (ExclusiveVoice::Hover, Some(motor)),
     }
 }
@@ -190,16 +190,42 @@ pub(crate) fn battle_audio(
                     );
                 }
             }
-            BattleEvent::MissileImpact { weapon, position } => {
-                // Fire and rear missiles share impact ID 0x19 in UA_SOUND.c.
-                let id = [0x19, 0x1c, 0x25, 0x1f, 0x22, 0x19][usize::from(weapon)];
+            BattleEvent::DropLaunch { weapon, position } => {
+                let offset = match weapon {
+                    6 => 11,
+                    8 => 12,
+                    9 => 13,
+                    10 => 14,
+                    _ => continue,
+                };
+                let key = ExclusiveVoice::WeaponLaunch(weapon);
+                emit(BattleRequest::Stop(key), position);
                 emit(
-                    BattleRequest::Stop(ExclusiveVoice::MissileLaunch(weapon)),
+                    play(recharge + offset, Some(key), 99, position, false),
+                    position,
+                );
+            }
+            BattleEvent::WeaponImpact { weapon, position } => {
+                // Fire and rear missiles share impact ID 0x19 in UA_SOUND.c.
+                let id = match weapon {
+                    0 | 5 => 0x19,
+                    1 => 0x1c,
+                    2 => 0x25,
+                    3 => 0x1f,
+                    4 => 0x22,
+                    6 => 0x13,
+                    8 => 0x07,
+                    9 => 0x0a,
+                    10 => 0x0d,
+                    _ => continue,
+                };
+                emit(
+                    BattleRequest::Stop(ExclusiveVoice::WeaponLaunch(weapon)),
                     position,
                 );
                 emit(
                     play(
-                        3,
+                        if weapon == 9 { recharge + 13 } else { 3 },
                         Some(ExclusiveVoice::ScaledEffect(id)),
                         99,
                         position,

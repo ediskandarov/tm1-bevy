@@ -1181,7 +1181,7 @@ static void check_smash(CarStats* st, CarMotion* motion, CarTire* tires, u8* fla
                 do_smoke(&pos);
                 break;
             case 2:
-                arena_effect(&pos, 2);
+                arena_effect(&pos, 28);
                 break;
             }
             if (victim->unk4C && !(GetFrameCount() & 3) && victim->unk40 > 0)
@@ -1543,6 +1543,19 @@ void arena_move_fragments(void)
             }
         }
 }
+size_t tm1_drawn_drops(CollisionScene* s, s32 (*out)[4])
+{
+    size_t n = 0;
+    for (int i = 0; i < 12; i++) {
+        DropWeap* d = &s->drops[i];
+        if (d->drawn_kind) {
+            s32 pose[4] = { d->drawn_pos.vx, d->drawn_pos.vy, d->drawn_pos.vz, d->drawn_kind };
+            memcpy(out[n++], pose, sizeof(pose));
+        }
+    }
+    return n;
+}
+
 size_t tm1_effects(CollisionScene* s, s32 (*out)[5])
 {
     size_t count = 0;

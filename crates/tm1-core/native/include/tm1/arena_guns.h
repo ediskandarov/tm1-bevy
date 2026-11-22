@@ -65,7 +65,7 @@ s32 CAR_HD(VECTOR3 *,s32,s32);
 void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags);
 void arena_launch_missile(CarStats *,CarMotion *,CarWeap *,u8 *,u8);
 void arena_update_weapons(Car *,u8);
-typedef struct {VECTOR3 pos; s32 life,power,kind,idx,type;} DropWeap;
+typedef struct {VECTOR3 pos; s32 life,power,kind,idx,type; VECTOR3 drawn_pos; s32 drawn_kind;} DropWeap;
 typedef struct {
     s32 life, owner, target, visible;
     VECTOR3 points[16];
@@ -84,7 +84,8 @@ void tm1_age_effects(void);
 void arena_effect(VECTOR3 *,s32);
 void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos);
 void arena_record_effect(const VECTOR3* pos, int kind);
-void arena_missile_impact_sound(const VECTOR3* pos, int weapon);
+void arena_drop_launch_sound(const VECTOR3* pos, int weapon);
+void arena_weapon_impact_sound(const VECTOR3* pos, int weapon);
 void arena_record_hover(const VECTOR3* pos, int flags);
 void arena_special_effect(VECTOR3* pos, s32 owner);
 

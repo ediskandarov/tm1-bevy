@@ -2258,7 +2258,7 @@ fn regular_missile_impacts_original() {
                         return;
                     }
                     0x80107dbc => {
-                        expected.push(BattleEvent::MissileImpact {
+                        expected.push(BattleEvent::WeaponImpact {
                             weapon: cpu.r[4] as u8,
                             position: source,
                         });
@@ -2282,7 +2282,7 @@ fn regular_missile_impacts_original() {
                 .filter(|event| {
                     matches!(
                         event,
-                        BattleEvent::MissileImpact { .. }
+                        BattleEvent::WeaponImpact { .. }
                             | BattleEvent::Effect {
                                 kind: 28 | 55 | 56 | 8 | 31,
                                 ..
@@ -2306,6 +2306,79 @@ fn regular_missile_impacts_original() {
         }
         assert_eq!(hits, 1);
         assert_eq!(r.police.health().0, before - damage, "slot {slot}");
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn dropped_weapon_contacts_original() {
+    for weapon in [6u8, 8, 9, 10] {
+        let mut r = Reference::new();
+        let d = 0x801996b8;
+        vec3(&mut r.player.state, 0x388, [2700, 2200, 400]);
+        r.player.state[0xd2] = 1;
+        r.player.state[0x460..0x464].copy_from_slice(&i32::from(weapon).to_le_bytes());
+        let ammo = 0x464 + 2 * usize::from(weapon);
+        r.player.state[ammo..ammo + 2].copy_from_slice(&2i16.to_le_bytes());
+        r.sync();
+        for at in [0x80107c6c, 0x80107d18, 0x80107dbc, 0x80136c78, 0x80137140] {
+            r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        assert_eq!(r.cpu.word(d), u32::from(weapon));
+        let mut pos = [8, 12, 16].map(|k| r.cpu.word(d + k) as i32);
+        assert!(r.scene.audio.contains(&BattleEvent::DropLaunch {
+            weapon,
+            position: pos
+        }));
+        let floor = r.cpu.word(d + 20) as i32;
+        pos[2] = if pos[2] > floor {
+            (pos[2] - 12).max(floor)
+        } else {
+            pos[2]
+        };
+        vec3(&mut r.police.state, 0x444, [pos[0], pos[1], pos[2] + 24]);
+        r.sync();
+        put(&mut r.cpu, d + 16, pos[2] as u32);
+        r.cpu.put(d + 4, &399i16.to_le_bytes());
+        let mut expected = Vec::new();
+        r.cpu.call_observed(0x80133fd4, &[0], 0x80000080, |cpu| {
+            let kind = match cpu.pc() {
+                0x80107dbc => {
+                    expected.push(BattleEvent::WeaponImpact {
+                        weapon: cpu.r[4] as u8,
+                        position: pos,
+                    });
+                    return;
+                }
+                0x80136c78 => 37,
+                0x80137140 => 8,
+                0x8013721c => 32,
+                _ => return,
+            };
+            expected.push(BattleEvent::Effect {
+                kind,
+                position: [0, 4, 8].map(|k| cpu.word(cpu.r[4] + k) as i32),
+            });
+        });
+        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+        assert!(
+            matches!(expected.first(), Some(BattleEvent::WeaponImpact { .. })),
+            "weapon {weapon} at {pos:?}"
+        );
+        assert_eq!(r.scene.audio, expected, "weapon {weapon}");
+        r.compare();
+        let mut fx = [[0; 5]; 122];
+        let n = r.scene.effects(&mut fx);
+        assert_eq!(fx[..n].iter().any(|e| e[3] == 6), weapon == 9);
+        let mut drawn = [[0; 4]; 12];
+        assert_eq!(r.scene.drawn_drops(&mut drawn), 1);
+        assert_eq!(drawn[0], [pos[0], pos[1], pos[2], i32::from(weapon)]);
+        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+        assert_eq!(r.scene.drawn_drops(&mut drawn), usize::from(weapon == 9));
     }
 }
 

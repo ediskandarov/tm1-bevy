@@ -233,6 +233,10 @@ impl<'a> Dmd<'a> {
     pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
         self.sprite_frames(650, true)
     }
+    pub fn drop_sprites(&self) -> Result<[SpriteFrame; 4]> {
+        let sprite = |kind| self.sprite_frames::<1>(kind, false).map(|[frame]| frame);
+        Ok([sprite(210)?, sprite(212)?, sprite(213)?, sprite(214)?])
+    }
     pub fn contrail_frames(&self) -> Result<[SpriteFrame; 8]> {
         self.sprite_frames(652, true)
     }

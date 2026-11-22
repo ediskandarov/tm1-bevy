@@ -58,6 +58,7 @@ pub struct Arena {
     missile_models: [Option<Scene>; 2],
     merc_models: [Vec<Scene>; 2],
     pedestrians: Vec<Vec<Scene>>,
+    drop_sprites: [SpriteFrame; 4],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     spark_frames: [SpriteFrame; 4],
@@ -101,6 +102,7 @@ impl Arena {
         flame_frames: [SpriteFrame; 10],
         burn_frames: [SpriteFrame; 8],
         smoke_frames: [[SpriteFrame; 16]; 2],
+        drop_sprites: [SpriteFrame; 4],
         contrail_frames: [SpriteFrame; 8],
         icons: tm1_assets::scene::DashboardIcons,
         arrows: [SpriteFrame; 4],
@@ -144,6 +146,7 @@ impl Arena {
             .chain(&contrail_frames)
             .chain(&arrows)
             .map(|f| (f, true))
+            .chain(drop_sprites.iter().map(|f| (f, false)))
             .chain(icons.frames())
         {
             let next = tiles.len();
@@ -197,6 +200,7 @@ impl Arena {
             flame_frames,
             burn_frames,
             smoke_frames,
+            drop_sprites,
             contrail_frames,
             overview: false,
             radar: true,
@@ -1286,6 +1290,54 @@ fn draw_view(
             }
         }
     }
+    let mut drops = [[0; 4]; 12];
+    let drop_count = contacts.drawn_drops(&mut drops);
+    for &[x, y, z, weapon] in &drops[..drop_count] {
+        let center = world([x as f32, y as f32, z as f32]);
+        let delta = center - eye;
+        let depth = delta.dot(forward);
+        if !(16.0..30001.0).contains(&depth)
+            || delta.dot(right).abs() >= 641.0
+            || delta.dot(up).abs() >= 641.0
+        {
+            continue;
+        }
+        let index = match weapon {
+            6 => 0,
+            8 => 1,
+            9 => 2,
+            10 => 3,
+            _ => continue,
+        };
+        let sprite = &arena.drop_sprites[index];
+        let tile = arena.tiles[&(Some(sprite.texture), false)];
+        for &i in indices(4) {
+            let side = if i & 1 == 0 { -1. } else { 1. };
+            let point = if weapon == 9 {
+                // drawOil places the ground square one OT bucket in front of the road.
+                let corner = center + world([48. * side, if i < 2 { -48. } else { 48. }, 0.]);
+                let ray = corner - eye;
+                // Warehouse road polygons lie eight units above the collision floor.
+                // Clear that skin along the same camera ray, preserving the projected UVs.
+                let corner_depth = ray.dot(forward).max(16.);
+                let road_offset = if eye.y > corner.y {
+                    8. / (eye.y - corner.y).max(16.)
+                } else {
+                    0.
+                };
+                let biased_depth = (corner_depth * (1. - road_offset) - 8.).max(16.);
+                eye + ray * (biased_depth / corner_depth)
+            } else {
+                let scale = (228. * 16. / depth).floor().clamp(1., 512.) * depth / 228.;
+                center + right * (side * scale) + up * (if i < 2 { 2. } else { 1. } * scale)
+            };
+            solids.push(
+                point,
+                arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
+                [1.; 4],
+            );
+        }
+    }
     let mut flames = [[0; 4]; 80];
     let count = contacts.flame_particles(&mut flames);
     let mut effects = [[0; 5]; 122];
@@ -1415,7 +1467,7 @@ fn draw_view(
             2 => (12. + (7 - ttl) as f32 * 6., [1., 0.24, 0.04, 0.82]),
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
-            6 => (16., [0.2, 0.16, 0.14, 1.]),
+            6 => continue,
             1 | 3 | 8 | 26..=56 | 401..=406 | 410..=414 | 430 => continue,
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };
