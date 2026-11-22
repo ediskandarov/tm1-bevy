@@ -3,7 +3,13 @@ unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
     fn tm1_bind_level(level: i32);
     fn tm1_bind_difficulty(difficulty: i32);
-    fn tm1_campaign_player(state: *mut u8, table: *const i16, seed: *mut u32, new_life: i32);
+    fn tm1_campaign_player(
+        state: *mut u8,
+        table: *const i16,
+        seed: *mut u32,
+        new_life: i32,
+        fields: i16,
+    );
     fn tm1_new_life(scene: *mut std::ffi::c_void);
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32, slot: i32, split: i32);
     fn tm1_drive_step(
@@ -526,7 +532,7 @@ impl PlayerVehicle {
         unsafe {
             tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(level as i32);
-            tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0);
+            tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0, 3);
         }
         Self {
             cheat_controls: self.cheat_controls,
@@ -1189,7 +1195,7 @@ impl Opponent {
                 player.state.as_mut_ptr(),
                 player.trig.as_ptr(),
                 &mut player.seed,
-                60,
+                70,
                 player.last_fields.into(),
             );
         }
@@ -1723,6 +1729,7 @@ impl CollisionScene {
                 player.trig.as_ptr(),
                 &mut player.seed,
                 1,
+                player.last_fields.into(),
             );
             tm1_new_life(self.native.as_ptr());
         }

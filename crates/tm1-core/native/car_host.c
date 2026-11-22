@@ -817,15 +817,15 @@ static void respawn_player(PlayerCar* car, int fov)
     stats->unk01 = 0;
 }
 
-void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life)
+void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life, s16 fields)
 {
     PlayerCar car;
     memcpy(&car, state, sizeof(car));
     trig = table;
     random_state = *seed;
-    gFieldsLastFrame = 3;
-    gUpdateRate = 20;
-    respawn_player(&car, 60);
+    gFieldsLastFrame = fields;
+    gUpdateRate = 60 / fields;
+    respawn_player(&car, 70);
     if (new_life) {
         car.stats.unkF8 = 0;
         car.weap.gunDelay = car.weap.fireDelay = 0;

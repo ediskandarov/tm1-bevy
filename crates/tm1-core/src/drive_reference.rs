@@ -3771,6 +3771,8 @@ fn campaign_player_carryover_matches_retail() {
             Level::Rooftops => 0x8012b5a4,
             Level::Arena | Level::Arena5 => unreachable!(),
         };
+        r.cpu.put(0x80170238, &3i16.to_le_bytes());
+        r.cpu.put(0x8017023a, &20i16.to_le_bytes());
         r.cpu.call(points, &[]);
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         r.cpu.put(PLAYER, &player.state);
@@ -3786,6 +3788,18 @@ fn campaign_player_carryover_matches_retail() {
         player.state.fill(0);
         player.reset();
         assert_eq!(player.state, initial);
+        let fields = match level {
+            Level::Warehouse => 1,
+            Level::Freeway => 2,
+            Level::CityPark => 3,
+            Level::Cyburbia => 4,
+            Level::Rooftops => 5,
+            _ => unreachable!(),
+        };
+        player.step(Input::default(), fields);
+        r.cpu.put(0x80170238, &i16::from(fields).to_le_bytes());
+        r.cpu
+            .put(0x8017023a, &(60 / i16::from(fields)).to_le_bytes());
         player.state[0x178..0x17c].copy_from_slice(&(-5i32).to_le_bytes());
         r.cpu.put(PLAYER, &player.state);
         r.cpu.random_state = player.seed;
