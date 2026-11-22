@@ -16,6 +16,7 @@ use tm1_core::drive::Vehicle;
 pub struct DuelBank {
     programs: Vec<Vec<EffectTone>>,
     engines: [Vec<EngineSample>; 2],
+    engine_levels: Levels,
     score_engines: Vec<Handle<StereoPcm>>,
     turbo: Vec<EffectTone>,
     menu: [Handle<AudioSource>; 2],
@@ -45,18 +46,19 @@ impl Voice {
 }
 
 impl DuelBank {
-    pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
+    pub fn load(bank: &[u8], cars: [Vehicle; 2], volume: u8, world: &mut World) -> Result<Self> {
         world.init_resource::<Assets<super::pcm::StereoPcm>>();
         let engines = [
             EngineSample::load(bank, cars[0])?,
             EngineSample::load(bank, cars[1])?,
         ];
+        let engine_levels = Levels::new([i32::from(volume); 2], 99);
         let score_engines = engines[0]
             .iter()
             .map(|tone| {
                 world
                     .resource_mut::<Assets<StereoPcm>>()
-                    .add(tone.voice(30))
+                    .add(tone.voice(30).with_levels(engine_levels.clone()))
             })
             .collect();
         let programs = battle_programs(cars[0], &cars[1..])
@@ -71,18 +73,21 @@ impl DuelBank {
         Ok(Self {
             programs,
             engines,
+            engine_levels,
             score_engines,
             turbo: EffectTone::load(bank, TURBO_PROGRAM, true)?,
             menu: [menu(57)?, menu(58)?],
         })
     }
 
-    pub fn install(self, world: &mut World, gain: f32) {
+    pub fn install(self, world: &mut World) {
         let mut sequence = VoiceSequence::default();
         for (slot, layers) in self.engines.iter().enumerate() {
             for layer in layers {
                 let (clip, register) = layer.motor.voice(layer.pitch.register(0));
-                let source = world.resource_mut::<Assets<StereoPcm>>().add(clip);
+                let source = world
+                    .resource_mut::<Assets<StereoPcm>>()
+                    .add(clip.with_levels(self.engine_levels.clone()));
                 world.spawn((
                     StageEntity,
                     DuelEngine {
@@ -98,7 +103,7 @@ impl DuelBank {
                         group: None,
                     },
                     AudioPlayer(source.clone()),
-                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28 * gain)),
+                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28)),
                 ));
             }
         }
@@ -106,13 +111,17 @@ impl DuelBank {
         world.insert_resource(self);
     }
 
-    pub fn play_score_engine(&self, commands: &mut Commands, gain: f32) {
+    pub fn set_engine_volume(&self, volume: u8) {
+        self.engine_levels.set([i32::from(volume); 2], 99);
+    }
+
+    pub fn play_score_engine(&self, commands: &mut Commands) {
         for clip in &self.score_engines {
             commands.spawn((
                 StageEntity,
                 crate::duel::ScoreEngine,
                 AudioPlayer(clip.clone()),
-                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.28 * gain)),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.28)),
             ));
         }
     }
@@ -269,6 +278,68 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
     use std::time::Duration;
     use tm1_core::drive::{ContactVoice, Difficulty, Level};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_engine_levels_follow_the_keyboard_mix() {
+        use KeyCode::*;
+        use bevy::audio::Decodable;
+        let mut world = crate::contest::menu_world();
+        let settings = &mut world.resource_mut::<crate::contest::Contest>().settings;
+        crate::pause::navigate(
+            crate::pause::Page::Audio(1),
+            crate::pause::Action::Right,
+            settings,
+        );
+        let initial = settings.effects_volume();
+        assert_ne!(initial, 33);
+        crate::duel::start(
+            &mut world,
+            Level::Warehouse,
+            [Vehicle::RoadKill, Vehicle::Outlaw],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let check = |world: &mut World, volume| {
+            let mut engines = world.query::<(&DuelEngine, &PlaybackSettings)>();
+            let mut clips: Vec<_> = engines
+                .iter(world)
+                .map(|(engine, settings)| {
+                    assert_eq!(settings.volume, Volume::Linear(0.28));
+                    engine.source.clone()
+                })
+                .collect();
+            assert!(clips.len() >= 3); // both RoadKill tones plus Outlaw
+            clips.extend(world.resource::<DuelBank>().score_engines.iter().cloned());
+            for handle in clips {
+                let clip = world.resource::<Assets<StereoPcm>>().get(&handle).unwrap();
+                let gain = clip.volume.gain(volume, 99);
+                let mut nonzero = false;
+                for (sample, dry) in clip.decoder().zip(clip.unscaled_decoder()).take(4096) {
+                    nonzero |= dry != 0.;
+                    assert_eq!(sample, dry * gain);
+                }
+                assert!(nonzero);
+            }
+        };
+        check(&mut world, initial);
+        for key in [KeyP, KeyS, KeyS, Space, KeyD] {
+            let mut input = ButtonInput::default();
+            input.press(key);
+            world.insert_resource(input);
+            world.run_system_once(crate::duel::pause_menu).unwrap();
+            world.insert_resource(ButtonInput::<KeyCode>::default());
+            world.run_system_once(crate::duel::pause_menu).unwrap();
+        }
+        let updated = world.resource::<Duel>().settings.effects_volume();
+        assert_ne!(updated, initial);
+        check(&mut world, updated);
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

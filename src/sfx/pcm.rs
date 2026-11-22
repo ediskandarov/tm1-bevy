@@ -129,6 +129,7 @@ impl StereoPcm {
     #[cfg(test)]
     pub(super) fn unscaled_decoder(&self) -> Playback {
         let mut clip = self.clone();
+        clip.levels = None;
         clip.volume = VabVolume {
             program: 99,
             tone: 99,

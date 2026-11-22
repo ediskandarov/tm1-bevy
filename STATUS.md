@@ -121,6 +121,8 @@ The JP soundPlayId routine accepts an in-range request independently of its chan
 
 Looping machine-gun, turbo and program 38 effects retain fractional pitch through each ADPCM repeat in campaign and duel. Their PCM test checks both channels through three repeats of every looping tone in those programs. Non-repeating turbo layers end after their original samples.
 
+In a duel, both cars and the score-screen engine use the selected effects level in each VAB tone’s integer volume calculation. A disc-backed keyboard test checks the decoded stereo samples at round entry and after changing the mix in the pause menu.
+
 Campaign and duel engines stream at 44,100 stereo frames per second. Each tone reads its live SPU pitch register at a stereo frame boundary, interpolates the original decoded samples and carries the twelve fractional phase bits through rev changes and loops. Garage, score and ending engines use the same decoder at rev 30. A disc-backed replay checks both channels of every engine tone at all 100 rev settings and across repeated loop crossings, including register writes between the left and right samples.
 
 Machine guns in split-screen use the per-car start and stop requests from `UpdateGuns`. The two tones of program 12 play their attacks once and repeat from the VAB loop marker until the firing car stops or overheats. A 300-update replay checks both slots against the sound IDs emitted by the JP executable, including updates that make no audio request during cooldown. A scripted Metal run counted four gun tone sinks with both cars firing, two after Yellow Jacket released its guns, and zero after Outlaw released its guns.

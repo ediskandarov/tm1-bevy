@@ -188,7 +188,6 @@ pub fn start(
     )?;
     let music = crate::music::CdTrack::load(disc, crate::music::opening_track(level, true))?;
     let bank = disc.read("SND/UACORE.VAB")?;
-    let sounds = crate::sfx::duel::DuelBank::load(&bank, kinds, world)?;
     let settings = world
         .get_resource::<Duel>()
         .map(|d| d.settings)
@@ -198,6 +197,7 @@ pub fn start(
                 .map(|c| c.settings)
         })
         .unwrap_or_default();
+    let sounds = crate::sfx::duel::DuelBank::load(&bank, kinds, settings.effects_volume(), world)?;
     let layouts = world
         .get_resource::<crate::contest::Contest>()
         .map(crate::contest::Contest::duel_layouts)
@@ -244,7 +244,7 @@ pub fn start(
     world
         .run_system_once(render::setup)
         .map_err(|e| anyhow::anyhow!("render setup: {e:?}"))?;
-    sounds.install(world, settings.effects_gain());
+    sounds.install(world);
     let track = world
         .get_resource_or_init::<Assets<crate::music::CdTrack>>()
         .add(music);
@@ -401,6 +401,9 @@ pub fn pause_menu(
         duel.controls_view = Default::default();
         duel.pause_input = PauseInput::Ready;
     }
+    if before_settings.effects_volume() != duel.settings.effects_volume() {
+        sounds.set_engine_volume(duel.settings.effects_volume());
+    }
     let changed = before != duel.pause || before_settings != duel.settings || controls_changed;
     if let Some(page) = duel.pause {
         sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
@@ -440,7 +443,7 @@ pub fn pause_menu(
             playback.volume = bevy::audio::Volume::Linear(if music.is_some() {
                 duel.settings.cd_gain()
             } else {
-                0.28 * duel.settings.effects_gain()
+                0.28
             });
             if matches!(duel.pause, Some(Page::Audio(_)))
                 && let Some(track) = music.and_then(|p| tracks.get(&p.0))
@@ -557,7 +560,7 @@ pub fn advance(
         }
         if let Some(slot) = duel.winner {
             duel.score[slot] = duel.score[slot].wrapping_add(1);
-            bank.play_score_engine(&mut commands, duel.settings.effects_gain());
+            bank.play_score_engine(&mut commands);
         }
     }
     if let Some(winner) = duel.winner {
