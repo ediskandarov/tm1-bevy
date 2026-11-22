@@ -5,6 +5,7 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
+    pub mirror: bool,
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
     pub helicopter_unlocked: bool,
@@ -44,6 +45,7 @@ impl Drive {
         }
         self.helicopter_active = !self.helicopter_active;
         if self.helicopter_active {
+            self.mirror = false;
             let heli = self
                 .helicopter
                 .get_or_insert_with(|| tm1_core::drive::Helicopter::new(&mut self.player));
@@ -147,6 +149,7 @@ impl Drive {
             sounds: Vec::new(),
             remainder: Duration::ZERO,
             paused: false,
+            mirror: false,
             helicopter_unlocked: false,
             helicopter_active: false,
             helicopter: None,
@@ -257,6 +260,9 @@ pub fn advance(
     }
     if keys.just_pressed(KeyCode::KeyH) {
         drive.toggle_helicopter();
+    }
+    if keys.just_pressed(KeyCode::KeyB) && !drive.helicopter_active {
+        drive.mirror = !drive.mirror;
     }
     if keys.just_pressed(KeyCode::KeyC) {
         drive.helicopter_active = false;
@@ -621,6 +627,19 @@ mod tests {
             )
         };
         let (mut app, window) = build();
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyB);
+        tick(&mut app, 0);
+        assert!(app.world().resource::<Drive>().mirror);
+        {
+            let mut drive = app.world_mut().resource_mut::<Drive>();
+            drive.helicopter_unlocked = true;
+            drive.toggle_helicopter();
+            assert!(!drive.mirror);
+            assert!(drive.helicopter_pose().is_some());
+            drive.toggle_helicopter();
+        }
         let start = snapshot(&app);
         let mut pad = Gamepad::default();
         pad.digital_mut().press(GamepadButton::West);

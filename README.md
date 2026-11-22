@@ -116,7 +116,7 @@ cargo run -- /absolute/path/to/disc.cue
 ```
 
 Drive with W/S, steer with A/D, hold Shift for a hard turn and press T for turbo.
-C cycles the chase, far chase and cockpit views. Once the cockpit transition settles, the view shows the selected vehicle’s disc artwork, steering wheel or handlebars, and digital speedometer. The combat HUD reads its weapon icons, digits and life markers from the level database. Windshield damage appears below 50%, 30% and 10% health. P pauses, R restarts the encounter, V toggles the opponent radar, L lists surviving opponents, Tab toggles the overview, and Escape exits.
+C cycles the chase, far chase and cockpit views. Once the cockpit transition settles, the view shows the selected vehicle’s disc artwork, steering wheel or handlebars, and digital speedometer. B toggles the live 101 by 30 pixel rear-view mirror. Entering helicopter view switches the mirror off. The combat HUD reads its weapon icons, digits and life markers from the level database. Windshield damage appears below 50%, 30% and 10% health. P pauses, R restarts the encounter, V toggles the opponent radar, L lists surviving opponents, Tab toggles the overview, and Escape exits.
 Space fires the machine gun, E cycles inventory and F fires the selected weapon.
 The arena and both cars use a shared perspective depth buffer.
 On a gamepad the face buttons west/east control acceleration/reverse, north

@@ -130,6 +130,7 @@ impl Stage {
         drive.deck = deck;
         if let Entry::Continue(previous) = entry {
             drive.camera = tm1_core::drive::VehicleCamera::new(&drive.player, previous.camera.mode);
+            drive.mirror = previous.mirror;
             drive.helicopter_unlocked = previous.helicopter_unlocked;
             if previous.helicopter_pose().is_some() {
                 drive.toggle_helicopter();

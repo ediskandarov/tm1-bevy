@@ -90,7 +90,13 @@ fn main() -> Result<()> {
         !cockpit_demo || !menu,
         "cockpit capture requires a running encounter"
     );
-    let demo = cockpit_demo
+    let mirror_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-mirror-screenshot"));
+    ensure!(
+        !mirror_demo || !menu,
+        "mirror capture requires a running encounter"
+    );
+    let demo = mirror_demo
+        || cockpit_demo
         || helicopter_demo
         || realtime
         || special_demo
@@ -127,7 +133,7 @@ fn main() -> Result<()> {
         )?)
     };
     eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, Tab overview, V radar, L rivals."
+        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, B mirror, Tab overview, V radar, L rivals."
     );
     let mut app = App::new();
     app.insert_resource(capture)
@@ -142,6 +148,9 @@ fn main() -> Result<()> {
         }));
     if let Some(stage) = stage {
         stage.install(app.world_mut());
+        if mirror_demo {
+            app.world_mut().resource_mut::<driving::Drive>().mirror = true;
+        }
         if cockpit_demo {
             let mut drive = app.world_mut().resource_mut::<driving::Drive>();
             drive.camera.mode = tm1_core::drive::CarView::Cockpit;
@@ -174,6 +183,7 @@ fn main() -> Result<()> {
                 render::controls,
                 render::update,
                 render::cockpit,
+                render::mirror_display,
                 render::hud_letters,
                 render::hud,
                 render::boss_intro,

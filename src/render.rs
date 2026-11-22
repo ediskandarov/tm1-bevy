@@ -25,6 +25,20 @@ pub struct WorldCamera;
 #[derive(Component)]
 pub struct SkyCamera;
 
+#[derive(Component)]
+pub struct MirrorCamera;
+#[derive(Component)]
+pub struct MirrorDisplay;
+const MIRROR_WIDTH: u32 = 101;
+const MIRROR_HEIGHT: u32 = 30;
+const MIRROR_FOCAL: f32 = 91.;
+
+#[derive(Default)]
+struct ViewMeshes {
+    additive: Handle<Mesh>,
+    solids: Handle<Mesh>,
+    transparent: Handle<Mesh>,
+}
 const TILE: usize = 256;
 const COLUMNS: usize = 8;
 
@@ -49,9 +63,8 @@ pub struct Arena {
     atlas_size: [usize; 2],
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
     mesh: Handle<Mesh>,
-    additive: Handle<Mesh>,
-    solids: Handle<Mesh>,
-    transparent: Handle<Mesh>,
+    main_view: ViewMeshes,
+    rear_view: ViewMeshes,
     center: Vec3,
     radius: f32,
     yaw: f32,
@@ -155,9 +168,8 @@ impl Arena {
             atlas_size: [width, height],
             tiles,
             mesh: Handle::default(),
-            additive: default(),
-            solids: default(),
-            transparent: default(),
+            main_view: default(),
+            rear_view: default(),
             center,
             radius,
             yaw: 0.5,
@@ -222,16 +234,9 @@ pub fn setup(
         Transform::from_xyz(0., 0., -1.),
     ));
     let texture = images.add(image);
-    arena.additive = meshes.add(Batch::default().mesh());
-    commands.spawn((
-        crate::campaign::StageEntity,
-        Mesh2d(arena.additive.clone()),
-        MeshMaterial2d(additive_materials.add(crate::additive::Additive {
-            atlas: texture.clone(),
-        })),
-        RenderLayers::layer(1),
-        NoFrustumCulling,
-    ));
+    let additive_material = additive_materials.add(crate::additive::Additive {
+        atlas: texture.clone(),
+    });
     let masked = materials.add(ColorMaterial {
         texture: Some(texture.clone()),
         alpha_mode: AlphaMode2d::Mask(0.5),
@@ -305,26 +310,90 @@ pub fn setup(
                 },
                 Mesh2d(meshes.add(batch.mesh())),
                 MeshMaterial2d(masked.clone()),
-                RenderLayers::layer(1),
+                RenderLayers::from_layers(&[1, 3]),
                 NoFrustumCulling,
             ));
         }
     }
-    for (transparent, material) in [(false, masked), (true, blend.clone())] {
-        let mesh = meshes.add(Batch::default().mesh());
-        if transparent {
-            arena.transparent = mesh.clone();
-        } else {
-            arena.solids = mesh.clone();
-        }
+    let arena_views = &mut *arena;
+    for (layer, view) in [
+        (1, &mut arena_views.main_view),
+        (3, &mut arena_views.rear_view),
+    ] {
+        view.additive = meshes.add(Batch::default().mesh());
         commands.spawn((
             crate::campaign::StageEntity,
-            Mesh2d(mesh),
-            MeshMaterial2d(material),
-            RenderLayers::layer(1),
+            Mesh2d(view.additive.clone()),
+            MeshMaterial2d(additive_material.clone()),
+            RenderLayers::layer(layer),
             NoFrustumCulling,
         ));
+        for (handle, material) in [
+            (&mut view.solids, masked.clone()),
+            (&mut view.transparent, blend.clone()),
+        ] {
+            *handle = meshes.add(Batch::default().mesh());
+            commands.spawn((
+                crate::campaign::StageEntity,
+                Mesh2d(handle.clone()),
+                MeshMaterial2d(material),
+                RenderLayers::layer(layer),
+                NoFrustumCulling,
+            ));
+        }
     }
+    let mut mirror_image = Image::new_target_texture(
+        MIRROR_WIDTH,
+        MIRROR_HEIGHT,
+        TextureFormat::Bgra8UnormSrgb,
+        None,
+    );
+    mirror_image.sampler = ImageSampler::nearest();
+    let mirror_target = images.add(mirror_image);
+    for sky in [false, true] {
+        if sky && arena.sky.is_none() {
+            continue;
+        }
+        let mirror = commands
+            .spawn((
+                crate::campaign::StageEntity,
+                WorldCamera,
+                MirrorCamera,
+                Camera2d,
+                Camera {
+                    order: if sky { -3 } else { -2 },
+                    is_active: false,
+                    clear_color: if !sky && arena.sky.is_some() {
+                        ClearColorConfig::None
+                    } else {
+                        ClearColorConfig::Default
+                    },
+                    ..default()
+                },
+                bevy::camera::RenderTarget::Image(mirror_target.clone().into()),
+                Projection::Perspective(PerspectiveProjection {
+                    fov: 2. * (MIRROR_HEIGHT as f32 / (2. * MIRROR_FOCAL)).atan(),
+                    near: if sky { 1. } else { arena.radius * 0.005 },
+                    far: if sky { 100000. } else { arena.radius * 10. },
+                    ..default()
+                }),
+                RenderLayers::layer(if sky { 2 } else { 3 }),
+            ))
+            .id();
+        if sky {
+            commands.entity(mirror).insert(SkyCamera);
+        }
+    }
+    commands.spawn((
+        crate::campaign::StageEntity,
+        MirrorDisplay,
+        Sprite {
+            flip_x: true,
+            ..Sprite::from_image(mirror_target)
+        },
+        Visibility::Hidden,
+        Transform::from_xyz(0., 0., 0.75),
+    ));
     commands.spawn((
         crate::campaign::StageEntity,
         WorldCamera,
@@ -628,7 +697,15 @@ pub fn update(
         (&VehicleMesh, &BodyStage, &mut Visibility, &mut Transform),
         Without<WorldCamera>,
     >,
-    mut cameras: Query<(&mut Transform, Has<SkyCamera>), With<WorldCamera>>,
+    mut cameras: Query<
+        (
+            &mut Transform,
+            &mut Camera,
+            Has<SkyCamera>,
+            Has<MirrorCamera>,
+        ),
+        With<WorldCamera>,
+    >,
     window: Single<&Window>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
@@ -651,22 +728,18 @@ pub fn update(
             )
         }))
         .collect();
-    let transform = |index: usize, p: [f32; 3]| {
-        if index >= arena.vehicle_start {
-            let car = arena
-                .body_ranges
-                .partition_point(|ranges| ranges[2].end <= index);
-            let (origin, matrix, _) = poses[car];
-            origin
-                + world(std::array::from_fn(|i| {
-                    (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
-                }))
-        } else {
-            world(p)
-        }
-    };
     let hide_player =
         !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
+    let rotate = |local: Vec3| {
+        if drive.camera.mode == tm1_core::drive::CarView::Cockpit {
+            let p = [local.x, -local.z, local.y];
+            world(std::array::from_fn(|i| {
+                (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
+            }))
+        } else {
+            vehicle_rotation * local
+        }
+    };
     let (eye, target, camera_up) = if arena.overview {
         (
             arena.center + direction * arena.radius * arena.zoom,
@@ -684,16 +757,6 @@ pub fn update(
             Vec3::new(sy * sp, cp, -cy * sp),
         )
     } else {
-        let rotate = |local: Vec3| {
-            if drive.camera.mode == tm1_core::drive::CarView::Cockpit {
-                let p = [local.x, -local.z, local.y];
-                world(std::array::from_fn(|i| {
-                    (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
-                }))
-            } else {
-                vehicle_rotation * local
-            }
-        };
         let eye = origin + rotate(world(drive.camera.offset.map(|v| v as f32)));
         let pitch = drive.camera.pitch as f32 * std::f32::consts::TAU / 4096.;
         let (sin, cos) = pitch.sin_cos();
@@ -703,8 +766,24 @@ pub fn update(
             rotate(Vec3::new(0., cos, -sin)),
         )
     };
-    for (mut camera, sky) in &mut cameras {
-        *camera = Transform::from_translation(eye).looking_at(target, camera_up);
+    // VIEW.c viewProc(1) copies the parent pose and local translation, then
+    // reverses local yaw and subtracts 56 PS1 angle units from local pitch.
+    let angle = (drive.camera.pitch - 56) as f32 * std::f32::consts::TAU / 4096.;
+    let (sin, cos) = angle.sin_cos();
+    let rear_forward = rotate(Vec3::new(0., -sin, cos)).normalize();
+    let rear_up = rotate(Vec3::new(0., cos, sin)).normalize();
+    let mirror = drive.mirror && !arena.overview;
+    for (mut camera, mut settings, sky, rear) in &mut cameras {
+        if rear {
+            settings.is_active = mirror;
+            if !mirror {
+                continue;
+            }
+            *camera = Transform::from_translation(eye).looking_to(rear_forward, rear_up);
+            camera.scale.x = 3690. / 4096.;
+        } else {
+            *camera = Transform::from_translation(eye).looking_at(target, camera_up);
+        }
         if sky {
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
@@ -732,14 +811,96 @@ pub fn update(
         ))
         .normalize();
     }
-    let forward = (target - eye).normalize();
+    let mut screen_batch = Batch::default();
+    draw_instruments(&mut screen_batch, &arena, &drive, &window);
+    if arena.radar {
+        draw_radar(&mut screen_batch, &arena, &drive, &window);
+    }
+    screen_batch.write(&mut meshes, &arena.mesh);
+    draw_view(
+        &arena,
+        &drive,
+        &mut meshes,
+        &arena.main_view,
+        &poses,
+        hide_player,
+        eye,
+        (target - eye).normalize(),
+        camera_up,
+        window.height() * 0.85,
+    );
+    if mirror {
+        draw_view(
+            &arena,
+            &drive,
+            &mut meshes,
+            &arena.rear_view,
+            &poses,
+            hide_player,
+            eye,
+            rear_forward,
+            rear_up,
+            MIRROR_FOCAL,
+        );
+    }
+    if let Some(start) = started {
+        crate::smoke::sample("CPU geometry preparation", &mut timings, start);
+    }
+}
+
+pub fn mirror_display(
+    window: Single<&Window>,
+    drive: Res<crate::driving::Drive>,
+    arena: Res<Arena>,
+    mut display: Single<(&mut Sprite, &mut Transform, &mut Visibility), With<MirrorDisplay>>,
+) {
+    let (sprite, pos, visibility) = &mut *display;
+    **visibility = if drive.mirror && !arena.overview {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+    let scale = Vec2::new(window.width() / 320., window.height() / 240.);
+    sprite.custom_size = Some(scale * Vec2::new(MIRROR_WIDTH as f32, MIRROR_HEIGHT as f32));
+    pos.translation = (scale
+        * Vec2::new(
+            211. + MIRROR_WIDTH as f32 / 2. - 160.,
+            120. - 20. - MIRROR_HEIGHT as f32 / 2.,
+        ))
+    .extend(0.75);
+}
+
+fn draw_view(
+    arena: &Arena,
+    drive: &crate::driving::Drive,
+    meshes: &mut Assets<Mesh>,
+    view: &ViewMeshes,
+    poses: &[(Vec3, [[i16; 3]; 3], usize)],
+    hide_player: bool,
+    eye: Vec3,
+    forward: Vec3,
+    camera_up: Vec3,
+    focal: f32,
+) {
+    let transform = |index: usize, p: [f32; 3]| {
+        if index >= arena.vehicle_start {
+            let car = arena
+                .body_ranges
+                .partition_point(|ranges| ranges[2].end <= index);
+            let (origin, matrix, _) = poses[car];
+            origin
+                + world(std::array::from_fn(|i| {
+                    (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
+                }))
+        } else {
+            world(p)
+        }
+    };
     let right = forward.cross(camera_up).normalize();
     let up = right.cross(forward);
-    let focal = window.height() * 0.85;
     let near = arena.radius * 0.005;
     let hidden = drive.contacts.hidden_pickups();
     let (_, stand_branches) = drive.contacts.health_stands();
-    let mut screen_batch = Batch::default();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
     let mut additive = Batch::default();
@@ -747,7 +908,7 @@ pub fn update(
         arena
             .body_ranges
             .iter()
-            .zip(&poses)
+            .zip(poses)
             .skip(usize::from(hide_player))
             .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
     );
@@ -982,13 +1143,8 @@ pub fn update(
             [tint; 2],
         );
     }
-    draw_instruments(&mut screen_batch, &arena, &drive, &window);
-    if arena.radar {
-        draw_radar(&mut screen_batch, &arena, &drive, &window);
-    }
-    screen_batch.write(&mut meshes, &arena.mesh);
-    additive.write(&mut meshes, &arena.additive);
-    solids.write(&mut meshes, &arena.solids);
+    additive.write(meshes, &view.additive);
+    solids.write(meshes, &view.solids);
     // Sort all translucent surfaces together, including smoke and tracers.
     let mut triangles: Vec<_> = transparent
         .positions
@@ -1014,10 +1170,7 @@ pub fn update(
             .extend_from_slice(&transparent.uvs[range.clone()]);
         sorted.colors.extend_from_slice(&transparent.colors[range]);
     }
-    sorted.write(&mut meshes, &arena.transparent);
-    if let Some(start) = started {
-        crate::smoke::sample("CPU geometry preparation", &mut timings, start);
-    }
+    sorted.write(meshes, &view.transparent);
 }
 
 impl Arena {
@@ -1094,6 +1247,13 @@ fn draw_instruments(
         && drive.player.dashboard_enabled()
         && !arena.overview
         && drive.helicopter_pose().is_none();
+    if drive.mirror && !arena.overview && !cockpit {
+        hud.quad(
+            [209, 18, 105, 34],
+            [arena.uv(0, Vec2::ZERO); 4],
+            [[0., 0., 0., 1.]; 2],
+        );
+    }
     let white = [128; 3];
     let green = [36, 120, 36];
     if cockpit && drive.player.vehicle() != tm1_core::drive::Vehicle::MrGrimm {
