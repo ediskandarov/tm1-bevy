@@ -2851,6 +2851,10 @@ mod tests {
         assert!(drive.opponents.iter().all(|ai| ai.health().0 > 0));
         use bevy::ecs::system::RunSystemOnce;
         world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        // Resume driving at a battle frame interval after the five-second menu preview.
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(50));
         world.run_system_once(crate::driving::advance).unwrap();
         world.run_system_once(crate::driving::advance).unwrap();
         world.resource_mut::<ButtonInput<KeyCode>>().press(Enter);

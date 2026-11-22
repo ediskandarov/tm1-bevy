@@ -267,6 +267,8 @@ use crate::pause::PauseInput;
 #[derive(Resource)]
 pub struct Drive {
     battle_seed: u32,
+    level_seed: u32,
+    reset_weapons_on_entry: bool,
     pub player: PlayerVehicle,
     pub mirror: bool,
     pub radar: bool,
@@ -517,6 +519,8 @@ impl Drive {
             tm1_core::drive::SoundListener::new(&self.player, &self.camera, self.helicopter_pose());
     }
     pub fn begin_battle(&mut self, ticks: u32) {
+        self.player
+            .set_battle_view(self.selected_view(), self.camera.fixed_pose.is_some());
         self.refresh_listener();
         self.battle_seed = ticks;
         self.player.set_rng_state(ticks);
@@ -527,12 +531,20 @@ impl Drive {
         contacts: CollisionScene,
         opponent_kinds: &[Vehicle],
         initial_helicopter_route: HelicopterRoute,
+        ticks: impl FnOnce() -> u32,
+        reset_weapons_on_entry: bool,
     ) -> Self {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
+        // uaInitDB samples the counter only after uaPickAICars reserves the rival starts.
+        let level_seed = ticks();
+        player.set_rng_state(level_seed);
         let helicopter = Self::stage_helicopter(&mut player, initial_helicopter_route);
+        player.initialize_battle_car(reset_weapons_on_entry);
         let camera = tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase);
         Self {
             battle_seed: player.rng_state(),
+            level_seed,
+            reset_weapons_on_entry,
             windshield_holes: player.windshield_holes(),
             opponents,
             contacts,
@@ -622,8 +634,6 @@ pub fn advance(
         drive.control_arrows = [false; 2];
         let state = &mut *drive;
         state.player.reset();
-        state.player.set_pad_layout(state.settings.layout);
-        state.camera.update(&state.player, true);
         drive.rooftop_passage = Default::default();
         drive.helicopter_active = false;
         drive.victory_fields = 0;
@@ -638,8 +648,15 @@ pub fn advance(
             .filter(|&kind| kind != Vehicle::Minion)
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
+        let level_seed = drive.level_seed;
+        drive.player.set_rng_state(level_seed);
         let route = drive.initial_helicopter_route;
         drive.helicopter = Drive::stage_helicopter(&mut drive.player, route);
+        let reset_weapons = drive.reset_weapons_on_entry;
+        drive.player.initialize_battle_car(reset_weapons);
+        let state = &mut *drive;
+        state.player.set_pad_layout(state.settings.layout);
+        state.camera.update(&state.player, true);
         let seed = drive.battle_seed;
         drive.begin_battle(seed);
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
@@ -1569,6 +1586,8 @@ mod tests {
                 scene,
                 &[Vehicle::Outlaw],
                 Default::default(),
+                || 1,
+                true,
             ))
             .insert_resource(crate::smoke::Capture::new(None, false, false))
             .init_resource::<ButtonInput<KeyCode>>()

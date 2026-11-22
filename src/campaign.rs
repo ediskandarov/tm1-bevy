@@ -227,7 +227,6 @@ impl Stage {
         )
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
         contacts.start_pedestrians(level, &mut seed);
-        let seed = ticks(); // uaInitDB reseeds after initializing pedestrians.
         let player = match entry {
             Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
             Entry::New(difficulty) => {
@@ -250,7 +249,14 @@ impl Stage {
             Entry::Continue(previous) => previous.helicopter_route(),
             Entry::New(_) => Default::default(),
         };
-        let mut drive = driving::Drive::new(player, contacts, &opponent_kinds, helicopter_route);
+        let mut drive = driving::Drive::new(
+            player,
+            contacts,
+            &opponent_kinds,
+            helicopter_route,
+            ticks,
+            matches!(entry, Entry::New(_)),
+        );
         drive.deck = deck;
         if let Entry::Continue(previous) = entry {
             drive.camera = tm1_core::drive::VehicleCamera::new(&drive.player, previous.camera.mode);
@@ -435,6 +441,92 @@ pub fn replace(world: &mut World, stage: Stage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn arena_five_registration_precedes_the_level_counter_reseed() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let level = Level::Arena5;
+        let vehicle = Vehicle::YellowJacket;
+        for (deal_seed, level_seed) in [(1, 73), (0x54321, 905)] {
+            let ticks = std::cell::RefCell::new([deal_seed, level_seed].into_iter());
+            let stage = Stage::load_with_clock(
+                &disc,
+                level,
+                vehicle,
+                Entry::New(Difficulty::Medium),
+                || ticks.borrow_mut().next().unwrap(),
+            )
+            .unwrap();
+            let mut seed = deal_seed;
+            let rivals = level.opponents(vehicle, &mut Default::default(), &mut seed);
+            for _ in &rivals {
+                tm1_core::drive::bios_rand(&mut seed);
+            }
+            let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+            for (i, kind) in std::iter::once(&vehicle).chain(&rivals).enumerate() {
+                let cs = 0x80008000 + 0x200 * i as u32;
+                cpu.put(0x8019edd8 + 4 * i as u32, &(*kind as u32).to_le_bytes());
+                cpu.put(0x8019ee0c + 4 * i as u32, &cs.to_le_bytes());
+                if i > 0 {
+                    cpu.put(
+                        0x801f7264 + 4 * (i as u32 - 1),
+                        &(*kind as u32).to_le_bytes(),
+                    );
+                }
+            }
+            cpu.put(0x8018c336, &6u16.to_le_bytes());
+            for (at, value) in [
+                (0x8018c648, vehicle as u32),
+                (0x8018c66c, 5),
+                (0x8018c3b4, level as u32),
+                (0x8018bf9c, 70),
+                (0x8018c640, 1),
+            ] {
+                cpu.put(at, &value.to_le_bytes());
+            }
+            cpu.put(0x8018c624, &[1]);
+            cpu.put(0x8019ee40 + 0x184, &1i32.to_le_bytes()); // uaInit enables damage.
+            cpu.put(0x80170238, &3i16.to_le_bytes());
+            cpu.put(0x8017023a, &20i16.to_le_bytes());
+            cpu.call(0x80150224, &[Difficulty::Medium as u32]);
+            // Keep the database and level schedulers. Skip graphics, reverb and view parenting.
+            for at in [0x800ff38c, 0x8010abc8, 0x801414e0, 0x80141c64, 0x801055dc] {
+                cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            }
+            // Arena DB specifics set up rendering and the arena's trigger-point table.
+            cpu.put(
+                0x8014b7a4,
+                &(0x08000000u32 | ((0x80125bc0u32 >> 2) & 0x03ffffff)).to_le_bytes(),
+            );
+            cpu.put(0x8014b7a8, &[0; 4]);
+            cpu.random_state = seed;
+            cpu.call_until(0x8014b498, &[level as u32], 0x80109bdc);
+            for (slot, ai) in stage.drive.opponents.iter().enumerate() {
+                let base = 0x8019f7a8 + slot as u32 * 0x560;
+                assert_eq!(ai.vehicle() as u32, cpu.word(base + 0x3c));
+                assert_eq!(
+                    ai.position(),
+                    [0, 4, 8].map(|offset| cpu.word(base + 0x444 + offset) as i32)
+                );
+            }
+            cpu.random_state = level_seed;
+            cpu.call_until(0x8014c100, &[level as u32], 0x80109bdc);
+            for (offset, byte) in stage.drive.player.state().iter().enumerate() {
+                assert_eq!(
+                    *byte,
+                    cpu.ram[0x19ee40 + offset],
+                    "battle player offset {offset:x}"
+                );
+            }
+            let mut expected = cpu.random_state;
+            // Drive construction prepares the first set of windshield marks.
+            for _ in 0..12 {
+                tm1_core::drive::bios_rand(&mut expected);
+            }
+            assert_eq!(stage.drive.player.rng_state(), expected);
+        }
+    }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn cockpit_art_and_steering_for_the_full_roster() {

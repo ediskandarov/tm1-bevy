@@ -549,6 +549,26 @@ impl PlayerVehicle {
             trig: self.trig.clone(),
         }
     }
+    /// InitLevel calls CarInit again after the database has registered all opponents.
+    pub fn initialize_battle_car(&mut self, reset_weapons: bool) {
+        // uaInitDB assigns the player color, and SetCarCsInfo selects the chase view.
+        self.state[0x146] = 1;
+        for at in [0xf4, 0xf8] {
+            self.state[at..at + 4].copy_from_slice(&(CarView::Chase as i32).to_le_bytes());
+        }
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_difficulty(self.difficulty as i32);
+            tm1_bind_level(self.level as i32);
+            tm1_campaign_player(
+                self.state.as_mut_ptr(),
+                self.trig.as_ptr(),
+                &mut self.seed,
+                i32::from(reset_weapons),
+                3,
+            );
+        }
+    }
     pub fn set_battle_view(&mut self, view: PlayerView, fixed: bool) {
         let mode = match view {
             PlayerView::Helicopter => 4,
@@ -556,6 +576,9 @@ impl PlayerVehicle {
             PlayerView::Car(car) => car as i32,
         };
         self.state[0xf4..0xf8].copy_from_slice(&mode.to_le_bytes());
+        if mode < 5 {
+            self.state[0xf8..0xfc].copy_from_slice(&mode.to_le_bytes());
+        }
     }
     pub fn set_pad_layout(&mut self, layout: u8) {
         assert!(layout < 4);
