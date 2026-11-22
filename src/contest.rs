@@ -750,7 +750,7 @@ impl Contest {
                             second: true,
                             bio: false,
                         };
-                        self.garage.reset();
+                        self.garage.lock_portrait();
                     }
                 } else if key(up) || key(down) {
                     self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
@@ -1416,6 +1416,79 @@ mod tests {
         assert!(world.resource::<Contest>().page == Page::Title);
         assert!(!world.contains_resource::<crate::duel::Duel>());
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_handoff_preserves_the_carousel_and_anchors_the_locked_portrait() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [ArrowDown, Enter, Space, KeyD] {
+            press(&mut world, key);
+        }
+        let mut menu = world.resource_mut::<Contest>();
+        menu.garage.tick(9);
+        let heading = menu.garage.heading;
+        let field = menu.garage.field;
+        let slide = menu.garage.slide;
+        let mut keys = ButtonInput::default();
+        keys.press(Space);
+        menu.input(&keys);
+        assert_eq!(
+            (menu.garage.heading, menu.garage.field, menu.garage.slide),
+            (heading, field, slide)
+        );
+        assert!(matches!(
+            menu.page,
+            Page::DuelGarage {
+                slot: 1,
+                second: true,
+                bio: false
+            }
+        ));
+        let disc = &world.resource::<Campaign>().0;
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let dmd = disc.read("UADMD/CARS.DMD").unwrap();
+        let textures =
+            tm1_assets::texture::Vram::from_tms(&disc.read("UADMD/CARS.TMS").unwrap()).unwrap();
+        let portraits = tm1_assets::scene::Dmd::parse(&dmd)
+            .unwrap()
+            .occupant_portraits(&textures)
+            .unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        let mut right = 32;
+        let mut bottom = 45;
+        for _ in 0..9 {
+            let menu = world.resource::<Contest>();
+            let i = menu.duel_cars[0];
+            let rendered = menu.frame();
+            let with_no_portrait = menu
+                .garage
+                .duel_frame(&menu.fonts, menu.duel_cars[1], 1, None);
+            let w = (2 * right) as usize;
+            let h = (45 + bottom) as usize;
+            for y in 35..125 {
+                for x in 10..74 {
+                    let at = 4 * (y * 320 + x);
+                    let mut expected: [u8; 4] = with_no_portrait[at..at + 4].try_into().unwrap();
+                    if (42 - w / 2..42 + w / 2).contains(&x) && y < 35 + h {
+                        let src = 4 * (64 * ((y - 35) * 90 / h) + (x + w / 2 - 42) * 64 / w);
+                        let pixel = &portraits[i][src..src + 4];
+                        if pixel[3] == 128 {
+                            for c in 0..3 {
+                                expected[c] = expected[c] / 2 + pixel[c] / 2;
+                            }
+                        } else if pixel[3] != 0 {
+                            expected.copy_from_slice(pixel);
+                        }
+                    }
+                    assert_eq!(rendered[at..at + 4], expected);
+                }
+            }
+            right = cpu.call(0x801511d8, &[right, 24, 50]);
+            bottom = cpu.call(0x801511d8, &[bottom, 22, 50]);
+            world.resource_mut::<Contest>().garage.tick(1);
+        }
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn second_player_first_pick_and_independent_layouts() {

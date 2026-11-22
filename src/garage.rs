@@ -21,6 +21,7 @@ pub struct Garage {
     trig: tm1_core::math::TrigTables,
     pub row: usize,
     pub field: u32,
+    portrait_fields: u32,
     pub heading: u32,
     pub slide: u32,
     pub left: bool,
@@ -62,6 +63,7 @@ impl Garage {
                 .ok_or_else(|| anyhow::anyhow!("invalid showroom rotation tables"))?,
             row: 0,
             field: 0,
+            portrait_fields: 0,
             heading: 1365,
             slide: 22,
             left: false,
@@ -122,8 +124,13 @@ impl Garage {
         self.heading = self.heading.wrapping_add(n.wrapping_mul(11)) & 4095;
         self.field = self.field.wrapping_add(n);
         self.slide = self.slide.saturating_add(n).min(22);
+        self.portrait_fields = self.portrait_fields.saturating_add(n).min(8);
+    }
+    pub fn lock_portrait(&mut self) {
+        self.portrait_fields = 0;
     }
     pub fn reset(&mut self) {
+        self.portrait_fields = 0;
         self.row = 0;
         self.field = 0;
         self.heading = 1365;
@@ -195,7 +202,7 @@ impl Garage {
         let mut portrait = |car: usize, slot: usize, w: usize, h: usize| {
             for y in 0..h {
                 for x in 0..w {
-                    let at = 4 * ((80 - h / 2 + y) * 320 + centers[slot] - w / 2 + x);
+                    let at = 4 * ((35 + y) * 320 + centers[slot] - w / 2 + x);
                     let pixel = &self.portraits[car][4 * (64 * (y * 90 / h) + x * 64 / w)..][..4];
                     match pixel[3] {
                         0 => {}
@@ -212,9 +219,10 @@ impl Garage {
         };
         portrait(i, slot, 64, 90);
         if let Some(other) = locked {
-            let fields = self.field.min(8);
+            let fields = self.portrait_fields;
             let w = 48 + 2 * (8 >> fields);
-            let h = 44 + 2 * (23 >> fields);
+            // Only the lower two Y coordinates approach +22; the upper edge stays at -45.
+            let h = 45 + 22 + (23 >> fields);
             portrait(other, 1 - slot, w as usize, h as usize);
         }
         if !demo {
