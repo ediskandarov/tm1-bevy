@@ -186,7 +186,7 @@ pub fn start(
         vec![second],
         &scene,
     )?;
-    let music = crate::music::StageTrack::load(disc, crate::music::opening_track(level, true))?;
+    let music = crate::music::CdTrack::load(disc, crate::music::opening_track(level, true))?;
     let bank = disc.read("SND/UACORE.VAB")?;
     let sounds = crate::sfx::duel::DuelBank::load(&bank, kinds, world)?;
     let settings = world
@@ -245,14 +245,13 @@ pub fn start(
         .map_err(|e| anyhow::anyhow!("render setup: {e:?}"))?;
     sounds.install(world, settings.effects_gain());
     let track = world
-        .get_resource_or_init::<Assets<crate::music::StageTrack>>()
+        .get_resource_or_init::<Assets<crate::music::CdTrack>>()
         .add(music);
     world.spawn((
         StageEntity,
         DuelMusic,
         AudioPlayer(track),
-        PlaybackSettings::ONCE
-            .with_volume(bevy::audio::Volume::Linear(0.35 * settings.music_gain())),
+        PlaybackSettings::ONCE.with_volume(bevy::audio::Volume::Linear(settings.cd_gain())),
     ));
     let score_image = crate::ending::screen_image(world, vec![0; 320 * 240 * 4]);
     world.spawn((
@@ -284,14 +283,14 @@ pub fn pause_menu(
     window: Single<&Window>,
     time: Res<Time<Real>>,
     sounds: Res<crate::sfx::duel::DuelBank>,
-    tracks: Res<Assets<crate::music::StageTrack>>,
+    tracks: Res<Assets<crate::music::CdTrack>>,
     mut images: ResMut<Assets<Image>>,
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
     mut audio: Query<
         (
             Entity,
             Has<DuelEffect>,
-            Option<&AudioPlayer<crate::music::StageTrack>>,
+            Option<&AudioPlayer<crate::music::CdTrack>>,
             Has<AudioPlayer<crate::sfx::pcm::StereoPcm>>,
             &mut PlaybackSettings,
             Option<&mut AudioSink>,
@@ -438,7 +437,7 @@ pub fn pause_menu(
             playback.paused = duel.pause.is_some()
                 && !(music.is_some() && matches!(duel.pause, Some(Page::Audio(_))));
             playback.volume = bevy::audio::Volume::Linear(if music.is_some() {
-                0.35 * duel.settings.music_gain()
+                duel.settings.cd_gain()
             } else {
                 0.28 * duel.settings.effects_gain()
             });
@@ -739,7 +738,7 @@ mod tests {
             Some(crate::pause::Page::Choices(2))
         );
         let track = world
-            .query_filtered::<&PlaybackSettings, With<AudioPlayer<crate::music::StageTrack>>>()
+            .query_filtered::<&PlaybackSettings, With<AudioPlayer<crate::music::CdTrack>>>()
             .single(&world)
             .unwrap();
         assert!(track.paused);

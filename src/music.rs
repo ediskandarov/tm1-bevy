@@ -18,13 +18,13 @@ const SECTOR_BYTES: usize = 2352;
 const CD_START: usize = 150 * SECTOR_BYTES;
 
 #[derive(Asset, TypePath, Clone)]
-pub struct StageTrack {
+pub struct CdTrack {
     pcm: Arc<[u8]>,
     normal_end: usize,
     extended: Arc<AtomicBool>,
 }
 
-impl StageTrack {
+impl CdTrack {
     pub fn load(disc: &Disc, number: usize) -> Result<Self> {
         let mut pcm = disc.audio_track(number)?;
         let next = disc
@@ -58,11 +58,11 @@ impl StageTrack {
 }
 
 pub struct CdPlayback {
-    track: StageTrack,
+    track: CdTrack,
     cursor: usize,
 }
 
-impl Decodable for StageTrack {
+impl Decodable for CdTrack {
     type Decoder = CdPlayback;
     fn decoder(&self) -> Self::Decoder {
         CdPlayback {
@@ -106,8 +106,8 @@ impl Source for CdPlayback {
 
 #[derive(Resource)]
 pub struct Music {
-    opening: Option<StageTrack>,
-    battle: Option<StageTrack>,
+    opening: Option<CdTrack>,
+    battle: Option<CdTrack>,
 }
 impl Music {
     pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
@@ -121,8 +121,8 @@ impl Music {
             _ => None,
         };
         Ok(Self {
-            opening: Some(StageTrack::load(disc, opening)?),
-            battle: battle.map(|n| StageTrack::load(disc, n)).transpose()?,
+            opening: Some(CdTrack::load(disc, opening)?),
+            battle: battle.map(|n| CdTrack::load(disc, n)).transpose()?,
         })
     }
 }
@@ -136,10 +136,6 @@ pub fn opening_track(level: tm1_core::drive::Level, split: bool) -> usize {
         Cyburbia => 6,
         Rooftops => 8,
     }
-}
-pub fn track(disc: &Disc, number: usize) -> Result<AudioSource> {
-    let track = disc.audio_track(number)?;
-    stereo_wave(&track[150 * 2352..])
 }
 pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
     ensure!(pcm.len() % 4 == 0, "incomplete stereo CD frame");
@@ -162,15 +158,15 @@ pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
 }
 #[derive(Component)]
 pub struct ArenaMusic {
-    opening: Handle<StageTrack>,
-    battle: Option<Handle<StageTrack>>,
+    opening: Handle<CdTrack>,
+    battle: Option<Handle<CdTrack>>,
     restart: u32,
 }
 pub fn start(
     mut commands: Commands,
     mut music: ResMut<Music>,
     drive: Res<crate::driving::Drive>,
-    mut assets: ResMut<Assets<StageTrack>>,
+    mut assets: ResMut<Assets<CdTrack>>,
 ) {
     if let Some(source) = music.opening.take() {
         let opening = assets.add(source);
@@ -183,7 +179,7 @@ pub fn start(
                 restart: drive.restart_count,
             },
             player,
-            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.35 * drive.settings.music_gain())),
+            PlaybackSettings::ONCE.with_volume(Volume::Linear(drive.settings.cd_gain())),
         ));
     }
 }
@@ -192,18 +188,18 @@ pub fn control(
     mut music: Query<(
         Entity,
         &mut ArenaMusic,
-        &AudioPlayer<StageTrack>,
+        &AudioPlayer<CdTrack>,
         &mut PlaybackSettings,
         Option<&mut AudioSink>,
     )>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
-    assets: Res<Assets<StageTrack>>,
+    assets: Res<Assets<CdTrack>>,
 ) {
     let Ok((entity, mut tracks, player, mut settings, sink)) = music.single_mut() else {
         return;
     };
-    let volume = Volume::Linear(0.35 * drive.settings.music_gain());
+    let volume = Volume::Linear(drive.settings.cd_gain());
     let pause = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
         || drive.lives == 0
@@ -267,7 +263,7 @@ mod tests {
             cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         for number in 2..=8 {
-            let track = StageTrack::load(&disc, number).unwrap();
+            let track = CdTrack::load(&disc, number).unwrap();
             cpu.put(0x8018bf68, &0u32.to_le_bytes());
             cpu.call_until(0x801057e0, &[number as u32], 0x80105b60);
             let (start, end) = (cpu.r[4], cpu.r[5]);

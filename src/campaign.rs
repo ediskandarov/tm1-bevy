@@ -280,7 +280,7 @@ impl Stage {
         self.drive.begin_battle(round_ticks(world));
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);
-        world.init_resource::<Assets<music::StageTrack>>();
+        world.init_resource::<Assets<music::CdTrack>>();
         world.insert_resource(self.music);
         self.sounds.install_vehicle_sounds(world);
         world.insert_resource(self.sounds);

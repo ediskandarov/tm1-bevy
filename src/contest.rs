@@ -81,7 +81,7 @@ pub struct Contest {
     controls_view: crate::pause::DuelControlsView,
     entry: Vec<u8>,
     image: Handle<Image>,
-    theme: Handle<AudioSource>,
+    theme: Handle<crate::music::CdTrack>,
     theme_entity: Option<Entity>,
     page: Page,
     vehicle: usize,
@@ -229,16 +229,18 @@ impl Contest {
             if !matches!(self.page, Page::MainOptions(_) | Page::Audio(_)) {
                 self.soundtrack = 0;
             }
-            let volume = bevy::audio::Volume::Linear(0.35 * self.settings.music_gain());
+            let volume = bevy::audio::Volume::Linear(self.settings.cd_gain());
             if self.playing_track != self.soundtrack || self.theme_entity.is_none() {
                 let handle = if self.soundtrack == 0 {
                     self.theme.clone()
                 } else {
-                    match crate::music::track(
+                    match crate::music::CdTrack::load(
                         &world.resource::<Campaign>().0,
                         SOUNDTRACK[self.soundtrack].0,
                     ) {
-                        Ok(track) => world.resource_mut::<Assets<AudioSource>>().add(track),
+                        Ok(track) => world
+                            .resource_mut::<Assets<crate::music::CdTrack>>()
+                            .add(track),
                         Err(err) => {
                             warn!("Loading soundtrack failed: {err:#}");
                             self.soundtrack = self.playing_track;
@@ -254,8 +256,8 @@ impl Contest {
                     world
                         .spawn((
                             campaign::StageEntity,
-                            AudioPlayer::new(handle),
-                            PlaybackSettings::LOOP.with_volume(volume),
+                            AudioPlayer(handle),
+                            PlaybackSettings::ONCE.with_volume(volume),
                         ))
                         .id(),
                 );
@@ -1029,7 +1031,7 @@ pub fn show(
     first_clip: Option<Clip>,
 ) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
-    let theme = crate::music::track(disc, 2)?;
+    let theme = crate::music::CdTrack::load(disc, 2)?;
     let fonts = Fonts::load(disc)?;
     let mut menu = Contest {
         cinema: None,
@@ -1096,7 +1098,9 @@ pub fn show(
     }
     campaign::clear_stage(world);
     menu.image = crate::ending::spawn_screen(world, ContestScreen, menu.frame());
-    menu.theme = world.resource_mut::<Assets<AudioSource>>().add(theme);
+    menu.theme = world
+        .resource_mut::<Assets<crate::music::CdTrack>>()
+        .add(theme);
     menu.play(world, first_clip);
     world.insert_resource(menu);
     Ok(())
@@ -1335,6 +1339,7 @@ pub(crate) fn menu_world() -> World {
     world.init_resource::<Assets<ColorMaterial>>();
     world.init_resource::<Assets<crate::texture_blend::TextureBlend>>();
     world.init_resource::<Assets<AudioSource>>();
+    world.init_resource::<Assets<crate::music::CdTrack>>();
     world.insert_resource(Campaign(disc));
     world.init_resource::<ButtonInput<KeyCode>>();
     world.spawn(Window {
@@ -1635,7 +1640,7 @@ mod tests {
         }
         for (player, playback, engine) in world
             .query_filtered::<(
-                Option<&AudioPlayer<crate::music::StageTrack>>,
+                Option<&AudioPlayer<crate::music::CdTrack>>,
                 &PlaybackSettings,
                 Has<crate::sfx::duel::DuelEngine>,
             ), Or<(With<duel::DuelMusic>, With<crate::sfx::duel::DuelEngine>)>>()
@@ -1645,7 +1650,7 @@ mod tests {
             if !engine {
                 use bevy::audio::Decodable;
                 let audio = world
-                    .resource::<Assets<crate::music::StageTrack>>()
+                    .resource::<Assets<crate::music::CdTrack>>()
                     .get(&player.unwrap().0)
                     .unwrap();
                 let track = world.resource::<Campaign>().0.audio_track(7).unwrap();
@@ -1721,6 +1726,18 @@ mod tests {
         assert_eq!(menu.playing_track, 6);
         assert_eq!((menu.settings.music, menu.settings.effects), (8, 6));
         let last_track = menu.theme_entity.unwrap();
+        let player = world
+            .get::<AudioPlayer<crate::music::CdTrack>>(last_track)
+            .unwrap();
+        let tracks = world.resource::<Assets<crate::music::CdTrack>>();
+        let mut decoder = bevy::audio::Decodable::decoder(tracks.get(&player.0).unwrap());
+        let pcm = world.resource::<Campaign>().0.audio_track(8).unwrap();
+        for bytes in pcm[150 * 2352..].chunks_exact(2).take(4096) {
+            assert_eq!(
+                decoder.next(),
+                Some(f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.)
+            );
+        }
         let before = menu.frame();
         press(&mut world, ArrowRight);
         let menu = world.resource::<Contest>();

@@ -39,7 +39,7 @@ pub struct Ending {
     vehicle: Vehicle,
     height: i32,
     image: Handle<Image>,
-    track: Option<AudioSource>,
+    track: Option<crate::music::CdTrack>,
 }
 impl Ending {
     fn load(disc: &Disc, vehicle: Vehicle, random: u32, height: i32) -> Result<Self> {
@@ -69,7 +69,9 @@ impl Ending {
             Vehicle::RoadKill => ("SCRNROAD", Some(2)),
             _ => ("SCRNLARO", None),
         };
-        let track = track.map(|n| crate::music::track(disc, n)).transpose()?;
+        let track = track
+            .map(|n| crate::music::CdTrack::load(disc, n))
+            .transpose()?;
         let backdrop = screen::background(&disc.read(&format!("UASCREEN/{background}.TIM"))?)?;
         let credits = crate::scroll::Scroll::load(disc.read("UATEXT/CREDITS.TXT")?, &fonts)?;
         let data = disc.read("UADMD/CARSEND.DMD")?;
@@ -311,7 +313,7 @@ pub(crate) fn screen_image(world: &mut World, pixels: Vec<u8>) -> Handle<Image> 
 pub fn update(
     mut ending: ResMut<Ending>,
     mut images: ResMut<Assets<Image>>,
-    mut audio: ResMut<Assets<AudioSource>>,
+    mut audio: ResMut<Assets<crate::music::CdTrack>>,
     mut commands: Commands,
     window: Single<&Window>,
     mut screen: Single<&mut Sprite, With<EndingScreen>>,
@@ -388,9 +390,9 @@ pub fn update(
         if let Some(track) = ending.track.take() {
             commands.spawn((
                 StageEntity,
-                AudioPlayer::new(audio.add(track)),
-                PlaybackSettings::LOOP
-                    .with_volume(bevy::audio::Volume::Linear(drive.settings.music_gain())),
+                AudioPlayer(audio.add(track)),
+                PlaybackSettings::ONCE
+                    .with_volume(bevy::audio::Volume::Linear(drive.settings.cd_gain())),
             ));
         }
         if let Some(data) = images
@@ -424,6 +426,30 @@ pub fn finish(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn ending_music_matches_the_disc_for_each_background() {
+        use bevy::audio::Decodable;
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        for (vehicle, number) in [(Vehicle::Outlaw, 8), (Vehicle::RoadKill, 2)] {
+            let ending = Ending::load(&disc, vehicle, 0, 0).unwrap();
+            let mut decoder = ending.track.unwrap().decoder();
+            let pcm = disc.audio_track(number).unwrap();
+            for bytes in pcm[150 * 2352..].chunks_exact(2).take(4096) {
+                assert_eq!(
+                    decoder.next(),
+                    Some(f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.)
+                );
+            }
+        }
+        assert!(
+            Ending::load(&disc, Vehicle::YellowJacket, 0, 0)
+                .unwrap()
+                .track
+                .is_none()
+        );
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

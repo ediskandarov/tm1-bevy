@@ -37,13 +37,13 @@ impl Settings {
         if level == 14 { 99 } else { 7 * level }
     }
     // UA_SOUND.c uasoundSetMusicVolume. Normalize to the initial stage mix.
-    pub fn music_gain(self) -> f32 {
+    pub fn cd_gain(self) -> f32 {
         (match self.mix {
             0 => 0,
             99 => 127,
             v => 97 * u16::from(v) / 99 + 30,
         }) as f32
-            / 78.
+            * (0.35 / 78.)
     }
     pub fn effects_volume(self) -> u8 {
         (match self.mix {
