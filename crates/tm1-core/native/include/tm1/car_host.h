@@ -9,6 +9,7 @@ void RotMatrixYXZ(const SVECTOR *angles, MATRIX *matrix);
 void mathMulTransVec(MATRIX *, VECTOR3 *, VECTOR3 *);
 void InitIceCreamTruck(CarStats *);
 void InitSemiTruck(CarStats *);
+void InitBossCar(CarStats*);
 void InitMonsterTruck(CarStats*);
 void tm1_check_ai_smash(AICar*);
 void tm1_check_player_smash(PlayerCar*, AICar*);

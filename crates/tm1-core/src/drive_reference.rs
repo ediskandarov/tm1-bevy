@@ -1153,6 +1153,50 @@ fn cyburbia_visibility_and_ground_groups_match_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn minion_initial_record_matches_retail() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
+    let slot = 3;
+    let addr = POLICE + 0x560 * slot;
+    let cs = 0x800e6200;
+    put(&mut r.cpu, 0x8018c3b4, Level::Rooftops as u32);
+    put(&mut r.cpu, 0x8019f788 + 4 * slot, cs);
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        tm1_bind_level(Level::Rooftops as i32);
+    }
+    for initial_seed in [1, 0x12345678, 0xfffffff0] {
+        let mut state = [0u8; 0x560];
+        state[6..8].copy_from_slice(&(slot as u16).to_le_bytes());
+        r.cpu.put(addr, &state);
+        r.cpu.call(0x8012b5a4, &[]);
+        r.cpu.random_state = initial_seed;
+        r.cpu.call(0x80124d34, &[addr, 130, 1]);
+        r.cpu.call(0x80142064, &[addr]);
+        let mut seed = initial_seed;
+        let mut used = 0;
+        unsafe {
+            tm1_ai_step(
+                std::ptr::null_mut(),
+                state.as_mut_ptr(),
+                r.player.state.as_mut_ptr(),
+                r.player.trig.as_ptr(),
+                &mut seed,
+                130,
+                &mut used,
+                3,
+                0,
+            );
+        }
+        let start = (addr & 0x1fffff) as usize;
+        for (i, v) in state.into_iter().enumerate() {
+            assert_eq!(v, r.cpu.ram[start + i], "Minion byte {i:x}");
+        }
+        assert_eq!(seed, r.cpu.random_state);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn rooftops_encounter_original() {
     for player in Vehicle::ROSTER {
         println!("Rooftops retail encounter with {player:?}");

@@ -1268,3 +1268,37 @@ void CarUpdateControlPad(PlayerCar* car)
         car->skid[0x05] = 1;
     }
 }
+
+void InitBossCar(CarStats* stats)
+{
+    stats->unk9C = 5;
+    stats->unkC4 = 3;
+    stats->unk88 = 0x73;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x96;
+    stats->unk98 = stats->unk88 / 3;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x14;
+    stats->unkE4 = 5;
+    stats->unk6C = 0x1B;
+    stats->unk70 = 0x42;
+    stats->unk74 = 0x6C;
+    stats->unk7C = 0x52;
+    stats->unk80 = 0x7E;
+    stats->unk84 = -0x7E;
+    stats->unk110 = -0x12;
+    stats->unk112 = 0x69;
+    stats->unk114 = 0x1B;
+    stats->dropPower = 0;
+    stats->unk11A = 0;
+    stats->unk11C = 0x32;
+    stats->unk10C = 0x320;
+    stats->unk108 = 3;
+    stats->unk04 = 3;
+    stats->unk44 = 0xFA;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x46;
+    stats->unk1E = 0xA;
+    stats->unk5C = 0x14;
+    stats->unk24 = 0x348;
+}

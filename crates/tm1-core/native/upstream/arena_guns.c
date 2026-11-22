@@ -394,7 +394,7 @@ s32 arena_player_special_cost(s32 kind)
 {
     if (kind == UA_HUMVEE || kind == UA_MAD_MAX)
         return 7;
-    if (kind == UA_CORVETTE)
+    if (kind == UA_CORVETTE || kind == UA_BOSS_CAR)
         return 5;
     if (kind == UA_LOW_RIDER)
         return 5;

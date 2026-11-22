@@ -209,6 +209,9 @@ static void init_vehicle_stats(CarStats* stats, s32 kind)
     case 30:
         InitSemiTruck(stats);
         break;
+    case UA_BOSS_CAR:
+        InitBossCar(stats);
+        break;
     case UA_MONSTER_TRUCK:
         InitMonsterTruck(stats);
         break;
@@ -430,7 +433,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         arena_ai_weapon_profile(&car);
         car.weap.ammo[WEAPON_SPECIAL] = 20;
         car.weap.ammo[0] = car.weap.totalAmmo = 2;
-        car.weap.maxAmmo = 28;
+        car.weap.maxAmmo = kind == UA_BOSS_CAR ? 60 : 28;
         car.weap.unk48 = arena_player_special_cost(kind);
         car.flags[25] = 1;
         car.weap.cur = WEAPON_SPECIAL;
