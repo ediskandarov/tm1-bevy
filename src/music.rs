@@ -8,7 +8,7 @@ use tm1_assets::disc::Disc;
 
 #[derive(Resource)]
 pub struct Music {
-    opening: Option<AudioSource>,
+    pub(crate) opening: Option<AudioSource>,
     battle: Option<AudioSource>,
 }
 impl Music {

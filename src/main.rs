@@ -4,6 +4,7 @@ mod campaign;
 mod cinema;
 mod contest;
 mod driving;
+mod duel;
 mod ending;
 mod garage;
 mod gpu_timing;
@@ -23,11 +24,12 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops|arena-5] [--difficulty easy|medium|hard] [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops|arena-5] [--difficulty easy|medium|hard] [--car <vehicle>] [--duel <second-vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
     let mut menu = flag.is_none();
     let mut garage = false;
+    let mut duel_car = None;
     let mut explicit_car = false;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
     let mut difficulty = Difficulty::Medium;
@@ -35,7 +37,7 @@ fn main() -> Result<()> {
     let mut vehicle = Vehicle::YellowJacket;
     while matches!(
         flag.as_ref().and_then(|s| s.to_str()),
-        Some("--car" | "--level" | "--menu" | "--garage" | "--difficulty")
+        Some("--duel" | "--car" | "--level" | "--menu" | "--garage" | "--difficulty")
     ) {
         if matches!(
             flag.as_ref().and_then(|f| f.to_str()),
@@ -73,8 +75,7 @@ fn main() -> Result<()> {
             continue;
         }
         let name = args.next();
-        explicit_car = true;
-        vehicle = Vehicle::ROSTER
+        let selected = Vehicle::ROSTER
             .into_iter()
             .find(|v| name.as_deref() == Some(std::ffi::OsStr::new(v.slug())))
             .ok_or_else(|| {
@@ -83,6 +84,12 @@ fn main() -> Result<()> {
                     Vehicle::ROSTER.map(Vehicle::slug).join(", ")
                 )
             })?;
+        if flag.as_deref() == Some(std::ffi::OsStr::new("--duel")) {
+            duel_car = Some(selected);
+        } else {
+            explicit_car = true;
+            vehicle = selected;
+        }
         flag = args.next();
     }
     if flag.as_deref() == Some(std::ffi::OsStr::new("--object-mesh")) {
@@ -162,7 +169,7 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let stage = if menu {
+    let stage = if menu || duel_car.is_some() {
         None
     } else {
         Some(campaign::Stage::load(
@@ -172,9 +179,15 @@ fn main() -> Result<()> {
             campaign::Entry::New(difficulty),
         )?)
     };
-    eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, B mirror, Tab overview, V radar, L rivals."
-    );
+    if duel_car.is_some() {
+        eprintln!(
+            "P1: WASD, Space guns, F weapon, E cycle, C camera. P2: arrows, Comma guns, Period weapon, L cycle, O camera. Enter rematch, Esc title."
+        );
+    } else {
+        eprintln!(
+            "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, B mirror, Tab overview, V radar, L rivals."
+        );
+    }
     let mut app = App::new();
     app.insert_resource(capture)
         .insert_resource(campaign::Campaign(disc))
@@ -186,7 +199,14 @@ fn main() -> Result<()> {
             }),
             ..default()
         }));
-    if let Some(stage) = stage {
+    if let Some(second) = duel_car {
+        app.add_systems(Startup, move |world: &mut World| {
+            if let Err(e) = duel::start(world, level, [vehicle, second], difficulty, [0; 2]) {
+                error!("Loading duel failed: {e:#}");
+                world.write_message(AppExit::error());
+            }
+        });
+    } else if let Some(stage) = stage {
         stage.install(app.world_mut());
         if boss_demo {
             app.world_mut()
@@ -231,6 +251,12 @@ fn main() -> Result<()> {
             gpu_timing::GpuTiming,
         ));
     }
+    app.add_systems(
+        Update,
+        (duel::advance, render::duel_view, duel::round_menu)
+            .chain()
+            .run_if(resource_exists::<duel::Duel>),
+    );
     let exit = app
         .add_systems(
             Update,
@@ -251,6 +277,7 @@ fn main() -> Result<()> {
                 pause::draw,
             )
                 .chain()
+                .run_if(not(resource_exists::<duel::Duel>))
                 .run_if(not(resource_exists::<ending::Ending>))
                 .run_if(not(resource_exists::<contest::Contest>))
                 .run_if(not(resource_exists::<transition::Transition>)),
@@ -261,11 +288,13 @@ fn main() -> Result<()> {
                 smoke::capture.after(pause::draw),
                 sfx::update
                     .after(driving::advance)
+                    .run_if(not(resource_exists::<duel::Duel>))
                     .run_if(not(resource_exists::<ending::Ending>))
                     .run_if(not(resource_exists::<contest::Contest>))
                     .run_if(not(resource_exists::<transition::Transition>)),
                 music::control
                     .after(driving::advance)
+                    .run_if(not(resource_exists::<duel::Duel>))
                     .run_if(not(resource_exists::<ending::Ending>))
                     .run_if(not(resource_exists::<contest::Contest>))
                     .run_if(not(resource_exists::<transition::Transition>)),
@@ -274,6 +303,7 @@ fn main() -> Result<()> {
         .add_systems(
             Update,
             campaign::advance
+                .run_if(not(resource_exists::<duel::Duel>))
                 .run_if(not(resource_exists::<ending::Ending>))
                 .run_if(not(resource_exists::<contest::Contest>))
                 .run_if(not(resource_exists::<transition::Transition>))

@@ -223,6 +223,7 @@ fn world(p: [f32; 3]) -> Vec3 {
 }
 
 pub fn setup(
+    duel: Option<Res<crate::duel::Duel>>,
     mut commands: Commands,
     mut arena: ResMut<Arena>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -373,6 +374,9 @@ pub fn setup(
         ));
     }
     for (car, ranges) in arena.body_ranges.iter().enumerate() {
+        if duel.is_some() {
+            break;
+        }
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
             for polygon in &arena.scene.polygons[range.clone()] {
@@ -949,12 +953,14 @@ pub fn update(
     screen_batch.write(&mut meshes, &arena.mesh);
     draw_view(
         &arena,
-        &drive,
+        &drive.player,
+        &drive.contacts,
         &mut meshes,
         &arena.main_view,
         &poses,
         &lights,
-        hide_player,
+        hide_player.then_some(0),
+        false,
         eye,
         (target - eye).normalize(),
         camera_up,
@@ -963,12 +969,14 @@ pub fn update(
     if mirror {
         draw_view(
             &arena,
-            &drive,
+            &drive.player,
+            &drive.contacts,
             &mut meshes,
             &arena.rear_view,
             &poses,
             &lights,
-            hide_player,
+            hide_player.then_some(0),
+            false,
             eye,
             rear_forward,
             rear_up,
@@ -1015,20 +1023,21 @@ fn body_light_color(env: u8) -> [f32; 3] {
 
 fn draw_view(
     arena: &Arena,
-    drive: &crate::driving::Drive,
+    player: &tm1_core::drive::PlayerVehicle,
+    contacts: &tm1_core::drive::CollisionScene,
     meshes: &mut Assets<Mesh>,
     view: &ViewMeshes,
     poses: &[CarPose],
     lights: &[u8; 9],
-    hide_player: bool,
+    hidden_car: Option<usize>,
+    batch_bodies: bool,
     eye: Vec3,
     forward: Vec3,
     camera_up: Vec3,
     focal: f32,
 ) {
-    let wheel_steps = drive.contacts.wheel_steps();
-    let [sin, cos] = drive
-        .player
+    let wheel_steps = contacts.wheel_steps();
+    let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
         .map(|n| f32::from(n) / 4096.);
     let transform = |index: usize, p: [f32; 3]| {
@@ -1064,9 +1073,9 @@ fn draw_view(
     let right = forward.cross(camera_up).normalize();
     let up = right.cross(forward);
     let near = arena.radius * 0.005;
-    let hidden = drive.contacts.hidden_pickups();
-    let switches = drive.contacts.arena_switch_branches();
-    let (_, stand_branches) = drive.contacts.health_stands();
+    let hidden = contacts.hidden_pickups();
+    let switches = contacts.arena_switch_branches();
+    let (_, stand_branches) = contacts.health_stands();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
     let mut additive = Batch::default();
@@ -1075,8 +1084,9 @@ fn draw_view(
             .body_ranges
             .iter()
             .zip(poses)
-            .skip(usize::from(hide_player))
-            .flat_map(|(ranges, pose)| {
+            .enumerate()
+            .filter(|(slot, _)| Some(*slot) != hidden_car)
+            .flat_map(|(_, (ranges, pose))| {
                 ranges[pose.body_stage]
                     .clone()
                     .filter(|&i| pose.shadow_visible || !arena.scene.polygons[i].car_shadow)
@@ -1087,7 +1097,7 @@ fn draw_view(
         hidden_world[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
     }
     for (address, branch, polygons) in &arena.scene.damage_branches {
-        if drive.contacts.damage_branch(*address) != *branch {
+        if contacts.damage_branch(*address) != *branch {
             hidden_world[polygons.clone()].fill(true);
         }
     }
@@ -1107,7 +1117,7 @@ fn draw_view(
         let p = &arena.scene.polygons[i];
         if p.animation
             .iter()
-            .any(|frame| frame.selected(drive.player.frame()) != frame.child)
+            .any(|frame| frame.selected(player.frame()) != frame.child)
         {
             continue;
         }
@@ -1122,7 +1132,8 @@ fn draw_view(
         {
             continue;
         }
-        if i >= arena.vehicle_start
+        if !batch_bodies
+            && i >= arena.vehicle_start
             && !p.car_shadow
             && p.wheel.is_none()
             && p.animation.is_empty()
@@ -1182,7 +1193,7 @@ fn draw_view(
         }
     }
     let mut faces = [[0; 14]; 180];
-    let count = drive.contacts.contrail_faces(&mut faces);
+    let count = contacts.contrail_faces(&mut faces);
     for face in &faces[..count] {
         let frame = arena.contrail_frames[face[0] as usize];
         let slot = arena.tiles[&(Some(frame.texture), true)];
@@ -1211,7 +1222,7 @@ fn draw_view(
         }
     }
     let mut poses = [[0; 13]; 10];
-    let count = drive.contacts.missile_poses(&mut poses);
+    let count = contacts.missile_poses(&mut poses);
     let missiles = poses[..count].iter().filter_map(|pose| {
         Some((
             arena.missile_models[usize::from(pose[0] == 312)].as_ref()?,
@@ -1223,7 +1234,7 @@ fn draw_view(
         .iter()
         .enumerate()
         .filter_map(|(slot, frames)| {
-            let [branch, x, y, z, _] = drive.contacts.merc_pose(slot)?;
+            let [branch, x, y, z, _] = contacts.merc_pose(slot)?;
             Some((
                 frames.get(branch as usize)?,
                 [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
@@ -1234,7 +1245,7 @@ fn draw_view(
         .iter()
         .enumerate()
         .filter_map(|(i, frames)| {
-            let pose = drive.contacts.pedestrian_pose(i)?;
+            let pose = contacts.pedestrian_pose(i)?;
             if pose[13] == 0 {
                 return None;
             }
@@ -1248,7 +1259,7 @@ fn draw_view(
         for p in &model.polygons {
             if p.animation
                 .iter()
-                .any(|a| a.selected(drive.player.frame()) != a.child)
+                .any(|a| a.selected(player.frame()) != a.child)
             {
                 continue;
             }
@@ -1276,9 +1287,9 @@ fn draw_view(
         }
     }
     let mut flames = [[0; 4]; 80];
-    let count = drive.contacts.flame_particles(&mut flames);
+    let count = contacts.flame_particles(&mut flames);
     let mut effects = [[0; 5]; 122];
-    let effect_count = drive.contacts.effects(&mut effects);
+    let effect_count = contacts.effects(&mut effects);
     let particles = flames[..count].iter().map(|&[x, y, z, index]| {
         (
             [x, y, z],
@@ -1355,9 +1366,9 @@ fn draw_view(
         }
     };
     let mut segments = [[[0; 3]; 2]; 40];
-    let count = drive.contacts.bullet_segments(&mut segments);
+    let count = contacts.bullet_segments(&mut segments);
     let mut arcs = [[[0; 3]; 16]; 3];
-    let arc_count = drive.contacts.taser_arcs(&mut arcs);
+    let arc_count = contacts.taser_arcs(&mut arcs);
     let bullets = segments[..count]
         .iter()
         .map(|&s| (s, [[1., 0.82, 0.22, 1.]; 2]));
@@ -1716,5 +1727,184 @@ impl Batch {
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
         }
+    }
+}
+
+pub fn duel_view(
+    arena: Res<Arena>,
+    duel: Res<crate::duel::Duel>,
+    window: Single<&Window>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
+    mut display: Single<
+        (&mut Sprite, &mut Transform, &mut Visibility),
+        (With<MirrorDisplay>, Without<WorldCamera>),
+    >,
+    mut cameras: Query<
+        (
+            &mut Transform,
+            &mut Camera,
+            &mut Projection,
+            Has<SkyCamera>,
+            Has<MirrorCamera>,
+        ),
+        With<WorldCamera>,
+    >,
+) {
+    let poses = duel.cars.each_ref().map(|car| CarPose {
+        origin: world(car.position().map(|v| v as f32)),
+        matrix: car.rotation(),
+        body_stage: car.body_stage(),
+        shadow_visible: car.shadow_visible(),
+    });
+    let width = window.physical_width();
+    let height = window.physical_height();
+    if width == 0 || height < 2 {
+        return;
+    }
+    // Composite the second viewport after the primary window camera. A Metal
+    // attachment clear can cover pixels outside the camera viewport.
+    let bottom = height - height / 2;
+    let scale = window.scale_factor();
+    let (sprite, transform, visibility) = &mut *display;
+    if let Some(mut image) = images.get_mut(&sprite.image) {
+        if image.width() != width || image.height() != bottom {
+            image.resize(Extent3d {
+                width,
+                height: bottom,
+                depth_or_array_layers: 1,
+            });
+        }
+    }
+    sprite.flip_x = false;
+    sprite.custom_size = Some(Vec2::new(width as f32, bottom as f32) / scale);
+    transform.translation = Vec3::new(0., -((height / 2) as f32) / (2. * scale), -1.);
+    **visibility = Visibility::Visible;
+    let mut panel = Batch::default();
+    let mut hud = Instruments {
+        batch: &mut panel,
+        arena: &arena,
+        size: Vec2::new(window.width(), window.height()),
+    };
+    hud.quad(
+        [0, 116, 320, 6],
+        [arena.uv(0, Vec2::ZERO); 4],
+        [[0., 0., 0., 1.]; 2],
+    );
+    for (slot, car) in duel.cars.iter().enumerate() {
+        let bias = if slot == 0 { -120 } else { 0 };
+        let (hp, max) = car.health();
+        let percent = hp * 100 / max.max(1);
+        let (tier, _) = tm1_core::drive::PlayerVehicle::windshield_damage(percent);
+        hud.bar([216, 190 + bias, 90, 10], [[10; 3]; 2]);
+        hud.bar(
+            [217, 191 + bias, (percent * 88 / 100).clamp(1, 88), 8],
+            health_colors(tier),
+        );
+        let icons = &arena.icons;
+        let (weapon, ammo, special) = car.dashboard_weapon();
+        let green = [36, 120, 36];
+        for (index, y) in [(2, 202), (3, 215)] {
+            hud.sprite(216, y + bias, icons.labels[index], green, false);
+        }
+        hud.number(
+            243,
+            202 + bias,
+            car.turbo_charge(),
+            &icons.turbo_digits,
+            green,
+        );
+        for i in 0..special.clamp(0, 5) {
+            hud.sprite(
+                262 + 9 * i32::from(i),
+                202 + bias,
+                icons.labels[4],
+                [128; 3],
+                false,
+            );
+        }
+        if let Some(icon) = icons.weapons.get(weapon).filter(|_| ammo > 0) {
+            hud.sprite(255, 210 + bias, *icon, [128; 3], true);
+            hud.number(290, 212 + bias, i32::from(ammo), &icons.digits, green);
+        }
+        if car.gun_overheated() {
+            hud.bar([216, 214 + bias, 38, 10], [[255, 0, 0]; 2]);
+        }
+    }
+    panel.write(&mut meshes, &arena.mesh);
+    let lights = duel.scene.car_lights();
+    for slot in 0..2 {
+        let car = &duel.cars[slot];
+        let view = &duel.cameras[slot];
+        let radians = std::f32::consts::TAU / 4096.;
+        let yaw = Quat::from_rotation_y(-(car.heading() as f32) * radians);
+        let rotate = |v: Vec3| {
+            if view.mode == tm1_core::drive::CarView::Cockpit {
+                let p = [v.x, -v.z, v.y];
+                world(std::array::from_fn(|i| {
+                    (0..3)
+                        .map(|j| poses[slot].matrix[j][i] as f32 * p[j] / 4096.)
+                        .sum()
+                }))
+            } else {
+                yaw * v
+            }
+        };
+        let (eye, forward, up) = if let Some([x, y, z, pitch, yaw]) = view.fixed_pose {
+            let (sp, cp) = (pitch as f32 * radians).sin_cos();
+            let (sy, cy) = (yaw as f32 * radians).sin_cos();
+            (
+                world([x as f32, y as f32, z as f32]),
+                Vec3::new(sy * cp, -sp, -cy * cp),
+                Vec3::new(sy * sp, cp, -cy * sp),
+            )
+        } else {
+            let (sin, cos) = (view.pitch as f32 * radians).sin_cos();
+            (
+                poses[slot].origin + rotate(world(view.offset.map(|v| v as f32))),
+                rotate(Vec3::new(0., -sin, -cos)),
+                rotate(Vec3::new(0., cos, -sin)),
+            )
+        };
+        let top = if slot == 0 { 0 } else { height / 2 };
+        let h = if slot == 0 { height / 2 } else { height - top };
+        let focal = window.height() * 228. / 240.;
+        for (mut transform, mut cam, mut projection, sky, second) in &mut cameras {
+            if usize::from(second) != slot {
+                continue;
+            }
+            cam.is_active = true;
+            cam.viewport = (slot == 0).then_some(bevy::camera::Viewport {
+                physical_position: UVec2::new(0, top),
+                physical_size: UVec2::new(width, h),
+                ..default()
+            });
+            if let Projection::Perspective(p) = &mut *projection {
+                p.fov = 2. * ((h as f32 / window.scale_factor()) / (2. * focal)).atan();
+            }
+            *transform = Transform::from_translation(eye).looking_to(forward, up);
+            if sky {
+                transform.translation -= poses[slot].origin * Vec3::new(1., 0., 1.);
+            }
+        }
+        draw_view(
+            &arena,
+            car,
+            &duel.scene,
+            &mut meshes,
+            if slot == 0 {
+                &arena.main_view
+            } else {
+                &arena.rear_view
+            },
+            &poses,
+            &lights,
+            (!view.show_body).then_some(slot),
+            true,
+            eye,
+            forward,
+            up,
+            focal,
+        );
     }
 }

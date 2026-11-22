@@ -20,6 +20,26 @@ cargo run --locked --offline -- "$TM1_CUE" --level cyburbia --car outlaw
 cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 ```
 
+## Local two-player battle
+
+Choose **2P BATTLE** at the title. Up and Down select the first car, second car, arena or START. Left and Right change the selected value. Enter advances to the next row and starts the round from START. The upper viewport follows player one and the lower viewport follows player two.
+
+| Action | Player one | Player two |
+| --- | --- | --- |
+| Drive / reverse | W / S | Up / Down |
+| Steer | A / D | Left / Right |
+| Hard turn / turbo | Left Shift / T | Right Shift / Slash |
+| Machine guns / selected weapon | Space / F | Comma / Period |
+| Cycle weapon / camera | E / C | L / O |
+
+After the round, Enter starts a rematch and keeps the score. Esc returns to the title. To launch a specific match directly, use the second car’s slug after `--duel`.
+
+```sh
+cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car yellow-jacket --duel outlaw
+```
+
+## Single-player contest
+
 The opening sequence plays the three JP presentation cards, Sony logo and title movie from the disc. STR video and XA sound playback requires `ffmpeg` on the application’s PATH. The game skips an unavailable movie and continues to the menu. Enter skips the title movie or the Sony logo after its first two seconds.
 
 Leaving the title idle cycles through the battle movie, contest history and vehicle showcase. During the history, Up and Down adjust the scrolling speed. Enter skips history or a showcase and returns through the title movie.

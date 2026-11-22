@@ -21,6 +21,26 @@ pub struct BattleSound {
     pub full_range: bool,
 }
 
+pub(crate) fn effect_sample(kind: i32, life: i32, recharge: usize) -> Option<usize> {
+    Some(match (kind, life) {
+        (26, 2) => recharge,
+        (36, 2) => recharge + 1,
+        (0 | 51, 2) => 1,
+        (52, 2) => 4,
+        (401..=406 | 410..=414 | 430, 2) => recharge + 4,
+        (11, 2) => 6,
+        (10, 2) => 5,
+        (kind @ 18..=25, 2) => (kind - 6) as usize,
+        (54, 2) => 2,
+        (1, 4) => recharge + 2,
+        (55, 32) => recharge + 9,
+        (28, 32) => recharge + 2,
+        (33, 2) | (2, 7) | (37, 32) | (29 | 30, 16) => 3,
+        (12, 2) => 4,
+        (kind @ 13..=17, 2) => (kind - 6) as usize,
+        _ => return None,
+    })
+}
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
@@ -548,23 +568,8 @@ pub fn advance(
         let mut effects = [[0; 5]; 122];
         let count = state.contacts.effects(&mut effects);
         for &[x, y, z, kind, life] in &effects[..count] {
-            let id = match (kind, life) {
-                (26, 2) => state.recharge_sound(),
-                (36, 2) => state.recharge_sound() + 1,
-                (0 | 51, 2) => 1,
-                (52, 2) => 4,
-                (401..=406 | 410..=414 | 430, 2) => state.recharge_sound() + 4,
-                (11, 2) => 6,
-                (10, 2) => 5,
-                (kind @ 18..=25, 2) => (kind - 6) as usize,
-                (54, 2) => 2,
-                (1, 4) => state.recharge_sound() + 2,
-                (55, 32) => state.recharge_sound() + 9,
-                (28, 32) => state.recharge_sound() + 2,
-                (33, 2) | (2, 7) | (37, 32) | (29 | 30, 16) => 3,
-                (12, 2) => 4,
-                (kind @ 13..=17, 2) => (kind - 6) as usize,
-                _ => continue,
+            let Some(id) = effect_sample(kind, life, state.recharge_sound()) else {
+                continue;
             };
             state.sounds.push(BattleSound {
                 volume_percent: match kind {

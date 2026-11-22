@@ -57,6 +57,54 @@ fn load_cockpit(
     )
 }
 
+pub(crate) fn arena_art(
+    disc: &Disc,
+    level: Level,
+    vehicle: Vehicle,
+    dmd: &Dmd<'_>,
+    textures: Vram,
+    scene: tm1_assets::scene::Scene,
+    player_mesh: [tm1_assets::scene::Scene; 3],
+    opponent_mesh: Vec<[tm1_assets::scene::Scene; 3]>,
+    contacts: &tm1_core::drive::CollisionScene,
+) -> Result<render::Arena> {
+    let pedestrians = contacts
+        .pedestrian_models()
+        .into_iter()
+        .map(|root| dmd.actor_frames(root))
+        .collect::<Result<Vec<_>>>()?;
+    render::Arena::new(
+        tm1_assets::screen::Fonts::load(disc)?,
+        crate::pause::Art::load(disc)?,
+        load_cockpit(disc, dmd, vehicle)?,
+        scene,
+        (!matches!(level, Level::Arena | Level::Arena5))
+            .then(|| dmd.extract_kind(2))
+            .transpose()?,
+        player_mesh,
+        opponent_mesh,
+        [
+            Some(dmd.extract_kind(201)?),
+            dmd.roots
+                .iter()
+                .any(|r| r.1 == 312)
+                .then(|| dmd.extract_kind(312))
+                .transpose()?,
+        ],
+        [dmd.merc_frames(750)?, dmd.merc_frames(752)?],
+        pedestrians,
+        dmd.explosion_frames()?,
+        dmd.spark_frames()?,
+        dmd.flame_frames()?,
+        dmd.burn_frames()?,
+        [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],
+        dmd.contrail_frames()?,
+        dmd.dashboard_icons()?,
+        dmd.radar_arrows()?,
+        textures,
+    )
+}
+
 impl Stage {
     pub fn load(disc: &Disc, level: Level, vehicle: Vehicle, entry: Entry<'_>) -> Result<Self> {
         let stage = level.database(vehicle);
@@ -117,40 +165,16 @@ impl Stage {
                     .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?
             }
         };
-        let pedestrians = contacts
-            .pedestrian_models()
-            .into_iter()
-            .map(|root| dmd.actor_frames(root))
-            .collect::<Result<Vec<_>>>()?;
-        let arena = render::Arena::new(
-            tm1_assets::screen::Fonts::load(disc)?,
-            crate::pause::Art::load(disc)?,
-            load_cockpit(disc, &dmd, vehicle)?,
+        let arena = arena_art(
+            disc,
+            level,
+            vehicle,
+            &dmd,
+            textures,
             scene,
-            (!matches!(level, Level::Arena | Level::Arena5))
-                .then(|| dmd.extract_kind(2))
-                .transpose()?,
             player_mesh,
             opponent_mesh,
-            [
-                Some(dmd.extract_kind(201)?),
-                dmd.roots
-                    .iter()
-                    .any(|r| r.1 == 312)
-                    .then(|| dmd.extract_kind(312))
-                    .transpose()?,
-            ],
-            [dmd.merc_frames(750)?, dmd.merc_frames(752)?],
-            pedestrians,
-            dmd.explosion_frames()?,
-            dmd.spark_frames()?,
-            dmd.flame_frames()?,
-            dmd.burn_frames()?,
-            [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],
-            dmd.contrail_frames()?,
-            dmd.dashboard_icons()?,
-            dmd.radar_arrows()?,
-            textures,
+            &contacts,
         )?;
         let mut drive = driving::Drive::new(player, contacts, &opponent_kinds);
         drive.deck = deck;

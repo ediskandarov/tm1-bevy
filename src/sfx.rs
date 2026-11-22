@@ -72,6 +72,35 @@ pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
 }
 
 impl Sounds {
+    fn register(&mut self, assets: &mut Assets<AudioSource>) {
+        self.voices = std::mem::take(&mut self.sources)
+            .into_iter()
+            .map(|s| assets.add(s))
+            .collect();
+    }
+    pub fn start_duel(mut self, world: &mut World, gain: f32) {
+        let mut assets = world.resource_mut::<Assets<AudioSource>>();
+        self.register(&mut assets);
+        let (second, range, loop_start) = self.rival_engines.pop().expect("second player engine");
+        let engines = [
+            (self.voices[2].clone(), self.engine_range, self.engine_loop),
+            (assets.add(second), range, loop_start),
+        ];
+        for (slot, (source, range, start)) in engines.into_iter().enumerate() {
+            world.spawn((
+                crate::campaign::StageEntity,
+                DuelEngine { slot, range },
+                AudioPlayer::new(source),
+                PlaybackSettings::LOOP
+                    .with_start_position(start)
+                    .with_volume(Volume::Linear(0.28 * gain)),
+            ));
+        }
+        world.insert_resource(self);
+    }
+    pub fn centered(&self, id: usize) -> AudioPlayer {
+        AudioPlayer::new(self.voices[id * 5 + 2].clone())
+    }
     pub fn ending_engine(&self, gain: f32) -> (AudioPlayer, PlaybackSettings) {
         (
             AudioPlayer::new(self.voices[2].clone()),
@@ -150,10 +179,7 @@ pub fn start(
     drive: Res<crate::driving::Drive>,
     mut assets: ResMut<Assets<AudioSource>>,
 ) {
-    sounds.voices = std::mem::take(&mut sounds.sources)
-        .into_iter()
-        .map(|s| assets.add(s))
-        .collect();
+    sounds.register(&mut assets);
     commands.spawn((crate::campaign::StageEntity, SpatialListener::new(1.0)));
     for (slot, (source, range, loop_start)) in sounds.rival_engines.drain(..).enumerate() {
         commands.spawn((
@@ -340,4 +366,10 @@ pub fn update(
             }
         }
     }
+}
+
+#[derive(Component)]
+pub struct DuelEngine {
+    pub slot: usize,
+    pub range: f32,
 }

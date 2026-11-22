@@ -12,6 +12,7 @@ struct ContestScreen;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Title,
+    Duel(usize),
     MainOptions(usize),
     Audio(usize),
     StaffRoll,
@@ -45,7 +46,10 @@ pub struct Contest {
     idle: Duration,
     fonts: Fonts,
     title: Vec<u8>,
-    title_options: bool,
+    title_row: usize,
+    duel_cars: [usize; 2],
+    duel_stage: usize,
+    duel_art: Vec<u8>,
     history_from_menu: bool,
     credits: crate::scroll::Scroll,
     credits_background: Vec<u8>,
@@ -59,7 +63,7 @@ pub struct Contest {
     cards: Vec<Vec<[u8; 4]>>,
     options: Vec<u8>,
     controls: crate::pause::Art,
-    settings: crate::pause::Settings,
+    pub(crate) settings: crate::pause::Settings,
     button_sounds: Vec<Handle<AudioSource>>,
     password_from_options: bool,
     cursor_fields: u32,
@@ -328,6 +332,36 @@ impl Contest {
                     self.settings,
                 );
             }
+            Page::Duel(row) => {
+                let mut out = self.duel_art.clone();
+                for (slot, &index) in self.duel_cars.iter().enumerate() {
+                    for (n, px) in self.cards[index].iter().enumerate() {
+                        if px[3] != 0 {
+                            let at = 4 * ((65 + n / 128) * 320 + 19 + 151 * slot + n % 128);
+                            out[at..at + 4].copy_from_slice(px);
+                        }
+                    }
+                }
+                let labels = [
+                    format!("P1  {}", Vehicle::CARD_ORDER[self.duel_cars[0]].name()),
+                    format!("P2  {}", Vehicle::CARD_ORDER[self.duel_cars[1]].name()),
+                    format!("ARENA  {}", crate::duel::NAMES[self.duel_stage]),
+                    "START".to_owned(),
+                ];
+                for (i, label) in labels.iter().enumerate() {
+                    self.fonts.centered(
+                        &mut out,
+                        if i == row {
+                            Face::Selected
+                        } else {
+                            Face::Choice
+                        },
+                        141 + i as i32 * 20,
+                        &label.to_uppercase(),
+                    );
+                }
+                return out;
+            }
             Page::Title => self.title.clone(),
             Page::Contest => return self.garage.frame(&self.fonts, self.vehicle, false),
             Page::History => {
@@ -384,25 +418,22 @@ impl Contest {
             }
             Page::Audio(_) | Page::StaffRoll | Page::Controls => unreachable!(),
             Page::Title => {
-                line(
-                    155,
-                    if self.title_options {
-                        Face::Choice
-                    } else {
-                        Face::Selected
-                    },
-                    "1P CONTEST",
-                );
-                line(
-                    195,
-                    if self.title_options {
-                        Face::Selected
-                    } else {
-                        Face::Choice
-                    },
-                    "OPTIONS",
-                );
+                for (i, text) in ["1P CONTEST", "2P BATTLE", "OPTIONS"]
+                    .into_iter()
+                    .enumerate()
+                {
+                    line(
+                        155 + 20 * i as i32,
+                        if self.title_row == i {
+                            Face::Selected
+                        } else {
+                            Face::Choice
+                        },
+                        text,
+                    );
+                }
             }
+            Page::Duel(_) => unreachable!(),
             Page::Contest | Page::Bio | Page::History | Page::Showcase(_) => unreachable!(),
             Page::Password | Page::Wrong(_) => {
                 if let Page::Wrong(row) = self.page {
@@ -531,13 +562,45 @@ impl Contest {
         match self.page {
             Page::StaffRoll | Page::History | Page::Showcase(_) => {}
             Page::Title => {
-                if key(KeyCode::ArrowUp) || key(KeyCode::ArrowDown) {
-                    self.title_options = !self.title_options;
-                } else if key(KeyCode::Enter) && self.title_options {
-                    self.page = Page::MainOptions(0);
+                if key(KeyCode::ArrowUp) {
+                    self.title_row = (self.title_row + 2) % 3;
+                } else if key(KeyCode::ArrowDown) {
+                    self.title_row = (self.title_row + 1) % 3;
                 } else if key(KeyCode::Enter) {
-                    self.page = Page::Contest;
+                    self.page = match self.title_row {
+                        1 => Page::Duel(0),
+                        2 => Page::MainOptions(0),
+                        _ => Page::Contest,
+                    };
                     self.garage.reset();
+                }
+            }
+            Page::Duel(row) => {
+                if key(KeyCode::Escape) {
+                    self.page = Page::Title;
+                } else if key(KeyCode::ArrowDown) {
+                    self.page = Page::Duel((row + 1) % 4);
+                } else if key(KeyCode::ArrowUp) {
+                    self.page = Page::Duel((row + 3) % 4);
+                } else if key(KeyCode::Enter) {
+                    if row == 3 {
+                        return true;
+                    }
+                    self.page = Page::Duel(row + 1);
+                } else if key(KeyCode::ArrowLeft) || key(KeyCode::ArrowRight) {
+                    if row < 2 {
+                        let n = Vehicle::CARD_ORDER.len();
+                        let delta = if key(KeyCode::ArrowLeft) { n - 1 } else { 1 };
+                        loop {
+                            self.duel_cars[row] = (self.duel_cars[row] + delta) % n;
+                            if self.duel_cars[0] != self.duel_cars[1] {
+                                break;
+                            }
+                        }
+                    } else if row == 2 {
+                        self.duel_stage =
+                            (self.duel_stage + if key(KeyCode::ArrowRight) { 1 } else { 5 }) % 6;
+                    }
                 }
             }
             Page::MainOptions(row) => {
@@ -760,7 +823,10 @@ pub fn show(
         cinema: None,
         idle: Duration::ZERO,
         history: crate::scroll::Scroll::load(disc.read("UATEXT/HISTORY.TXT")?, &fonts)?,
-        title_options: false,
+        title_row: 0,
+        duel_cars: [0, 1],
+        duel_stage: 0,
+        duel_art: screen::background(&disc.read("UASCREEN/SCRNE2.TIM")?)?,
         history_from_menu: false,
         soundtrack: 0,
         playing_track: 0,
@@ -778,8 +844,14 @@ pub fn show(
         options: screen::background(&disc.read("UASCREEN/SCRNF.TIM")?)?,
         controls: crate::pause::Art::load(disc)?,
         settings: world
-            .get_resource::<crate::driving::Drive>()
-            .map_or_else(Default::default, |d| d.settings),
+            .get_resource::<crate::duel::Duel>()
+            .map(|d| d.settings)
+            .or_else(|| {
+                world
+                    .get_resource::<crate::driving::Drive>()
+                    .map(|d| d.settings)
+            })
+            .unwrap_or_default(),
         button_sounds: Vec::new(),
         password_from_options: false,
         cursor_fields: 0,
@@ -979,6 +1051,15 @@ pub fn update(world: &mut World) {
 }
 pub fn start_battle(world: &mut World) -> Result<()> {
     let menu = world.resource::<Contest>();
+    if matches!(menu.page, Page::Duel(_)) {
+        return crate::duel::start(
+            world,
+            crate::duel::STAGES[menu.duel_stage],
+            menu.duel_cars.map(|i| Vehicle::CARD_ORDER[i]),
+            menu.difficulty,
+            [0; 2],
+        );
+    }
     let settings = menu.settings;
     let mut stage = Stage::load(
         &world.resource::<Campaign>().0,
@@ -1031,6 +1112,48 @@ mod tests {
         if world.contains_resource::<crate::transition::Transition>() {
             crate::transition::complete(world);
         }
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn keyboard_duel_from_title() {
+        use KeyCode::*;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = menu_world();
+        for key in [
+            ArrowDown, Enter, ArrowRight, Enter, ArrowRight, Enter, ArrowRight, Enter, Enter,
+        ] {
+            press(&mut world, key);
+        }
+        assert!(!world.contains_resource::<Contest>());
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        let duel = world.resource::<crate::duel::Duel>();
+        assert_eq!(duel.cars[0].level(), Level::Warehouse);
+        let starts = duel
+            .cars
+            .each_ref()
+            .map(tm1_core::drive::PlayerVehicle::position);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        world.resource_mut::<ButtonInput<KeyCode>>().press(KeyW);
+        for _ in 0..24 {
+            world.run_system_once(crate::duel::advance).unwrap();
+        }
+        let duel = world.resource::<crate::duel::Duel>();
+        assert_ne!(duel.cars[0].position()[..2], starts[0][..2]);
+        let second_start = duel.cars[1].position();
+        world.resource_mut::<ButtonInput<KeyCode>>().press(ArrowUp);
+        for _ in 0..24 {
+            world.run_system_once(crate::duel::advance).unwrap();
+        }
+        assert_ne!(
+            world.resource::<crate::duel::Duel>().cars[1].position()[..2],
+            second_start[..2]
+        );
+        world.resource_mut::<ButtonInput<KeyCode>>().press(Escape);
+        crate::duel::round_menu(&mut world);
+        assert!(world.resource::<Contest>().page == Page::Title);
+        assert!(!world.contains_resource::<crate::duel::Duel>());
     }
     fn password(world: &mut World, keys: &[KeyCode]) {
         press(world, KeyCode::KeyP);
