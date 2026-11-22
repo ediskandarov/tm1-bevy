@@ -165,16 +165,16 @@ pub fn start(
         .unwrap_or_else(|| crate::campaign::round_ticks(world));
     let mut seed = pedestrian_seed;
     scene.start_pedestrians(level, &mut seed);
-    // uaInitDB reseeds after loading the stage-specific objects.
-    let setup_seed = crate::campaign::round_ticks(world);
     let mut cars = PlayerVehicle::duel_players(
         &disc.read("SIPS_600.07")?,
         kinds,
         level,
-        setup_seed,
+        seed,
         difficulty,
     )
     .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?;
+    let setup_seed = crate::campaign::round_ticks(world);
+    PlayerVehicle::initialize_duel_level(&mut cars, setup_seed);
     let arena = campaign::arena_art(
         disc,
         level,

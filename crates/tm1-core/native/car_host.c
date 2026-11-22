@@ -762,15 +762,15 @@ static void init_motion_flags(u8* flags)
     flags[29] = 0;
 }
 
-// CAR_INIT.c CarInit(which=0) on single-player stages.
-static void respawn_player(PlayerCar* car, int fov)
+// CAR_INIT.c CarInit restores motion and camera presets on level entry and respawn.
+static void respawn_player(PlayerCar* car, int fov, int split)
 {
     CarStats* stats = &car->stats;
     stats->unk00 = 1;
     init_motion_flags(car->flags);
     car->unk98 = car->unk99 = 0;
     setVector(&car->motion.vel, 0, 0, 0);
-    set_player_start(car, 0);
+    set_player_start(car, split);
     setVector(&car->motion.rotDelta, 0, 0, 0);
     setVector(&car->motion.rot2Delta, 0, 0, 0);
     car->motion.rot2 = car->motion.rot;
@@ -817,7 +817,7 @@ static void respawn_player(PlayerCar* car, int fov)
     stats->unk01 = 0;
 }
 
-void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life, s16 fields)
+void tm1_battle_player(u8* state, const s16* table, u32* seed, int reset_weapons, s16 fields, int split)
 {
     PlayerCar car;
     memcpy(&car, state, sizeof(car));
@@ -825,8 +825,12 @@ void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life, s
     random_state = *seed;
     gFieldsLastFrame = fields;
     gUpdateRate = 60 / fields;
-    respawn_player(&car, 70);
-    if (new_life) {
+    respawn_player(&car, 70, split);
+    if (split) {
+        car.vrPos[1] = car.vrPos[5];
+        setVector(&car.vrRot[1], car.vrRot[5].vx, car.vrRot[5].vy, car.vrRot[5].vz);
+    }
+    if (reset_weapons) {
         car.stats.unkF8 = 0;
         car.weap.gunDelay = car.weap.fireDelay = 0;
         car.weap.unk04 = 0;
@@ -861,7 +865,7 @@ void tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed, int fov,
     setVector(&player.motion.vel, 0, 0, 0);
     setVector(&player.motion.rotDelta, 0, 0, 0);
     if (player.motion.pos.vz < 6400)
-        respawn_player(&player, fov);
+        respawn_player(&player, fov, 0);
     memcpy(state, &boss, sizeof(boss));
     memcpy(target, &player, sizeof(player));
     *seed = random_state;

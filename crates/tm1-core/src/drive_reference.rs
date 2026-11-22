@@ -5876,6 +5876,79 @@ fn hunt_and_battle_music_match_disc() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn duel_level_entry_matches_both_retail_player_records() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    for (index, (level, specifics, triggers)) in [
+        (Level::Arena, 0x8014b7a4, 0x80125bc0u32),
+        (Level::Warehouse, 0x8014b934, 0x801262ec),
+        (Level::Freeway, 0x8014bacc, 0x801268f8),
+        (Level::CityPark, 0x8014bc68, 0x80127694),
+        (Level::Cyburbia, 0x8014bdfc, 0x801281b8),
+        (Level::Rooftops, 0x8014bf6c, 0x8012b5a4),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let kinds = [Vehicle::ROSTER[2 * index], Vehicle::ROSTER[2 * index + 1]];
+        let difficulty = [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard][index % 3];
+        let mut cpu = Cpu::new(&exe);
+        cpu.call(0x800ffad8, &[1]);
+        cpu.call(0x80150224, &[difficulty as u32]);
+        put(&mut cpu, 0x8018c3b4, level as u32);
+        put(&mut cpu, 0x8018bf9c, 70);
+        cpu.put(0x80170238, &3i16.to_le_bytes());
+        cpu.put(0x8017023a, &20i16.to_le_bytes());
+        cpu.put(0x8018c336, &2i16.to_le_bytes());
+        cpu.put(0x8018c624, &[1, 1]);
+        for (slot, kind) in kinds.iter().enumerate() {
+            let i = slot as u32;
+            put(&mut cpu, PLAYER + 0x4a4 * i + 0x184, 1);
+            put(&mut cpu, 0x8018c648 + 4 * i, *kind as u32);
+            put(&mut cpu, 0x8019edd8 + 4 * i, *kind as u32);
+            put(&mut cpu, 0x8019ee0c + 4 * i, EXTRA_MODELS + 0x200 * i);
+            put(&mut cpu, 0x8018c640 + 4 * i, (index as u32 + i) % 4);
+        }
+        // Keep the database and level schedulers, both CarInit calls, and the trigger table.
+        // Drawing, view parenting, lighting switches and SPU reverb are outside this replay.
+        for at in [0x800ff38c, 0x8010abc8, 0x801414e0, 0x80141c64, 0x801055dc] {
+            cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        put(
+            &mut cpu,
+            specifics,
+            0x08000000 | ((triggers >> 2) & 0x03ffffff),
+        );
+        put(&mut cpu, specifics + 4, 0);
+        let database_seed = 0x2123 + index as u32;
+        let level_seed = 0x6790 + index as u32;
+        cpu.random_state = database_seed;
+        cpu.call_until(0x8014b498, &[level as u32], 0x80109bdc);
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, kinds, level, database_seed, difficulty).unwrap();
+        assert_eq!(cars[1].seed, cpu.random_state);
+        for (slot, car) in cars.iter_mut().enumerate() {
+            car.set_pad_layout(((index + slot) % 4) as u8);
+        }
+        cpu.random_state = level_seed;
+        cpu.call_until(0x8014c100, &[level as u32], 0x80109bdc);
+        PlayerVehicle::initialize_duel_level(&mut cars, level_seed);
+        for (slot, car) in cars.iter().enumerate() {
+            let base = (PLAYER as usize & 0x1fffff) + slot * 0x4a4;
+            for (offset, byte) in car.state.iter().enumerate() {
+                assert_eq!(
+                    *byte,
+                    cpu.ram[base + offset],
+                    "{level:?} slot {slot} offset {offset:x}"
+                );
+            }
+            assert_eq!(car.seed, cpu.random_state);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn split_screen_player_starts_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();

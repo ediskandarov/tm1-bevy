@@ -3,12 +3,13 @@ unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
     fn tm1_bind_level(level: i32);
     fn tm1_bind_difficulty(difficulty: i32);
-    fn tm1_campaign_player(
+    fn tm1_battle_player(
         state: *mut u8,
         table: *const i16,
         seed: *mut u32,
-        new_life: i32,
+        reset_weapons: i32,
         fields: i16,
+        split: i32,
     );
     fn tm1_new_life(scene: *mut std::ffi::c_void);
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32, slot: i32, split: i32);
@@ -532,7 +533,7 @@ impl PlayerVehicle {
         unsafe {
             tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(level as i32);
-            tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0, 3);
+            tm1_battle_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0, 3, 0);
         }
         Self {
             cheat_controls: self.cheat_controls,
@@ -551,6 +552,29 @@ impl PlayerVehicle {
     }
     /// InitLevel calls CarInit again after the database has registered all opponents.
     pub fn initialize_battle_car(&mut self, reset_weapons: bool) {
+        self.initialize_level_car(reset_weapons, false);
+    }
+    /// InitLevel prepares the helicopter on its stages even with two human players.
+    pub fn initialize_duel_level(cars: &mut [Self; 2], mut seed: u32) {
+        if matches!(
+            cars[0].level,
+            Level::Arena | Level::Rooftops | Level::Arena5
+        ) {
+            cars[0].seed = seed;
+            Helicopter::new(&mut cars[0]);
+            seed = cars[0].seed;
+        }
+        for car in cars.iter_mut() {
+            car.seed = seed;
+            car.initialize_level_car(true, true);
+            car.initial_state = car.state;
+            seed = car.seed;
+        }
+        for car in cars {
+            car.set_round_seed(seed);
+        }
+    }
+    fn initialize_level_car(&mut self, reset_weapons: bool, split: bool) {
         // uaInitDB assigns the player color, and SetCarCsInfo selects the chase view.
         self.state[0x146] = 1;
         for at in [0xf4, 0xf8] {
@@ -560,12 +584,13 @@ impl PlayerVehicle {
         unsafe {
             tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(self.level as i32);
-            tm1_campaign_player(
+            tm1_battle_player(
                 self.state.as_mut_ptr(),
                 self.trig.as_ptr(),
                 &mut self.seed,
                 i32::from(reset_weapons),
                 3,
+                i32::from(split),
             );
         }
     }
@@ -1773,12 +1798,13 @@ impl CollisionScene {
         unsafe {
             tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
-            tm1_campaign_player(
+            tm1_battle_player(
                 player.state.as_mut_ptr(),
                 player.trig.as_ptr(),
                 &mut player.seed,
                 1,
                 player.last_fields.into(),
+                0,
             );
             tm1_new_life(self.native.as_ptr());
         }
