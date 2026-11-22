@@ -1418,6 +1418,7 @@ pub enum BattleEvent {
     },
     Turbo(bool),
     Actor(usize),
+    EngineStop(usize),
     Hover {
         sound: HoverSound,
         position: [i32; 3],
@@ -1500,6 +1501,10 @@ extern "C" fn tm1_record_guns(
 #[unsafe(no_mangle)]
 extern "C" fn tm1_record_turbo(log: &mut Vec<BattleEvent>, on: i32) {
     log.push(BattleEvent::Turbo(on != 0));
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_engine_stop(log: &mut Vec<BattleEvent>, slot: i32) {
+    log.push(BattleEvent::EngineStop(slot as usize));
 }
 #[unsafe(no_mangle)]
 extern "C" fn tm1_record_actor(log: &mut Vec<BattleEvent>, slot: i32) {

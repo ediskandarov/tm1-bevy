@@ -24,7 +24,7 @@ pub struct DuelBank {
 
 #[derive(Component)]
 pub struct DuelEngine {
-    slot: usize,
+    pub(crate) slot: usize,
     source: Handle<StereoPcm>,
     pitch: super::EnginePitch,
     register: super::pcm::PitchRegister,
@@ -137,9 +137,9 @@ pub fn mix(
     bank: Res<DuelBank>,
     mut clips: ResMut<Assets<StereoPcm>>,
     mut sequence: ResMut<VoiceSequence>,
-    playing: Query<(
+    mut playing: Query<(
         Entity,
-        &Voice,
+        &mut Voice,
         Option<&DuelEngine>,
         Has<AudioPlayer<StereoPcm>>,
     )>,
@@ -155,7 +155,24 @@ pub fn mix(
     // Keep engines eligible when a higher-priority effect temporarily takes their voices.
     let mut ranked = Vec::new();
     let mut groups = Vec::new();
-    for (entity, voice, engine, _) in &playing {
+    let restarted = sequence.update_engines(&duel.sounds);
+    for (entity, mut voice, engine, audible) in &mut playing {
+        if let Some(engine) = engine {
+            if sequence.engines_stopped[engine.slot] {
+                if audible {
+                    commands
+                        .entity(entity)
+                        .remove::<(AudioPlayer<StereoPcm>, AudioSink)>();
+                }
+                continue;
+            }
+            if restarted[engine.slot] {
+                voice.order = sequence.next();
+                if audible {
+                    commands.entity(entity).remove::<AudioSink>();
+                }
+            }
+        }
         ranked.push(Candidate {
             entity,
             order: voice.order,
@@ -170,6 +187,7 @@ pub fn mix(
     }
     for request in &duel.sounds {
         let (layers, key, channels, percent, distance) = match request {
+            BattleRequest::Engine { .. } => continue,
             BattleRequest::Turbo => (
                 &bank.turbo,
                 Some(ExclusiveVoice::Turbo),

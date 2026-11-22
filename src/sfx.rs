@@ -275,9 +275,22 @@ pub struct OneShot {
 #[derive(Resource, Default)]
 pub struct VoiceSequence {
     serial: u64,
+    engines_stopped: [bool; 9],
     last_frame: Option<u32>,
 }
 impl VoiceSequence {
+    // A render update can contain a stop followed by a new engine request.
+    fn update_engines(&mut self, requests: &[crate::driving::BattleRequest]) -> [bool; 9] {
+        let mut restarted = [false; 9];
+        for request in requests {
+            if let crate::driving::BattleRequest::Engine { slot, running } = *request {
+                restarted[slot] |= running && self.engines_stopped[slot];
+                self.engines_stopped[slot] = !running;
+            }
+        }
+        restarted
+    }
+
     fn next(&mut self) -> u64 {
         self.serial += 1;
         self.serial
@@ -417,7 +430,16 @@ pub fn update(
     let mut ranked = Vec::new();
     let frame = drive.player.frame();
     let new_frame = sequence.last_frame.replace(frame) != Some(frame);
+    if reset {
+        sequence.engines_stopped = [false; 9];
+    }
+    let restarted = sequence.update_engines(&drive.sounds);
     for (entity, mut engine, rival, playing, sink) in &mut engines {
+        let slot = rival.map_or(0, |r| r.slot + 1);
+        let restart_engine = reset || restarted[slot];
+        if restarted[slot] {
+            engine.order = None;
+        }
         let audible = if let Some(rival) = rival {
             drive.opponents.get(rival.slot).and_then(|ai| {
                 ai.engine_rev()
@@ -431,7 +453,9 @@ pub fn update(
                     .channels(drive.player.position(), volume, false),
             ))
         };
-        let Some((rev, channels)) = audible.filter(|_| !stop_battle) else {
+        let Some((rev, channels)) =
+            audible.filter(|_| !stop_battle && !sequence.engines_stopped[slot])
+        else {
             engine.order = None;
             if playing {
                 commands
@@ -456,16 +480,16 @@ pub fn update(
         });
         engine.levels.set(channels, 99);
         engine.register.set(engine.pitch.register(rev));
-        if reset && playing {
+        if restart_engine && playing {
             commands.entity(entity).remove::<AudioSink>();
         }
-        if let Some(sink) = sink.filter(|_| !reset) {
+        if let Some(sink) = sink.filter(|_| !restart_engine) {
             if pause {
                 sink.pause();
             } else {
                 sink.play();
             }
-        } else if !playing || reset {
+        } else if !playing || restart_engine {
             let mut settings = PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28));
             settings.paused = pause;
             commands
@@ -519,6 +543,7 @@ pub fn update(
     use crate::driving::{BattleRequest, ExclusiveVoice};
     for request in &drive.sounds {
         let (tones, key, channels, percent, range) = match request {
+            BattleRequest::Engine { .. } => continue,
             BattleRequest::Play(sound) => (
                 &sounds.effects[sound.id],
                 sound.exclusive,
@@ -621,6 +646,28 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    fn engine_stop_survives_render_updates_until_the_next_rev_request() {
+        use crate::driving::BattleRequest::Engine;
+        let mut sequence = VoiceSequence::default();
+        let rev = || Engine {
+            slot: 1,
+            running: true,
+        };
+        let stop = || Engine {
+            slot: 1,
+            running: false,
+        };
+        sequence.update_engines(&[rev(), stop()]);
+        sequence.update_engines(&[]);
+        assert!(sequence.engines_stopped[1]);
+        assert!(sequence.update_engines(&[rev()])[1]);
+        assert!(!sequence.engines_stopped[1]);
+        assert!(sequence.update_engines(&[stop(), rev(), rev()])[1]);
+        assert!(!sequence.engines_stopped[1]);
+        assert!(!sequence.update_engines(&[rev()])[1]);
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

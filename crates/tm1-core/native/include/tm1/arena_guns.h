@@ -83,6 +83,7 @@ void arena_schedule_battle(AICar *,s16,s16,s16);
 void arena_move_missiles(void);
 void tm1_tick_carry_notice(void);
 void arena_effect(VECTOR3 *,s32);
+void arena_stop_car_sounds(int slot, const VECTOR3* pos);
 void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos);
 void arena_record_effect(const VECTOR3* pos, int kind);
 void arena_drop_launch_sound(const VECTOR3* pos, int weapon);

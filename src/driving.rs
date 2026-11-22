@@ -23,6 +23,7 @@ pub enum ExclusiveVoice {
 }
 
 pub enum BattleRequest {
+    Engine { slot: usize, running: bool },
     Play(BattleSound),
     Stop(ExclusiveVoice),
     Turbo,
@@ -181,20 +182,36 @@ pub(crate) fn battle_audio(
                     BattleRequest::Stop(key)
                 });
             }
+            BattleEvent::EngineStop(slot) => emit(BattleRequest::Engine {
+                slot,
+                running: false,
+            }),
             BattleEvent::Actor(slot) => {
-                for (sound, position) in scene.car_sound_requests(slot) {
+                let effect = |(sound, position)| {
                     let (id, key, level) = car_sample(sound, car(slot), slot, recharge);
                     if previous_view.is_some() {
-                        emit(centered(id, Some(key), level));
+                        centered(id, Some(key), level)
                     } else {
-                        emit(play(
-                            id,
-                            Some(key),
-                            level,
-                            position,
-                            sound == CarSound::Explosion,
-                        ));
+                        play(id, Some(key), level, position, sound == CarSound::Explosion)
                     }
+                };
+                let mut sounds = scene.car_sound_requests(slot).peekable();
+                // UASetSoundFlags requests skid and wreck before rev, then crash and signature.
+                while let Some(sound) = sounds.next_if(|(s, _)| {
+                    matches!(
+                        s,
+                        CarSound::Contact(tm1_core::drive::ContactVoice::Skid, _)
+                            | CarSound::Explosion
+                    )
+                }) {
+                    emit(effect(sound));
+                }
+                emit(BattleRequest::Engine {
+                    slot,
+                    running: true,
+                });
+                for sound in sounds {
+                    emit(effect(sound));
                 }
             }
             BattleEvent::Effect { kind, position } => {

@@ -1153,6 +1153,14 @@ void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos)
         tm1_record_guns(step_audio, slot, firing, pos->vx, pos->vy, pos->vz);
 }
 
+extern void tm1_record_engine_stop(void*, int);
+void arena_stop_car_sounds(int slot, const VECTOR3* pos)
+{
+    if (step_audio)
+        tm1_record_engine_stop(step_audio, slot);
+    arena_gun_sound(slot, 0, pos);
+}
+
 // UASetSoundFlags runs after each actor update and before its death model.
 static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motion, CarCollision* collision)
 {

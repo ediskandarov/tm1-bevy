@@ -4419,6 +4419,7 @@ fn compare_battle_controls(
     let observe_guns =
         |cpu: &mut Cpu, entry, args: &[u32], car: Vehicle, flame_audio: &mut Vec<BattleEvent>| {
             let mut request = None;
+            let mut engine_stops = 0;
             let mut origin = [0; 3];
             cpu.call_observed(entry, args, 0x80000080, |cpu| {
                 if boss && car == Vehicle::Minion {
@@ -4426,13 +4427,17 @@ fn compare_battle_controls(
                 }
                 let firing = match cpu.pc() {
                     0x801073cc => true,
-                    0x80107524 | 0x80107a1c => false,
+                    0x80107524 => false,
+                    0x80107a1c => {
+                        engine_stops += 1;
+                        false
+                    }
                     _ => return,
                 };
                 assert_eq!(cpu.r[4], car as u32);
                 request = Some(firing);
             });
-            request
+            (request, engine_stops)
         };
     let observe_actor_sounds = |cpu: &mut Cpu, address: u32, player: bool| {
         let mut sounds = Vec::new();
@@ -4535,9 +4540,10 @@ fn compare_battle_controls(
         r.cpu.call(0x801360bc, &[]);
         let primary_fragments = read_fragments(&r.cpu);
         let mut gun_requests = [None; 9];
+        let mut engine_stops = [0; 9];
         let mut flame_audio = Vec::new();
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
-            gun_requests[0] = observe_guns(
+            (gun_requests[0], engine_stops[0]) = observe_guns(
                 &mut r.cpu,
                 0x8014ecd4,
                 &[TAXI_CS, PLAYER],
@@ -4549,6 +4555,7 @@ fn compare_battle_controls(
             && r.cpu.ram[((PLAYER + 0xa0) & 0x1fffff) as usize] == 0
         {
             gun_requests[0] = Some(false);
+            engine_stops[0] += 1;
         }
         let mut actor_sounds = vec![observe_actor_sounds(&mut r.cpu, PLAYER, true)];
         start_retail_death(&mut r.cpu, PLAYER, true);
@@ -4557,7 +4564,7 @@ fn compare_battle_controls(
         for (i, &cs) in slots.iter().enumerate() {
             let address = POLICE + 0x560 * i as u32;
             let car = lineup.get(i).unwrap_or(&r.police).vehicle();
-            gun_requests[1 + i] = observe_guns(
+            (gun_requests[1 + i], engine_stops[1 + i]) = observe_guns(
                 &mut r.cpu,
                 0x8014ee14,
                 &[cs, address],
@@ -4638,6 +4645,13 @@ fn compare_battle_controls(
                 "{level:?} tick {tick} slot {slot}"
             );
         }
+        let mut actual_stops = [0; 9];
+        for event in &r.scene.audio {
+            if let BattleEvent::EngineStop(slot) = *event {
+                actual_stops[slot] += 1;
+            }
+        }
+        assert_eq!(actual_stops, engine_stops, "{level:?} tick {tick}");
         assert_eq!(
             r.scene.gun_sound_requests(),
             gun_requests,
@@ -6525,6 +6539,13 @@ fn duel_winner_and_return_delay_original() {
     for death_ticks in [[0, 200], [200, 0], [0, 0], [2, 0]] {
         let mut cpu = Cpu::new(&exe);
         cpu.call(0x800ff718, &[]);
+        put(&mut cpu, 0x8018c35c, 1);
+        // Isolate audio requests and shell returns from geometry, particles and the SDK.
+        for entry in [
+            0x8010461c, 0x80106d60, 0x80106e88, 0x8014158c, 0x80141c64, 0x80137140, 0x8014e8dc,
+        ] {
+            cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
         let mut cars =
             PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
         let mut scene =
@@ -6533,13 +6554,38 @@ fn duel_winner_and_return_delay_original() {
         for tick in 0..100 {
             let fields = [1u8, 5, 3][tick % 3];
             cpu.put(0x80170238, &u16::from(fields).to_le_bytes());
+            let mut retail_audio = Vec::new();
             for (slot, car) in cars.iter_mut().enumerate() {
                 if tick == death_ticks[slot] {
                     car.state[0x178..0x17c].fill(0);
-                    cpu.call(0x800ff6dc, &[if slot == 0 { 4 } else { 3 }, 180]);
+                }
+                let address = PLAYER + 0x4a4 * slot as u32;
+                cpu.put(address, &car.state);
+                let args = [slot as u32, address, 1];
+                for (entry, args) in [(0x80150790, &args[..]), (0x8014e34c, &args[..1])] {
+                    cpu.call_observed(entry, args, 0x80000080, |cpu| {
+                        let engine_id = [0x4e, 0x51][slot];
+                        if cpu.r[4] == engine_id {
+                            match cpu.pc() {
+                                0x80106d60 => retail_audio.push(BattleEvent::Actor(slot)),
+                                0x80106e88 => retail_audio.push(BattleEvent::EngineStop(slot)),
+                                _ => {}
+                            }
+                        }
+                    });
                 }
             }
             winner = scene.step_duel(&mut cars, [Input::default(); 2], fields);
+            let audio: Vec<_> = scene
+                .audio
+                .iter()
+                .copied()
+                .filter(|e| matches!(e, BattleEvent::Actor(_) | BattleEvent::EngineStop(_)))
+                .collect();
+            assert_eq!(
+                audio, retail_audio,
+                "engine calls for deaths {death_ticks:?}, tick {tick}"
+            );
             let returned = cpu.call(0x800ff760, &[]) != 0;
             assert_eq!(
                 winner.is_some(),

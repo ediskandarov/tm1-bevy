@@ -456,7 +456,7 @@ void tm1_start_death(Car* car, u8 player)
         return;
     CarMotion* motion = player ? &PLAYER_CAR(car)->motion : &AI_CAR(car)->motion;
     if (player)
-        arena_gun_sound(PLAYER_CAR(car)->playerIdx, 0, &motion->pos);
+        arena_stop_car_sounds(PLAYER_CAR(car)->playerIdx, &motion->pos);
     flags[0] = 1;
     flags[21] = player || AI_CAR(car)->unk2C <= 0;
     if (player && uaHasPlayerBeatThisLevel())
