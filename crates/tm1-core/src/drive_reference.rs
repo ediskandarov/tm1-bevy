@@ -587,6 +587,12 @@ fn ordinary_camera_original() {
                 3,
             );
             r.cpu.put(PLAYER + 0x138, &r.player.state[0x138..]);
+            let fields = 1 + (tick % 5) as u8;
+            r.cpu.put(0x80170238, &u16::from(fields).to_le_bytes());
+            assert_eq!(
+                r.player.speed_mph(fields),
+                r.cpu.call(0x8014f794, &[0]) as i32
+            );
             put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
             r.cpu.call(0x80116bcc, &[PLAYER]);
             cam.update(&r.player, false);

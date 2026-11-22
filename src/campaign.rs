@@ -29,6 +29,33 @@ pub struct Stage {
     sounds: sfx::Sounds,
     clear: ClearColor,
 }
+fn load_cockpit(
+    disc: &Disc,
+    dmd: &Dmd<'_>,
+    vehicle: Vehicle,
+) -> Result<tm1_assets::screen::Cockpit> {
+    let dash = match vehicle {
+        Vehicle::SweetTooth => "ICE_DASH",
+        Vehicle::YellowJacket => "CAB_DASH",
+        Vehicle::Darkside => "SEMI_DAS",
+        Vehicle::Outlaw => "COP_DASH",
+        Vehicle::Thumper => "LOWRIDER",
+        Vehicle::CrimsonFury => "LAMBO_DA",
+        Vehicle::PitViper => "DUNEB_DA",
+        Vehicle::Warthog => "HUMVEE_D",
+        Vehicle::MrGrimm => "HARLEY_D",
+        Vehicle::Spectre => "VETTE_DA",
+        Vehicle::Hammerhead => "MONSTERT",
+        Vehicle::RoadKill => "MADMAX_D",
+        Vehicle::Minion => anyhow::bail!("Minion has no player cockpit"),
+    };
+    tm1_assets::screen::Cockpit::load(
+        &disc.read(&format!("UADASH/{dash}.TMS"))?,
+        dmd.cockpit_rectangles()?,
+        vehicle == Vehicle::MrGrimm,
+    )
+}
+
 impl Stage {
     pub fn load(disc: &Disc, level: Level, vehicle: Vehicle, entry: Entry<'_>) -> Result<Self> {
         let stage = level.database(vehicle);
@@ -76,6 +103,8 @@ impl Stage {
         )
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
         let arena = render::Arena::new(
+            tm1_assets::screen::Fonts::load(disc)?,
+            load_cockpit(disc, &dmd, vehicle)?,
             scene,
             (!matches!(level, Level::Arena | Level::Arena5))
                 .then(|| dmd.extract_kind(2))
@@ -199,4 +228,27 @@ pub fn replace(world: &mut World, stage: Stage) {
     world
         .run_system_once(sfx::start)
         .expect("stage sound setup");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn cockpit_art_and_steering_for_the_full_roster() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+        let dmd = Dmd::parse(&data).unwrap();
+        for vehicle in Vehicle::ROSTER {
+            let cockpit = load_cockpit(&disc, &dmd, vehicle).unwrap();
+            let straight = cockpit.frame(0);
+            assert_eq!(
+                straight[4 * (100 * 320 + 160) + 3],
+                0,
+                "windshield {vehicle:?}"
+            );
+            assert!(straight.chunks_exact(4).any(|p| p[3] == 255));
+            assert_ne!(straight, cockpit.frame(24), "steering {vehicle:?}");
+        }
+    }
 }

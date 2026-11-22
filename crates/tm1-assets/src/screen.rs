@@ -30,7 +30,7 @@ pub fn background(data: &[u8]) -> Result<Vec<u8>> {
 pub struct Fonts {
     pixels: Vec<[u8; 4]>,
     width: usize,
-    metrics: [Vec<Glyph>; 2],
+    metrics: [Vec<Glyph>; 3],
 }
 #[derive(Clone, Copy)]
 struct Glyph {
@@ -44,6 +44,7 @@ struct Glyph {
 pub enum Face {
     Text,
     Password,
+    Speed,
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
@@ -67,13 +68,13 @@ impl Fonts {
                 rgb555(u16::from_le_bytes([colors[at], colors[at + 1]]))
             })
             .collect();
-        let metrics = |address: u32| -> Result<Vec<Glyph>> {
+        let metrics = |address: u32, count: usize| -> Result<Vec<Glyph>> {
             let at = 2048
                 + address
                     .checked_sub(u32le(&exe, 24)?)
                     .ok_or_else(|| anyhow::anyhow!("invalid executable base"))?
                     as usize;
-            bytes(&exe, at, 77 * 6)?
+            bytes(&exe, at, count * 6)?
                 .chunks_exact(6)
                 .map(|g| {
                     let glyph = Glyph {
@@ -94,7 +95,11 @@ impl Fonts {
         Ok(Self {
             pixels,
             width,
-            metrics: [metrics(0x801709b8)?, metrics(0x801707e8)?],
+            metrics: [
+                metrics(0x801709b8, 77)?,
+                metrics(0x801707e8, 77)?,
+                metrics(0x80170b88, 48)?,
+            ],
         })
     }
     fn glyph(&self, face: Face, c: u8) -> Glyph {
@@ -111,7 +116,8 @@ impl Fonts {
         } else {
             47
         };
-        self.metrics[face as usize][idx]
+        let metrics = &self.metrics[face as usize];
+        metrics.get(idx).copied().unwrap_or(metrics[47])
     }
     pub fn line_height(&self) -> i32 {
         self.glyph(Face::Text, b'M').h as i32
@@ -120,6 +126,7 @@ impl Fonts {
         let spacing = match face {
             Face::Text => -1,
             Face::Password => 7,
+            Face::Speed => 3,
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
         let width: i32 = text.bytes().map(advance).sum();
@@ -129,6 +136,7 @@ impl Fonts {
         let (spacing, tint) = match face {
             Face::Text => (-1, [115, 84, 35]),
             Face::Password => (7, [50, 50, 50]),
+            Face::Speed => (3, [100, 0, 30]),
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
         for c in text.bytes() {
@@ -158,5 +166,137 @@ impl Fonts {
             }
             x += advance(c);
         }
+    }
+}
+
+/// The car-specific UADASH TMS replaces seven cockpit panels and a steering
+/// wheel. Mr. Grimm uses three instrument panels and two mirrored handlebars.
+pub struct Cockpit {
+    panels: Vec<u8>,
+    steering: Vec<u8>,
+    motorcycle: bool,
+}
+impl Cockpit {
+    pub fn load(data: &[u8], layout: [[i32; 4]; 7], motorcycle: bool) -> Result<Self> {
+        let count = if motorcycle { 4 } else { 8 };
+        ensure!(
+            u32le(data, 0)? == 0x50535854 && u32le(data, 4)? == 0x43 && u32le(data, 12)? == count,
+            "invalid cockpit TMS"
+        );
+        let mut panels = vec![0; WIDTH * HEIGHT * 4];
+        let mut wheel = Vec::new();
+        let mut at = 16;
+        for i in 0..count as usize {
+            let len = u32le(data, at)? as usize;
+            let tim = bytes(data, at + 4, len)?;
+            at += 4 + len;
+            let indexed = motorcycle || !matches!(i, 0 | 6);
+            ensure!(
+                u32le(tim, 0)? == 16 && u32le(tim, 4)? == if indexed { 9 } else { 2 },
+                "unexpected cockpit TIM format"
+            );
+            let palette = if indexed {
+                bytes(tim, 8, u32le(tim, 8)? as usize)?
+            } else {
+                &[]
+            };
+            let p = 8 + palette.len();
+            let img = bytes(tim, p, u32le(tim, p)? as usize)?;
+            let w = usize::from(u16le(img, 8)?) * if indexed { 2 } else { 1 };
+            let h = usize::from(u16le(img, 10)?);
+            let bitmap = bytes(img, 12, w * h * if indexed { 1 } else { 2 })?;
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for j in 0..w * h {
+                let word = if indexed {
+                    u16le(palette, 12 + 2 * usize::from(bitmap[j]))?
+                } else {
+                    u16le(bitmap, 2 * j)?
+                };
+                let mut color = rgb555(word);
+                if !indexed {
+                    color[3] = 255;
+                } else if i + 1 == count as usize && word & 0x8000 != 0 {
+                    color[3] = 128;
+                }
+                rgba.extend(color);
+            }
+            if i + 1 == count as usize {
+                ensure!(
+                    (w, h) == (256, 128),
+                    "unexpected steering texture dimensions"
+                );
+                wheel = rgba;
+                continue;
+            }
+            let [x, y, rw, rh] = if motorcycle {
+                [[117, 132, 64, 36], [85, 168, 128, 36], [85, 204, 128, 36]][i]
+            } else {
+                layout[i]
+            };
+            ensure!(
+                x >= 0
+                    && y >= 0
+                    && rw == w as i32
+                    && rh == h as i32
+                    && x as usize + w <= WIDTH
+                    && y as usize + h <= HEIGHT,
+                "cockpit panel outside display"
+            );
+            for row in 0..h {
+                let dst = ((row + y as usize) * WIDTH + x as usize) * 4;
+                panels[dst..dst + w * 4].copy_from_slice(&rgba[row * w * 4..(row + 1) * w * 4]);
+            }
+        }
+        Ok(Self {
+            panels,
+            steering: wheel,
+            motorcycle,
+        })
+    }
+
+    pub fn frame(&self, degrees: i32) -> Vec<u8> {
+        let mut pixels = self.panels.clone();
+        let (sin, cos) = (degrees as f32).to_radians().sin_cos();
+        let (cx, cy) = if self.motorcycle {
+            (159., 202.)
+        } else {
+            (125., 230.)
+        };
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let dx = x as f32 + 0.5 - cx;
+                let dy = y as f32 + 0.5 - cy;
+                let lx = cos * dx + sin * dy;
+                let ly = -sin * dx + cos * dy;
+                let (u, v) = if self.motorcycle {
+                    if !(14.0..114.0).contains(&lx.abs()) || !(-130.0..126.0).contains(&ly) {
+                        continue;
+                    }
+                    (126. - ly, (114. - lx.abs()) * 128. / 100.)
+                } else {
+                    (lx + 120., ly + 64.)
+                };
+                if !(0.0..256.0).contains(&u) || !(0.0..128.0).contains(&v) {
+                    continue;
+                }
+                let src = 4 * (v as usize * 256 + u as usize);
+                let dst = 4 * (y * WIDTH + x);
+                let alpha = self.steering[src + 3];
+                if alpha == 0 {
+                    continue;
+                }
+                let blend = alpha == 128 && pixels[dst + 3] != 0;
+                for c in 0..3 {
+                    let front = (u16::from(self.steering[src + c]) * 255 / 128).min(255);
+                    pixels[dst + c] = if blend {
+                        ((front + u16::from(pixels[dst + c])) / 2) as u8
+                    } else {
+                        front as u8
+                    };
+                }
+                pixels[dst + 3] = if blend { 255 } else { alpha };
+            }
+        }
+        pixels
     }
 }

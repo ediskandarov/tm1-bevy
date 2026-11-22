@@ -173,6 +173,7 @@ fn main() -> Result<()> {
                 driving::advance,
                 render::controls,
                 render::update,
+                render::cockpit,
                 render::hud,
                 render::boss_intro,
             )

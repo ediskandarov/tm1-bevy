@@ -507,6 +507,28 @@ impl PlayerVehicle {
             RadarSignal::Up
         }
     }
+    /// UA.c GetPlayerSpeed, in displayed MPH.
+    pub fn speed_mph(&self, fields: u8) -> i32 {
+        assert!((1..=5).contains(&fields));
+        (self.word(0x398) / 32) * 100 / (i32::from(fields) * 19)
+    }
+
+    pub fn cockpit_steering_angle(&self, previous: i32) -> i32 {
+        let skid = &self.state[0xc8..];
+        let pct = if skid[6] != 0 || skid[7] != 0 { 40 } else { 70 };
+        let target = if skid[2] != 0 {
+            -28
+        } else if skid[3] != 0 {
+            28
+        } else {
+            0
+        };
+        (previous * pct + target * (100 - pct)) / 100
+    }
+
+    pub fn dashboard_enabled(&self) -> bool {
+        self.word(0x174) != 0
+    }
     pub fn heading(&self) -> i32 {
         self.word(0x3a8)
     }

@@ -192,6 +192,72 @@ impl<'a> Dmd<'a> {
         Ok([icon(1290)?, icon(1292)?, icon(1291)?, icon(1293)?])
     }
     fn sprite_frames<const N: usize>(&self, kind: u16, additive: bool) -> Result<[SpriteFrame; N]> {
+        let p = self.sprite_object(kind)?;
+        ensure!(
+            u32le(self.data, p + 16)? as usize == N,
+            "invalid sprite frame count"
+        );
+        let mut poly = self.offset(u32le(self.data, p + 12)?)?;
+        let mut frames = Vec::with_capacity(N);
+        for _ in 0..N {
+            let header = bytes(self.data, poly, 16)?;
+            let len = usize::from(header[2]) * 4;
+            let record = bytes(self.data, poly, len)?;
+            let flags = u32le(record, 12)?;
+            let uv = bytes(record, 16 + 4 * ((flags >> 28) & 7) as usize, 16)?;
+            let width = uv[12].wrapping_sub(uv[8]);
+            let height = uv[13].wrapping_sub(uv[5]);
+            let (u, v) = (uv[0], uv[1]);
+            let page = u16le(uv, 6)?;
+            frames.push(SpriteFrame {
+                texture: TextureKey {
+                    page: if additive { (page & 31) | 32 } else { page },
+                    clut: u16le(uv, 2)?,
+                    window: 0,
+                },
+                width,
+                uv: [
+                    [u, v],
+                    [u.wrapping_add(width), v],
+                    [u, v.wrapping_add(height)],
+                    [u.wrapping_add(width), v.wrapping_add(height)],
+                ],
+            });
+            poly += len;
+        }
+        frames
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("invalid sprite frames"))
+    }
+    pub fn cockpit_rectangles(&self) -> Result<[[i32; 4]; 7]> {
+        let p = self.sprite_object(1240)?;
+        ensure!(
+            u32le(self.data, p + 16)? == 7,
+            "unexpected dashboard panel count"
+        );
+        let verts = self.offset(u32le(self.data, p + 4)?)?;
+        let mut poly = self.offset(u32le(self.data, p + 12)?)?;
+        let mut rects = [[0; 4]; 7];
+        for rect in &mut rects {
+            let coord = |i: usize, axis: usize| -> Result<i32> {
+                let idx = usize::from(u16le(self.data, poly + 4 + 2 * i)?);
+                Ok(i32::from(
+                    u16le(self.data, verts + 8 * idx + 2 * axis)? as i16
+                ))
+            };
+            let x = coord(0, 0)?;
+            let y = coord(0, 1)?;
+            *rect = [
+                x / 8,
+                -y / 8,
+                (coord(1, 0)? - x) / 8,
+                (y - coord(2, 1)?) / 8,
+            ];
+            poly += 4 * usize::from(bytes(self.data, poly + 2, 1)?[0]);
+        }
+        Ok(rects)
+    }
+    fn sprite_object(&self, kind: u16) -> Result<usize> {
         let mut pending: Vec<_> = self
             .roots
             .iter()
@@ -208,41 +274,7 @@ impl<'a> Dmd<'a> {
                 1 => (20, 24),
                 4 => (18, 20),
                 0 if u16le(self.data, p + 2)? == kind => {
-                    ensure!(
-                        u32le(self.data, p + 16)? as usize == N,
-                        "invalid sprite frame count"
-                    );
-                    let mut poly = self.offset(u32le(self.data, p + 12)?)?;
-                    let mut frames = Vec::with_capacity(N);
-                    for _ in 0..N {
-                        let header = bytes(self.data, poly, 16)?;
-                        let len = usize::from(header[2]) * 4;
-                        let record = bytes(self.data, poly, len)?;
-                        let flags = u32le(record, 12)?;
-                        let uv = bytes(record, 16 + 4 * ((flags >> 28) & 7) as usize, 16)?;
-                        let width = uv[12].wrapping_sub(uv[8]);
-                        let height = uv[13].wrapping_sub(uv[5]);
-                        let (u, v) = (uv[0], uv[1]);
-                        let page = u16le(uv, 6)?;
-                        frames.push(SpriteFrame {
-                            texture: TextureKey {
-                                page: if additive { (page & 31) | 32 } else { page },
-                                clut: u16le(uv, 2)?,
-                                window: 0,
-                            },
-                            width,
-                            uv: [
-                                [u, v],
-                                [u.wrapping_add(width), v],
-                                [u, v.wrapping_add(height)],
-                                [u.wrapping_add(width), v.wrapping_add(height)],
-                            ],
-                        });
-                        poly += len;
-                    }
-                    return frames
-                        .try_into()
-                        .map_err(|_| anyhow::anyhow!("invalid sprite frames"));
+                    return Ok(p);
                 }
                 _ => continue,
             };

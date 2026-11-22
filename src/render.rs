@@ -30,6 +30,8 @@ const COLUMNS: usize = 8;
 
 #[derive(Resource)]
 pub struct Arena {
+    fonts: tm1_assets::screen::Fonts,
+    cockpit: tm1_assets::screen::Cockpit,
     scene: Scene,
     sky: Option<Scene>,
     missile_models: [Option<Scene>; 2],
@@ -56,6 +58,8 @@ pub struct Arena {
 }
 impl Arena {
     pub fn new(
+        fonts: tm1_assets::screen::Fonts,
+        cockpit: tm1_assets::screen::Cockpit,
         mut scene: Scene,
         sky: Option<Scene>,
         vehicle: [Scene; 3],
@@ -127,6 +131,8 @@ impl Arena {
         let radius = (hi - lo).length() * 0.5;
         ensure!(radius.is_finite() && radius > 0., "invalid arena bounds");
         Ok(Self {
+            fonts,
+            cockpit,
             scene,
             sky,
             missile_models,
@@ -177,6 +183,29 @@ pub fn setup(
         RenderAssetUsages::RENDER_WORLD,
     );
     image.sampler = ImageSampler::nearest();
+    let mut cockpit_image = Image::new(
+        Extent3d {
+            width: 320,
+            height: 240,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        arena.cockpit.frame(0),
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::default(),
+    );
+    cockpit_image.sampler = ImageSampler::nearest();
+    commands.spawn((
+        crate::campaign::StageEntity,
+        CockpitOverlay {
+            degrees: 0,
+            speed: None,
+            frame: None,
+        },
+        Sprite::from_image(images.add(cockpit_image)),
+        Visibility::Hidden,
+        Transform::from_xyz(0., 0., -1.),
+    ));
     let texture = images.add(image);
     arena.additive = meshes.add(Batch::default().mesh());
     commands.spawn((
@@ -379,6 +408,58 @@ pub fn boss_intro(
 }
 #[derive(Component)]
 pub struct HudLabel;
+#[derive(Component)]
+pub struct CockpitOverlay {
+    degrees: i32,
+    speed: Option<i32>,
+    frame: Option<u32>,
+}
+
+pub fn cockpit(
+    window: Single<&Window>,
+    drive: Res<crate::driving::Drive>,
+    arena: Res<Arena>,
+    mut images: ResMut<Assets<Image>>,
+    mut overlay: Single<(&mut CockpitOverlay, &mut Sprite, &mut Visibility)>,
+) {
+    let (state, sprite, visibility) = &mut *overlay;
+    let showing = drive.camera.mode == tm1_core::drive::CarView::Cockpit
+        && !drive.camera.show_body
+        && drive.player.dashboard_enabled()
+        && !arena.overview
+        && drive.helicopter_pose().is_none();
+    **visibility = if showing {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+    if !showing {
+        return;
+    }
+    sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
+    if state.frame == Some(drive.player.frame()) {
+        return;
+    }
+    state.frame = Some(drive.player.frame());
+    let angle = drive.player.cockpit_steering_angle(state.degrees);
+    let speed = drive.player.speed_mph(3).abs() % 1000;
+    if angle != state.degrees || state.speed != Some(speed) {
+        state.speed = Some(speed);
+        state.degrees = angle;
+        if let Some(mut image) = images.get_mut(&sprite.image) {
+            let mut pixels = arena.cockpit.frame(angle);
+            arena.fonts.at(
+                &mut pixels,
+                tm1_assets::screen::Face::Speed,
+                102,
+                214,
+                &format!("{speed:3}"),
+            );
+            image.data = Some(pixels);
+        }
+    }
+}
+
 pub fn hud(
     window: Single<&Window>,
     drive: Res<crate::driving::Drive>,
