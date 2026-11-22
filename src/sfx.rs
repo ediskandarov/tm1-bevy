@@ -608,10 +608,7 @@ pub fn update(
         }
     }
     if ranked.len() > 24 {
-        // Requested tones compete first. Finishing tones fill any unused voices in list order.
-        ranked.sort_unstable_by_key(|v| (v.finishing, v.order));
-        let requested = ranked.partition_point(|v| !v.finishing);
-        tm1_core::sound::sort_requested(&mut ranked[..requested], |v| v.range, |v| v.priority);
+        rank_voices(&mut ranked);
         for voice in &ranked[24..] {
             if voice.engine {
                 commands
@@ -622,6 +619,13 @@ pub fn update(
             }
         }
     }
+}
+
+fn rank_voices(ranked: &mut [Candidate]) {
+    // Requested tones compete first. Finishing tones fill any unused voices in list order.
+    ranked.sort_unstable_by_key(|v| (v.finishing, v.order));
+    let requested = ranked.partition_point(|v| !v.finishing);
+    tm1_core::sound::sort_requested(&mut ranked[..requested], |v| v.range, |v| v.priority);
 }
 
 fn refresh_requested(

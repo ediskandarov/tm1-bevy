@@ -1,7 +1,7 @@
 //! Tone allocation for the shared SPU during split-screen play.
 use super::{
-    EffectTone, Layer, PreparedTone, Sample, TURBO_PROGRAM, battle_programs, engine_speed,
-    pcm::Levels, pcm::StereoPcm,
+    Candidate, EffectTone, Layer, PreparedTone, Sample, TURBO_PROGRAM, VoiceSequence,
+    battle_programs, engine_speed, pcm::Levels, pcm::StereoPcm, rank_voices,
 };
 use crate::{
     campaign::StageEntity,
@@ -30,6 +30,7 @@ pub struct DuelEngine {
 
 #[derive(Component)]
 pub struct Voice {
+    order: u64,
     priority: u8,
     distance: u32,
     group: Option<(ExclusiveVoice, Levels)>,
@@ -70,6 +71,7 @@ impl DuelBank {
     }
 
     pub fn install(self, world: &mut World, gain: f32) {
+        let mut sequence = VoiceSequence::default();
         for (slot, layers) in self.engines.iter().enumerate() {
             for layer in layers {
                 let source = layer
@@ -84,6 +86,7 @@ impl DuelBank {
                         range: layer.range,
                     },
                     Voice {
+                        order: sequence.next(),
                         priority: layer.priority,
                         distance: 0,
                         group: None,
@@ -93,6 +96,7 @@ impl DuelBank {
                 ));
             }
         }
+        world.insert_resource(sequence);
         world.insert_resource(self);
     }
 
@@ -119,7 +123,7 @@ pub fn mix(
     duel: Res<Duel>,
     bank: Res<DuelBank>,
     mut clips: ResMut<Assets<StereoPcm>>,
-    mut last_frame: Local<Option<u32>>,
+    mut sequence: ResMut<VoiceSequence>,
     mut playing: Query<(
         Entity,
         &Voice,
@@ -133,21 +137,22 @@ pub fn mix(
         return;
     }
     let frame = duel.cars[0].frame();
-    if *last_frame == Some(frame) {
+    if sequence.last_frame == Some(frame) {
         return;
     }
-    *last_frame = Some(frame);
+    sequence.last_frame = Some(frame);
     // Keep engines eligible when a higher-priority effect temporarily takes their voices.
     let mut ranked = Vec::new();
     let mut groups = Vec::new();
     for (entity, voice, engine, _, _, _) in &playing {
-        ranked.push((
-            engine.is_none(),
-            voice.priority,
-            voice.distance,
+        ranked.push(Candidate {
             entity,
-            engine.is_some(),
-        ));
+            order: voice.order,
+            finishing: engine.is_none(),
+            priority: voice.priority,
+            range: voice.distance,
+            engine: engine.is_some(),
+        });
         if let Some((key, levels)) = &voice.group {
             groups.push((*key, entity, levels.clone()));
         }
@@ -173,7 +178,7 @@ pub fn mix(
                     if group != key {
                         return true;
                     }
-                    ranked.retain(|entry| entry.3 != *entity);
+                    ranked.retain(|entry| entry.entity != *entity);
                     commands.entity(*entity).despawn();
                     false
                 });
@@ -185,9 +190,9 @@ pub fn mix(
         {
             levels.set(channels, percent);
             for (_, entity, _) in groups.iter().filter(|(k, _, _)| *k == key) {
-                if let Some(entry) = ranked.iter_mut().find(|entry| entry.3 == *entity) {
-                    entry.0 = false;
-                    entry.2 = distance;
+                if let Some(entry) = ranked.iter_mut().find(|entry| entry.entity == *entity) {
+                    entry.finishing = false;
+                    entry.range = distance;
                 }
                 commands
                     .entity(*entity)
@@ -201,11 +206,13 @@ pub fn mix(
         }
         let levels = Levels::new(channels, percent);
         for tone in layers {
+            let order = sequence.next();
             let entity = commands
                 .spawn((
                     StageEntity,
                     DuelEffect,
                     Voice {
+                        order,
                         priority: tone.priority,
                         distance,
                         group: key.map(|key| (key, levels.clone())),
@@ -214,16 +221,25 @@ pub fn mix(
                     PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44)),
                 ))
                 .id();
-            ranked.push((false, tone.priority, distance, entity, false));
+            ranked.push(Candidate {
+                order,
+                entity,
+                priority: tone.priority,
+                range: distance,
+                finishing: false,
+                engine: false,
+            });
             if let Some(key) = key {
                 groups.push((key, entity, levels.clone()));
             }
         }
     }
-    // SOUND.c fills unused slots with tones finishing from prior updates.
-    ranked.sort_by_key(|&(finishing, priority, distance, _, _)| (finishing, priority, distance));
-    for (rank, (_, _, _, entity, engine)) in ranked.into_iter().enumerate() {
-        if engine {
+    if ranked.len() > 24 {
+        rank_voices(&mut ranked);
+    }
+    for (rank, candidate) in ranked.into_iter().enumerate() {
+        let entity = candidate.entity;
+        if candidate.engine {
             let Ok((_, _, Some(engine), audible, mut settings, sink)) = playing.get_mut(entity)
             else {
                 continue;
@@ -523,15 +539,38 @@ mod tests {
             }
         }
         // Program 19 alternates three priority-21 tones with one priority-81 tone.
-        world.resource_mut::<Duel>().sounds =
-            (0..10).map(|_| request(4, None, 99, [33; 2], 0)).collect();
-        world.run_system_once(mix).unwrap();
-        let priorities: Vec<_> = world
-            .query_filtered::<&Voice, Or<(With<AudioPlayer>, With<AudioPlayer<StereoPcm>>)>>()
+        world.run_system_once(crate::duel::advance).unwrap();
+        let mut expected: Vec<_> = world
+            .query_filtered::<&Voice, With<DuelEngine>>()
             .iter(&world)
-            .map(|v| v.priority)
+            .map(|v| (v.order, v.priority, v.distance))
             .collect();
-        assert_eq!(priorities, vec![21; 24]);
+        expected.sort_by_key(|v| v.0);
+        let mut serial = world.resource::<VoiceSequence>().serial;
+        let mut requests = Vec::new();
+        for i in 0..10 {
+            let range = (i % 3) * 128;
+            requests.push(request(4, None, 99, [33; 2], range));
+            for tone in &world.resource::<DuelBank>().programs[4] {
+                serial += 1;
+                expected.push((serial, tone.priority, range));
+            }
+        }
+        tm1_core::sound::sort_requested(&mut expected, |v| v.2, |v| v.1);
+        let mut expected: Vec<_> = expected[..24].iter().map(|v| v.0).collect();
+        expected.sort_unstable();
+        world.resource_mut::<Duel>().sounds = requests;
+        world.run_system_once(mix).unwrap();
+        let mut survivors: Vec<_> = world
+            .query_filtered::<&Voice, With<AudioPlayer<StereoPcm>>>()
+            .iter(&world)
+            .map(|v| {
+                assert_eq!(v.priority, 21);
+                v.order
+            })
+            .collect();
+        survivors.sort_unstable();
+        assert_eq!(survivors, expected);
         let effects: Vec<_> = world
             .query_filtered::<Entity, With<DuelEffect>>()
             .iter(&world)
@@ -539,6 +578,7 @@ mod tests {
         for entity in effects {
             world.despawn(entity);
         }
+        world.run_system_once(crate::duel::advance).unwrap();
         world.resource_mut::<Duel>().sounds.clear();
         world.run_system_once(mix).unwrap();
         let mut engines =
