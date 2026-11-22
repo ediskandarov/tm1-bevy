@@ -51,8 +51,12 @@ typedef struct CollisionScene {
     Cs* first_car;
     int opponent_count, model_count;
     bool beat_level;
+    struct { Cs* node; int count; } hit_lights[6];
+    bool hit_light_flash;
+    u8 displayed_lights[9];
     struct {
         int count;
+        bool flip;
         u8 rgb[3], displayed[4];
     } hit_sheet;
     // Freeway barricades occupy 0..3. Rooftop crate and window pairs follow.
@@ -705,6 +709,12 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
     s->beat_level = false;
+    memset(s->hit_lights, 0, sizeof s->hit_lights);
+    memset(s->displayed_lights, 0, sizeof s->displayed_lights);
+    s->hit_light_flash = false;
+    s->taxi.env = NULL;
+    for (int i = 0; i < s->model_count; i++)
+        s->opponents[i].env = NULL;
     memset(&s->hit_sheet, 0, sizeof s->hit_sheet);
     for (int i = 0; i < s->num_targets; i++)
         s->targets[i].health = target_health(s->targets[i].type);
@@ -1549,8 +1559,11 @@ void SetFXSheet(s32 n, s32 r, s32 g, s32 b)
 }
 
 // DisplayFXSheet links one of two primitives and fades both before GPU submission.
-void tm1_display_hit_sheet(CollisionScene* scene, u32 frame)
+void tm1_display_hit_sheet(void)
 {
+    CollisionScene* scene = current;
+    bool flip = scene->hit_sheet.flip;
+    scene->hit_sheet.flip = !flip;
     if (scene->hit_sheet.count <= 0) {
         scene->hit_sheet.displayed[3] = 0;
         return;
@@ -1559,21 +1572,65 @@ void tm1_display_hit_sheet(CollisionScene* scene, u32 frame)
         for (int i = 0; i < 3; i++)
             scene->hit_sheet.rgb[i] = (scene->hit_sheet.rgb[i] * 3 + 128) >> 2;
     memcpy(scene->hit_sheet.displayed, scene->hit_sheet.rgb, 3);
-    scene->hit_sheet.displayed[3] = frame & 1 ? 255 : 128;
+    scene->hit_sheet.displayed[3] = flip ? 255 : 128;
 }
 void tm1_hit_sheet(const CollisionScene* scene, u8* rgba)
 {
     memcpy(rgba, scene->hit_sheet.displayed, 4);
 }
+// Light environments are identities on the host. The renderer supplies their colors.
+struct LightEnv { u8 index; };
+static LightEnv red_flash = {1}, freeze_light = {2};
+
 void UAeffectActHitLights(Cs* cs, s32 n, u8* rgb)
 {
-    (void)cs;
-    (void)n;
     (void)rgb;
+    if (!current)
+        return;
+    for (int i = 0; i < 6; i++) {
+        if (current->hit_lights[i].node == cs) {
+            current->hit_lights[i].count = n;
+            return;
+        }
+    }
+    for (int i = 0; i < 6; i++) {
+        if (current->hit_lights[i].count == 0) {
+            current->hit_lights[i].node = cs;
+            current->hit_lights[i].count = n;
+            return;
+        }
+    }
+}
+
+void tm1_update_hit_lights(void)
+{
+    current->hit_light_flash = !current->hit_light_flash;
+    for (int i = 0; i < 6; i++) {
+        if (current->hit_lights[i].count > 0) {
+            int remaining = --current->hit_lights[i].count;
+            current->hit_lights[i].node->env = remaining && current->hit_light_flash ? &red_flash : NULL;
+        }
+    }
 }
 void UAeffectSetFreezeLight(Cs* cs)
 {
-    (void)cs;
+    cs->env = &freeze_light;
+}
+void tm1_clear_freeze_light(u8 player, s16 index)
+{
+    if (current)
+        (player ? GetPlayerCs3D(index) : GetAICs3D(index))->env = NULL;
+}
+void tm1_capture_car_lights(void)
+{
+    for (int i = 0; i <= current->opponent_count; i++) {
+        Cs* cs = i ? GetAICs3D(i - 1) : GetPlayerCs3D(0);
+        current->displayed_lights[i] = cs->env ? cs->env->index : 0;
+    }
+}
+void tm1_car_lights(const CollisionScene* s, u8* out)
+{
+    memcpy(out, s->displayed_lights, sizeof s->displayed_lights);
 }
 s16 MakeFakePotHole(void)
 {

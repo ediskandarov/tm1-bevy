@@ -258,7 +258,7 @@ fn main() -> Result<()> {
         .add_systems(
             Update,
             (
-                smoke::capture,
+                smoke::capture.after(pause::draw),
                 sfx::update
                     .after(driving::advance)
                     .run_if(not(resource_exists::<ending::Ending>))

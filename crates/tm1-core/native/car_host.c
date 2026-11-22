@@ -460,8 +460,10 @@ void tm1_drive_step(u8* state, u8* opponent, u32 buttons, s16 fields, u32 frame,
     car.flags[9] = 0;
     s16 closest = GetClosestTriggerPt(&car, 1);
     memcpy(&car.flags[30], &closest, 2);
-    if (car.flags[16] && (s16)(car.stats.unk18 -= fields) <= 0)
+    if (car.flags[16] && (s16)(car.stats.unk18 -= fields) <= 0) {
         car.flags[16] = 0;
+        tm1_clear_freeze_light(1, car.playerIdx);
+    }
     car.flags[25] = current_level != LEVEL6_ROOFTOPS && !(car.flags[10] || car.flags[23] || car.flags[0]);
     s32 speed = car.motion.vel.vy;
     UpdateBearing(&car, 1);
@@ -957,12 +959,15 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
     if (is_player == 2) {
         tm1_age_effects();
         arena_move_missiles();
+        tm1_update_hit_lights();
+        tm1_display_hit_sheet();
         arena_move_drops();
         arena_move_flames();
         arena_move_tasers();
         arena_move_bullets();
         arena_move_fragments();
         arena_animate_flames();
+        tm1_capture_car_lights();
     } else {
         if (is_player && player->stats.unk38) {
             CheckHitDetection(is_player ? (Car*)player : (Car*)ai, is_player);
@@ -1091,7 +1096,6 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         tm1_move_static_cops(&player.motion.pos);
     }
     UpdateNumPotHoles();
-    tm1_display_hit_sheet(scene, frame);
     tm1_store_battle(battle);
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));

@@ -18,6 +18,9 @@ pub struct Capture {
     pub steps: u64,
 }
 impl Capture {
+    pub fn holding_battle_frame(&self) -> bool {
+        self.demo && self.attempts > 0
+    }
     pub fn new(path: Option<PathBuf>, demo: bool, realtime: bool) -> Self {
         Self {
             path,
@@ -37,6 +40,10 @@ impl Capture {
 pub fn capture(
     mut commands: Commands,
     mut capture: ResMut<Capture>,
+    window: Single<&Window>,
+    mut images: ResMut<Assets<Image>>,
+    mut cameras: Query<&mut bevy::camera::RenderTarget, With<Camera>>,
+    mut offscreen: Local<Option<bevy::camera::RenderTarget>>,
     sinks: Query<&AudioSink>,
     rival_engines: Query<&SpatialAudioSink, With<crate::sfx::RivalEngine>>,
     pads: Query<&Gamepad>,
@@ -99,7 +106,32 @@ pub fn capture(
                 }
             }
         }
-        commands.spawn(Screenshot::primary_window()).observe(
+        // A window drawable can be unavailable on macOS. Replay the same
+        // camera stack into a texture at the window's resolution and scale.
+        if capture.attempts == 2 {
+            let image = Image::new_target_texture(
+                window.physical_width(),
+                window.physical_height(),
+                bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb,
+                None,
+            );
+            let target = bevy::camera::RenderTarget::Image(bevy::camera::ImageRenderTarget {
+                handle: images.add(image),
+                scale_factor: window.scale_factor(),
+            });
+            for mut camera in &mut cameras {
+                if matches!(*camera, bevy::camera::RenderTarget::Window(_)) {
+                    *camera = target.clone();
+                }
+            }
+            *offscreen = Some(target);
+        }
+        let shot = offscreen
+            .as_ref()
+            .map_or_else(Screenshot::primary_window, |target| {
+                Screenshot(target.clone())
+            });
+        commands.spawn(shot).observe(
             move |event: On<ScreenshotCaptured>,
                   mut capture: ResMut<Capture>,
                   mut exit: MessageWriter<AppExit>| {

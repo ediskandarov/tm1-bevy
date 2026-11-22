@@ -252,6 +252,9 @@ pub fn advance(
 ) {
     drive.sounds.clear();
     drive.pause_sound = None;
+    if capture.holding_battle_frame() {
+        return;
+    }
     const STEP: Duration = Duration::from_millis(50);
     let pad = gamepads
         .iter()

@@ -68,6 +68,7 @@ pub struct Arena {
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
+    body_materials: [Handle<ColorMaterial>; 3],
     mesh: Handle<Mesh>,
     main_view: ViewMeshes,
     rear_view: ViewMeshes,
@@ -199,6 +200,7 @@ impl Arena {
             pixels,
             atlas_size: [width, height],
             tiles,
+            body_materials: default(),
             mesh: Handle::default(),
             main_view: default(),
             rear_view: default(),
@@ -310,6 +312,18 @@ pub fn setup(
         texture: Some(texture.clone()),
         alpha_mode: AlphaMode2d::Mask(0.5),
         ..default()
+    });
+    arena.body_materials = std::array::from_fn(|index| {
+        if index == 0 {
+            return masked.clone();
+        }
+        let [r, g, b] = body_light_color(index as u8);
+        materials.add(ColorMaterial {
+            color: Color::linear_rgb(r, g, b),
+            texture: Some(texture.clone()),
+            alpha_mode: AlphaMode2d::Mask(0.5),
+            ..default()
+        })
     });
     let blend = materials.add(ColorMaterial {
         texture: Some(texture),
@@ -774,7 +788,13 @@ pub fn update(
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
     mut vehicles: Query<
-        (&VehicleMesh, &BodyStage, &mut Visibility, &mut Transform),
+        (
+            &VehicleMesh,
+            &BodyStage,
+            &mut Visibility,
+            &mut Transform,
+            &mut MeshMaterial2d<ColorMaterial>,
+        ),
         Without<WorldCamera>,
     >,
     mut cameras: Query<
@@ -879,7 +899,8 @@ pub fn update(
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
     }
-    for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
+    let lights = drive.contacts.car_lights();
+    for (vehicle, stage, mut visibility, mut entity, mut material) in &mut vehicles {
         let Some(&(origin, matrix, selected)) = poses.get(vehicle.0) else {
             *visibility = Visibility::Hidden;
             continue;
@@ -889,6 +910,10 @@ pub fn update(
             continue;
         }
         *visibility = Visibility::Inherited;
+        let handle = &arena.body_materials[usize::from(lights[vehicle.0])];
+        if &material.0 != handle {
+            material.0 = handle.clone();
+        }
         let basis = |p: [f32; 3]| {
             world(std::array::from_fn(|i| {
                 (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
@@ -914,6 +939,7 @@ pub fn update(
         &mut meshes,
         &arena.main_view,
         &poses,
+        &lights,
         hide_player,
         eye,
         (target - eye).normalize(),
@@ -927,6 +953,7 @@ pub fn update(
             &mut meshes,
             &arena.rear_view,
             &poses,
+            &lights,
             hide_player,
             eye,
             rear_forward,
@@ -961,12 +988,24 @@ pub fn mirror_display(
     .extend(0.75);
 }
 
+// LIGHT.c uses three directional lights of the same color in each special
+// environment. Approximate their intensity over the baked vertex colors.
+fn body_light_color(env: u8) -> [f32; 3] {
+    let channels = match env {
+        1 => [255, 0, 0],
+        2 => [60, 140, 170],
+        _ => return [1.; 3],
+    };
+    channels.map(|c| (32 + c) as f32 / 160.)
+}
+
 fn draw_view(
     arena: &Arena,
     drive: &crate::driving::Drive,
     meshes: &mut Assets<Mesh>,
     view: &ViewMeshes,
     poses: &[(Vec3, [[i16; 3]; 3], usize)],
+    lights: &[u8; 9],
     hide_player: bool,
     eye: Vec3,
     forward: Vec3,
@@ -1071,10 +1110,23 @@ fn draw_view(
         } else {
             &mut solids
         };
+        let tint = if i >= arena.vehicle_start {
+            let car = arena
+                .body_ranges
+                .partition_point(|ranges| ranges[2].end <= i);
+            body_light_color(lights[car])
+        } else {
+            [1.; 3]
+        };
         for &i_vertex in indices {
             let v = &p.vertices[i_vertex];
             let point = billboard_point(transform(i, v.position), p.billboard, i_vertex);
-            batch.push(point, arena.uv(slot, v.uv.into()), v.color);
+            let [r, g, b, a] = v.color;
+            batch.push(
+                point,
+                arena.uv(slot, v.uv.into()),
+                [r * tint[0], g * tint[1], b * tint[2], a],
+            );
         }
     }
     let mut faces = [[0; 14]; 180];

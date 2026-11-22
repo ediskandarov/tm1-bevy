@@ -18,8 +18,10 @@ void AICarUpdate(AICar* car)
         car->stats.unk03 = 0;
     }
     RecomputeCarDeltas(&car->stats);
-    if (car->stats.unk18 >= 0 && (car->stats.unk18 -= GetFieldsLastFrame()) <= 0)
+    if (car->stats.unk18 >= 0 && (car->stats.unk18 -= GetFieldsLastFrame()) <= 0) {
         car->flags[16] = 0;
+        tm1_clear_freeze_light(0, car->playerIdx);
+    }
     car->flags[25] = shellGetCurrentLevel() != LEVEL6_ROOFTOPS && !(car->flags[10] || car->flags[23] || car->flags[27] || car->flags[0]);
     car->collision.unk12 = 0;
     car->flags[0x09] = 0;

@@ -120,7 +120,7 @@ impl Reference {
         cpu.call(0x80103a4c, &[HDP_STACK]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
-            0x80146754, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524, 0x80106d60,
+            0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524, 0x80106d60,
         ] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -946,7 +946,7 @@ fn password_weapon_and_damage_modes_original() {
     }
 }
 
-fn fire_at_player(r: &mut Reference) {
+fn fire_at_player(r: &mut Reference) -> bool {
     let pos = [2700i32, 2250, 400];
     let dir = [0i32, 4096, 0];
     for (at, v) in [(0x800be000, dir), (0x800be020, pos)] {
@@ -966,12 +966,31 @@ fn fire_at_player(r: &mut Reference) {
             tm1_use_scene(std::ptr::null_mut());
         }
     }
+    let mut flashed = false;
     for _ in 0..5 {
-        r.cpu.call(0x8010d03c, &[]);
+        let sheet = retail_hit_sheet(&mut r.cpu);
+        r.cpu.call(0x8010e3d8, &[]);
         r.cpu.call(0x80137d2c, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         r.compare();
+        if let Some(rgba) = sheet {
+            flashed = true;
+            assert_eq!(r.scene.hit_sheet(), rgba);
+        } else {
+            assert_eq!(r.scene.hit_sheet()[3], 0);
+        }
     }
+    flashed
+}
+
+fn retail_hit_sheet(cpu: &mut Cpu) -> Option<[u8; 4]> {
+    if cpu.word(0x8018bfcc) == 0 {
+        return None;
+    }
+    cpu.call(0x80110ea8, &[RENDER_SCRATCH]);
+    let packet = 0x80000000 | (cpu.word(RENDER_SCRATCH) & 0x00ffffff);
+    let [r, g, b, opcode] = cpu.word(packet + 4).to_le_bytes();
+    Some([r, g, b, if opcode & 2 != 0 { 128 } else { 255 }])
 }
 
 #[test]
@@ -979,7 +998,7 @@ fn fire_at_player(r: &mut Reference) {
 fn cockpit_damage_sheet_original() {
     unsafe extern "C" {
         fn SetFXSheet(count: i32, r: i32, g: i32, b: i32);
-        fn tm1_display_hit_sheet(scene: *mut std::ffi::c_void, frame: u32);
+        fn tm1_display_hit_sheet();
     }
     for mode in [CarView::Cockpit, CarView::Chase] {
         let mut r = Reference::new();
@@ -987,40 +1006,102 @@ fn cockpit_damage_sheet_original() {
         vec3(&mut r.player.state, 0x388, [2700, 3050, 400]);
         vec3(&mut r.police.state, 0x444, [2700, 2000, 400]);
         r.sync();
-        fire_at_player(&mut r);
-        assert_eq!(
-            r.cpu.word(0x8018bfcc),
-            if mode == CarView::Cockpit { 2 } else { 0 }
-        );
-        // Overwrite the red bullet flash with a longer white flash while it is active.
+        assert_eq!(fire_at_player(&mut r), mode == CarView::Cockpit);
         for frame in 1..=14 {
-            if frame == 2 {
-                r.cpu.call(0x80110d90, &[10, 255, 255, 255]);
-                let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-                unsafe {
-                    tm1_use_scene(r.scene.native.as_ptr());
-                    SetFXSheet(10, 255, 255, 255);
-                    tm1_use_scene(std::ptr::null_mut());
-                }
-            }
+            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
             unsafe {
-                tm1_display_hit_sheet(r.scene.native.as_ptr(), frame);
+                tm1_use_scene(r.scene.native.as_ptr());
+                if frame == 1 || frame == 2 {
+                    let color = if frame == 1 { 0 } else { 255 };
+                    r.cpu.call(0x80110d90, &[10, 255, color, color]);
+                    SetFXSheet(10, 255, color as i32, color as i32);
+                }
+                tm1_display_hit_sheet();
+                tm1_use_scene(std::ptr::null_mut());
             }
-            let rgba = r.scene.hit_sheet();
-            if r.cpu.word(0x8018bfcc) == 0 {
-                assert_eq!(rgba[3], 0);
-                continue;
+            if let Some(rgba) = retail_hit_sheet(&mut r.cpu) {
+                assert_eq!(r.scene.hit_sheet(), rgba);
+            } else {
+                assert_eq!(r.scene.hit_sheet()[3], 0);
             }
-            put(&mut r.cpu, 0x8018bfa8, frame & 1);
-            r.cpu.call(0x80110ea8, &[RENDER_SCRATCH]);
-            let packet = 0x80000000 | (r.cpu.word(RENDER_SCRATCH) & 0x00ffffff);
-            let [red, green, blue, opcode] = r.cpu.word(packet + 4).to_le_bytes();
-            assert_eq!(
-                rgba,
-                [red, green, blue, if opcode & 2 != 0 { 128 } else { 255 }]
-            );
+            r.cpu.call(0x8010e3d8, &[]);
         }
     }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn exterior_damage_lights_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    let mut scene = CollisionScene::for_opponents(
+        &data,
+        root(1),
+        root(10),
+        &(2..=9).map(|i| root(i * 10)).collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let envs = [0, 1, 2].map(|i| cpu.call(0x801043b4, &[i]));
+    let nodes = std::array::from_fn::<_, 9, _>(|i| EXTRA_MODELS + 0x200 * i as u32);
+    for cs in nodes {
+        put(&mut cpu, cs + 4, envs[0]);
+    }
+    unsafe extern "C" {
+        fn GetPlayerCs3D(index: i16) -> *mut std::ffi::c_void;
+        fn GetAICs3D(index: i16) -> *mut std::ffi::c_void;
+        fn UAeffectActHitLights(cs: *mut std::ffi::c_void, count: i32, rgb: *const u8);
+        fn UAeffectSetFreezeLight(cs: *mut std::ffi::c_void);
+        fn tm1_clear_freeze_light(player: u8, index: i16);
+        fn tm1_update_hit_lights();
+        fn tm1_capture_car_lights();
+    }
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        tm1_use_scene(scene.native.as_ptr());
+        for tick in 0..12 {
+            for (slot, &cs) in nodes.iter().enumerate() {
+                let index = slot.saturating_sub(1) as i16;
+                let native = if slot == 0 {
+                    GetPlayerCs3D(0)
+                } else {
+                    GetAICs3D(index)
+                };
+                let count = match (tick, slot) {
+                    (0, _) => 4,
+                    (2, 1) => 5,
+                    (4, 6..=8) => 4,
+                    _ => 0,
+                };
+                if count > 0 {
+                    cpu.call(0x80146754, &[cs, count, 0]);
+                    UAeffectActHitLights(native, count as i32, std::ptr::null());
+                }
+                if tick == 1 && slot >= 5 {
+                    cpu.call(0x80146900, &[cs]);
+                    UAeffectSetFreezeLight(native);
+                }
+                if tick == 8 && slot >= 5 {
+                    cpu.call(0x80146930, &[cs]);
+                    tm1_clear_freeze_light(u8::from(slot == 0), index);
+                }
+            }
+            cpu.call(0x80146800, &[]);
+            tm1_update_hit_lights();
+            tm1_capture_car_lights();
+            let expected = nodes.map(|cs| {
+                envs.iter()
+                    .position(|&env| env == cpu.word(cs + 4))
+                    .unwrap() as u8
+            });
+            assert_eq!(scene.car_lights(), expected, "tick {tick}");
+        }
+        tm1_use_scene(std::ptr::null_mut());
+    }
+    scene.reset_projectiles();
+    assert_eq!(scene.car_lights(), [0; 9]);
 }
 
 #[test]

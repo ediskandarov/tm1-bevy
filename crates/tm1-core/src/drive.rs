@@ -1150,6 +1150,16 @@ impl CollisionScene {
         }
         self.battle = [0; 3];
     }
+    pub fn car_lights(&self) -> [u8; 9] {
+        unsafe extern "C" {
+            fn tm1_car_lights(scene: *const std::ffi::c_void, out: *mut u8);
+        }
+        let mut lights = [0; 9];
+        unsafe {
+            tm1_car_lights(self.native.as_ptr(), lights.as_mut_ptr());
+        }
+        lights
+    }
     pub fn hit_sheet(&self) -> [u8; 4] {
         unsafe extern "C" {
             fn tm1_hit_sheet(scene: *const std::ffi::c_void, rgba: *mut u8);
