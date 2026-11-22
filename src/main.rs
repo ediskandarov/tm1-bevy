@@ -104,7 +104,11 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
     let headlights = !matches!(level, Level::Cyburbia | Level::Rooftops);
     let player_mesh = dmd.vehicle_bodies_with_lights(vehicle as u16, headlights)?;
-    let opponent_mesh = opponent_kinds
+    let mut models = opponent_kinds.clone();
+    if level == Level::Rooftops {
+        models.push(Vehicle::Minion);
+    }
+    let opponent_mesh = models
         .iter()
         .map(|&kind| dmd.vehicle_bodies_with_lights(kind as u16, headlights))
         .collect::<Result<Vec<_>>>()?;
@@ -134,6 +138,7 @@ fn main() -> Result<()> {
                 .transpose()?,
         ],
         dmd.explosion_frames()?,
+        dmd.flame_frames()?,
         dmd.contrail_frames()?,
         dmd.radar_arrows()?,
         textures,
@@ -144,7 +149,7 @@ fn main() -> Result<()> {
     let mut app = App::new();
     app.insert_resource(capture)
         .insert_resource(arena)
-        .insert_resource(sfx::Sounds::load(&disc, vehicle, &opponent_kinds)?)
+        .insert_resource(sfx::Sounds::load(&disc, vehicle, &models)?)
         .insert_resource(music::Music::level(&disc, level)?)
         .insert_resource(driving::Drive::new(player, contacts, &opponent_kinds))
         .insert_resource(ClearColor(match level {

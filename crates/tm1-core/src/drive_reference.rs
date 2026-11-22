@@ -1193,15 +1193,11 @@ fn minion_initial_record_matches_retail() {
         }
         assert_eq!(seed, r.cpu.random_state);
 
-        // UASetAICar completed above. Record the subsequent CarInit call in
-        // scratch RAM so placement and the respawn threshold can be checked separately.
+        // Slot initialization was checked above. Execute the remaining retail
+        // transition including CarInit for a player who has fallen below the roof.
         r.cpu.put(0x8014d838, &[8, 0, 224, 3, 0, 0, 0, 0]);
-        for (i, word) in [0x3c08800eu32, 0x24090001, 0xad092000, 0x03e00008, 0]
-            .into_iter()
-            .enumerate()
-        {
-            put(&mut r.cpu, 0x8012287c + i as u32 * 4, word);
-        }
+        // PadGetConfig returns the supported keyboard mapping's PS1 pad profile.
+        r.cpu.put(0x801502d4, &[8, 0, 224, 3, 1, 0, 2, 36]);
         for (group, height) in [(5i16, 6400i32), (6, 6399), (12, 8000)] {
             let mut boss = state;
             let mut player = r.player.state;
@@ -1209,34 +1205,33 @@ fn minion_initial_record_matches_retail() {
             player[0x390..0x394].copy_from_slice(&height.to_le_bytes());
             player[0x394..0x3a0].fill(71);
             player[0x3ac..0x3b8].fill(93);
+            player[0x464..0x466].copy_from_slice(&13i16.to_le_bytes());
+            player[0x47a..0x47c].copy_from_slice(&2i16.to_le_bytes());
+            player[0x48e..0x490].copy_from_slice(&120i16.to_le_bytes());
+            player[0x178..0x17c].copy_from_slice(&25i32.to_le_bytes());
+            let fov = if group == 6 && seed & 1 == 0 { 55 } else { 60 };
+            put(&mut r.cpu, 0x8018bf9c, fov);
             let mut placement_seed = seed;
             r.cpu.random_state = seed;
             r.cpu.put(addr, &boss);
             r.cpu.put(PLAYER, &player);
-            put(&mut r.cpu, 0x800e2000, 0);
+
             r.cpu.call(0x80150d04, &[]);
-            unsafe extern "C" {
-                fn tm1_place_boss(
-                    boss: *mut u8,
-                    player: *mut u8,
-                    table: *const i16,
-                    seed: *mut u32,
-                ) -> i32;
-            }
-            let respawn = unsafe {
+            unsafe {
                 tm1_place_boss(
                     boss.as_mut_ptr(),
                     player.as_mut_ptr(),
                     r.player.trig.as_ptr(),
                     &mut placement_seed,
+                    fov as i32,
                 )
             };
-            assert_eq!(respawn as u8, r.cpu.ram[0xe2000]);
-            assert_eq!(respawn != 0, height < 6400);
             assert_eq!(placement_seed, r.cpu.random_state);
             assert_eq!(boss, r.cpu.ram[start..start + boss.len()]);
             let p = (PLAYER & 0x1fffff) as usize;
-            assert_eq!(player[..], r.cpu.ram[p..p + player.len()]);
+            for (i, b) in player.iter().enumerate() {
+                assert_eq!(*b, r.cpu.ram[p + i], "player byte {i:x}, height {height}");
+            }
         }
     }
 }
@@ -1381,6 +1376,27 @@ fn warehouse_stands_match_retail() {
 }
 
 fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
+    compare_battle(vehicle, charge, level, false);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn minion_encounter_original() {
+    for vehicle in Vehicle::ROSTER {
+        compare_battle(vehicle, 20, Level::Rooftops, true);
+    }
+}
+
+fn start_retail_death(cpu: &mut Cpu, car: u32, player: bool) {
+    let flags = car + if player { 0xa0 } else { 0x66 };
+    let health = car + if player { 0x178 } else { 0x24c };
+    if cpu.word(health) as i32 <= 0 && cpu.ram[(flags & 0x1fffff) as usize] == 0 {
+        cpu.put(flags, &[1]);
+        cpu.call(0x8014e8dc, &[car, u32::from(player)]);
+    }
+}
+
+fn compare_battle(vehicle: Vehicle, charge: i16, level: Level, boss: bool) {
     let mut r = Reference::on_level(vehicle, true, level);
     r.cpu.call(0x80137268, &[]);
     let crush = level == Level::Arena && vehicle == Vehicle::Hammerhead;
@@ -1463,7 +1479,17 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
             .unwrap();
         register_retail_stands(&mut r.cpu, &data);
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
-        let kinds = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
+        let mut kinds = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
+        r.player.reset();
+        lineup = Opponent::spawn_bout(&mut r.player, &kinds);
+        if boss {
+            for rival in &mut lineup {
+                rival.state[0x24c..0x250].copy_from_slice(&0i32.to_le_bytes());
+            }
+            kinds.push(Vehicle::Minion);
+            lineup.push(Opponent::spawn_minion(&mut r.player));
+            r.cpu.put(PLAYER, &r.player.state);
+        }
         let root = |v| roots.iter().find(|r| r.1 == v).unwrap().0;
         r.scene = CollisionScene::for_opponents(
             &data,
@@ -1472,8 +1498,6 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
             &kinds.iter().map(|v| root(*v as u16)).collect::<Vec<_>>(),
         )
         .unwrap();
-        r.player.reset();
-        lineup = Opponent::spawn_bout(&mut r.player, &kinds);
         r.cpu.random_state = r.player.seed;
         slots = std::iter::once(POLICE_CS)
             .chain((0..kinds.len() as u32 - 1).map(|n| 0x800e6000 + 0x200 * n))
@@ -1536,10 +1560,13 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
             r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
         }
+        start_retail_death(&mut r.cpu, PLAYER, true);
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
         for (i, &cs) in slots.iter().enumerate() {
-            r.cpu.call(0x8014ee14, &[cs, POLICE + 0x560 * i as u32]);
+            let address = POLICE + 0x560 * i as u32;
+            r.cpu.call(0x8014ee14, &[cs, address]);
+            start_retail_death(&mut r.cpu, address, false);
         }
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
@@ -1580,6 +1607,38 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
                 }
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
+        if boss {
+            let mut poses = [[0; 13]; 10];
+            let count = r.scene.missile_poses(&mut poses);
+            let expected = (0..10)
+                .map(|i| 0x801a9c10 + 0x3e8 * i)
+                .filter(|&m| r.cpu.word(m + 0x34) as i32 > 0)
+                .map(|m| {
+                    let cs = r.cpu.word(m + 0x24);
+                    [0, 4, 8].map(|d| r.cpu.word(cs + 0x5c + d) as i32)
+                });
+            assert!(
+                poses[..count]
+                    .iter()
+                    .map(|row| [row[1], row[2], row[3]])
+                    .eq(expected),
+                "missiles {vehicle:?} tick {tick}"
+            );
+            let mut shots = [[[0; 3]; 2]; 40];
+            let count = r.scene.bullet_segments(&mut shots);
+            let expected = (0..40)
+                .map(|i| 0x80198c28 + 0x3c * i)
+                .filter(|&b| r.cpu.word(b + 0x28) as i32 > 0)
+                .map(|b| [12, 0].map(|p| [0, 4, 8].map(|d| r.cpu.word(b + p + d) as i32)));
+            assert!(
+                shots[..count].iter().copied().eq(expected),
+                "bullets {vehicle:?} tick {tick}"
+            );
+            if tick == 360 {
+                let charge = i16::from_le_bytes(lineup[3].state[0x536..0x538].try_into().unwrap());
+                assert!(charge < 20, "expected Minion to use the special weapon");
+            }
         }
         if crush {
             let active = r.player.state[0xa0 + 27] != 0;

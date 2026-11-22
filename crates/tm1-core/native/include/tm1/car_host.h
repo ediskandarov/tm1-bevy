@@ -32,3 +32,6 @@ void CarUpdateControlPad(PlayerCar *);
 void uaPadInit(PlayerCar *, s32);
 
 s32 arena_player_special_cost(s32 kind);
+
+void UpdateCarDeath(Car*, u8);
+void tm1_start_death(Car*, u8);

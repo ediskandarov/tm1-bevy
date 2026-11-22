@@ -327,6 +327,8 @@ void AICarUpdateTransition(AICar* car)
 
     UpdateBounce(car, 0);
     UpdateTirePositions(car, 0);
+    if (car->flags[0])
+        UpdateCarDeath(car, 0);
 }
 
 void NoBeadOnPlayer(AICar* car)

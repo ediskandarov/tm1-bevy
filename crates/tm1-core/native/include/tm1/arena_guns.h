@@ -14,6 +14,7 @@ typedef struct Bullet {
 } Bullet; /* 0x3C */
 
 
+void s_create_bullet(s32 owner, VECTOR3* dir, VECTOR3* pos, s32 kind, s32 damage, s32 life, s32 arg6);
 Bullet *arena_bullets(void);
 void arena_move_bullets(void);
 void arena_update_guns(Car *,u8);

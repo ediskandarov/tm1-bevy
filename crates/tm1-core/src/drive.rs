@@ -85,6 +85,7 @@ pub enum Vehicle {
     Thumper = 100,
     Spectre = 110,
     RoadKill = 120,
+    Minion = 130,
 }
 impl Vehicle {
     pub const ROSTER: [Self; 12] = [
@@ -148,6 +149,7 @@ impl Vehicle {
             Self::Warthog => "warthog",
             Self::Spectre => "spectre",
             Self::RoadKill => "road-kill",
+            Self::Minion => "minion",
             Self::Thumper => "thumper",
         }
     }
@@ -164,6 +166,7 @@ impl Vehicle {
             Self::Warthog => "Warthog",
             Self::Spectre => "Spectre",
             Self::RoadKill => "Road Kill",
+            Self::Minion => "Minion",
             Self::Thumper => "Thumper",
         }
     }
@@ -210,6 +213,7 @@ pub struct PlayerVehicle {
     vehicle: Vehicle,
     trig: Box<[i16]>,
     initial_seed: u32,
+    used_starts: u16,
     seed: u32,
     state: [u8; 0x4a4],
     frame: u32,
@@ -278,6 +282,7 @@ impl PlayerVehicle {
             frame: 0,
             trig,
             initial_seed,
+            used_starts: 0,
             seed,
         })
     }
@@ -355,7 +360,7 @@ impl PlayerVehicle {
             let rgb = match vehicle {
                 SweetTooth => [255, 144, 186],
                 YellowJacket => [255, 255, 0],
-                Darkside => [0, 0, 0],
+                Darkside | Minion => [0, 0, 0],
                 Hammerhead => [0, 233, 0],
                 Outlaw => [0, 0, 255],
                 CrimsonFury => [255, 0, 0],
@@ -416,6 +421,7 @@ impl PlayerVehicle {
 }
 
 unsafe extern "C" {
+    fn tm1_place_boss(boss: *mut u8, player: *mut u8, table: *const i16, seed: *mut u32, fov: i32);
     fn tm1_ai_step(
         scene: *mut std::ffi::c_void,
         state: *mut u8,
@@ -452,11 +458,31 @@ impl Opponent {
     pub fn spawn_bout(player: &mut Taxi, vehicles: &[Vehicle]) -> Vec<Self> {
         assert!((1..=8).contains(&vehicles.len()));
         let mut used = 0;
-        vehicles
+        let cars = vehicles
             .iter()
             .enumerate()
             .map(|(slot, &vehicle)| Self::spawn_slot(player, vehicle, slot, &mut used))
-            .collect()
+            .collect();
+        player.used_starts = used;
+        cars
+    }
+    pub fn spawn_minion(player: &mut Taxi) -> Self {
+        assert_eq!(player.level, Level::Rooftops);
+        let mut used = player.used_starts;
+        let mut boss = Self::spawn_slot(player, Vehicle::Minion, 3, &mut used);
+        player.used_starts = used;
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_level(player.level as i32);
+            tm1_place_boss(
+                boss.state.as_mut_ptr(),
+                player.state.as_mut_ptr(),
+                player.trig.as_ptr(),
+                &mut player.seed,
+                60,
+            );
+        }
+        boss
     }
     fn spawn_slot(player: &mut Taxi, vehicle: Vehicle, slot: usize, used: &mut u16) -> Self {
         let mut car = Self {
@@ -511,6 +537,7 @@ impl Opponent {
 }
 
 unsafe extern "C" {
+    fn tm1_active_opponents(scene: *mut std::ffi::c_void, count: i32);
     fn tm1_scene_load(
         data: *const u8,
         size: usize,
@@ -603,7 +630,7 @@ impl CollisionScene {
         fields: u8,
     ) {
         assert!((1..=5).contains(&fields));
-        assert_eq!(opponents.len(), self.opponent_count);
+        assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
         let mut records = [std::ptr::null_mut(); 8];
         for (slot, car) in opponents.iter_mut().enumerate() {
             assert_eq!(
@@ -616,6 +643,7 @@ impl CollisionScene {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_level(player.level as i32);
+            tm1_active_opponents(self.native.as_ptr(), opponents.len() as i32);
             tm1_bout_step(
                 self.native.as_ptr(),
                 player.state.as_mut_ptr(),

@@ -38,6 +38,7 @@ impl Sounds {
             CrimsonFury => (4, 42),
             MrGrimm => (11, 47),
             PitViper => (9, 46),
+            Minion => (55, 56),
         };
         let (engine, special) = programs(vehicle);
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
@@ -147,7 +148,7 @@ pub fn update(
     }
     let mut remaining = 22usize.saturating_sub(shots.iter().count());
     let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
-    let recharge_id = 12 + drive.opponents.len();
+    let recharge_id = drive.recharge_sound();
     let mut recharge_playing = !reset && shots.iter().any(|(_, _, sound)| sound.0 == recharge_id);
     for &(id, point) in &drive.sounds {
         let car = drive.player.position();

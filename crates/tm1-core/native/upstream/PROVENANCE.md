@@ -43,3 +43,5 @@ Hammerhead uses CAR.c InitMonsterSmash and CARUPD.c CheckMonsterSmash. The host 
 Front and rear flamethrowers follow INTERACT.c fireFlameThrower and displayFlamethrowers. Particle velocity, animation and lifetime follow EXPLODE.c do_flamethrower_burst and animate_explosions. GRUTILS.c grutilsParse3DSprite supplies the frame UV layout.
 
 Warthog, Spectre and Road Kill use the Humvee, Corvette and Mad Max profiles from CAR_INIT.c. Their launch mounts and ammunition rules follow INTERACT.c. Missile guidance, the post-impact update through life -11 and the contrail ring geometry follow WEAPON.c. Trail widths and UV orientation use the original CONTRAIL_PT and CONTRAIL_UV expressions.
+
+Minion uses UA.c uaInitBossCar, CAR_INIT.c CarInit and InitBossCar, the boss branches in INTERACT.c and WEAPON.c swarm guidance. Wreck motion follows CAR.c UpdateCarDeath and UA.c StartDeathSequence. The damage effects use the disc Flame and Aburst frame sets.

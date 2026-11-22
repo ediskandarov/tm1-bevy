@@ -180,6 +180,9 @@ impl<'a> Dmd<'a> {
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
         self.sprite_frames(654, true)
     }
+    pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
+        self.sprite_frames(650, true)
+    }
     pub fn contrail_frames(&self) -> Result<[SpriteFrame; 8]> {
         self.sprite_frames(652, true)
     }

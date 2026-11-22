@@ -16,6 +16,18 @@ fn supported_disc_arena_and_audio() {
     assert_eq!(db.roots.len(), 24);
     assert_eq!(vram.tim_count, 192);
     assert_eq!(vram.version, db.version);
+    for name in [
+        "XARENA1", "WH1", "WH2", "XFWY1", "XFWY2", "PARK1", "PARK2", "SUBURB1", "SUBURB2", "ROOF1",
+        "ROOF2",
+    ] {
+        let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
+        let level = Dmd::parse(&data).unwrap();
+        assert!(level.flame_frames().unwrap().iter().all(|f| f.width > 0));
+        if name.starts_with("ROOF") {
+            let boss = level.vehicle_bodies_with_lights(130, false).unwrap();
+            assert!(boss.iter().all(|stage| !stage.polygons.is_empty()));
+        }
+    }
     let frames = db.explosion_frames().unwrap();
     assert_eq!(frames[0].uv, [[64, 96], [95, 96], [64, 127], [95, 127]]);
     for frame in &frames {

@@ -359,6 +359,8 @@ void tm1_drive_step(u8* state, u8* opponent, u16 buttons, s16 fields, u32 frame,
     }
     UpdateBounce(&car, 1);
     UpdateTirePositions(&car, 1);
+    if (car.flags[0])
+        UpdateCarDeath(&car, 1);
     CarRotUpdate(&car, 1);
     CarTransUpdate(&car, 1);
     *seed = random_state;
@@ -411,9 +413,181 @@ static s16 reserve_ai_start(u16* used)
     return 0;
 }
 
+static void init_camera_modes(PlayerCar* car, int fov)
+{
+    car->vrPos[1].vx = 0;
+    car->vrPos[1].vy = -240;
+    car->vrPos[1].vz = 112;
+    car->vrRot[1].vx = 182;
+    car->vrRot[1].vy = 0;
+    car->vrRot[1].vz = 0;
+    car->vrPos[5].vx = 0;
+    car->vrRot[5].vy = 0;
+    car->vrRot[5].vz = 0;
+    car->vrRot[5].vx = 68;
+    switch (car->uaIndex) {
+    case UA_ICE_CREAM_TRUCK:
+        car->vrPos[5].vy = -240;
+        car->vrPos[5].vz = 112;
+        break;
+    case UA_SEMI_TRUCK:
+        car->vrPos[5].vy = -256;
+        car->vrPos[5].vz = 96;
+        break;
+    case UA_TAXI_CAB:
+        car->vrPos[5].vy = -208;
+        car->vrPos[5].vz = 72;
+        break;
+    case UA_MONSTER_TRUCK:
+        car->vrPos[5].vy = -200;
+        car->vrPos[5].vz = 64;
+        break;
+    case UA_LAMBORGHINI:
+        car->vrPos[5].vy = -152;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_POLICE_CAR:
+        car->vrPos[5].vy = -192;
+        car->vrPos[5].vz = 72;
+        break;
+    case UA_DUNE_BUGGY:
+        car->vrPos[5].vy = -136;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_HUMVEE:
+        car->vrPos[5].vy = -152;
+        car->vrPos[5].vz = 56;
+        break;
+    case UA_LOW_RIDER:
+        car->vrPos[5].vy = -208;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_MAD_MAX:
+        car->vrPos[5].vy = -176;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_HARLEY:
+        car->vrPos[5].vy = -240;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_CORVETTE:
+        car->vrPos[5].vy = -168;
+        car->vrPos[5].vz = 48;
+        break;
+    case UA_BOSS_CAR:
+    default:
+        break;
+    }
+    if (fov < 60) {
+        car->vrPos[1].vy = 140 * car->vrPos[1].vy / 100;
+        car->vrRot[1].vx = 100 * car->vrRot[1].vx / 140;
+    }
+    car->vrPos[2].vy = 155 * car->vrPos[1].vy / 100;
+    car->vrPos[2].vz = 110 * car->vrPos[1].vz / 100;
+    car->vrRot[2].vx = 100 * car->vrRot[1].vx / 140;
+    car->vrPos[0].vx = (s16)car->stats.dropPower;
+    car->vrPos[0].vy = car->stats.unk11A;
+    car->vrPos[0].vz = car->stats.unk11C;
+    car->vrRot[0].vx = 0;
+    car->vrRot[0].vy = 0;
+    car->vrRot[0].vz = 0;
+    car->vrPos[3].vx = 0;
+    car->vrPos[3].vy = -640;
+    car->vrPos[3].vz = 320;
+    car->vrRot[3].vx = 0;
+    car->vrRot[3].vy = 0;
+    car->vrRot[3].vz = 0;
+}
+
+static void init_motion_flags(u8* flags)
+{
+    flags[0] = 0;
+    flags[1] = 0;
+    flags[2] = 0;
+    flags[3] = 0;
+    flags[4] = 0;
+    flags[6] = 0;
+    flags[7] = 0;
+    flags[8] = 0;
+    flags[9] = 0;
+    flags[10] = 0;
+    flags[11] = 0;
+    flags[12] = 0;
+    flags[13] = 0;
+    flags[14] = 0;
+    flags[15] = 0;
+    flags[16] = 0;
+    flags[17] = 0;
+    flags[18] = 0;
+    flags[19] = 0;
+    flags[20] = 0;
+    flags[21] = 0;
+    flags[22] = 0;
+    flags[23] = 0;
+    flags[24] = 0;
+    flags[25] = 1;
+    flags[26] = 0;
+    flags[27] = 0;
+    flags[29] = 0;
+}
+
+// CAR_INIT.c CarInit(which=0) on the single-player Rooftops stage.
+static void respawn_rooftops_player(PlayerCar* car, int fov)
+{
+    CarStats* stats = &car->stats;
+    stats->unk00 = 1;
+    init_motion_flags(car->flags);
+    car->unk98 = car->unk99 = 0;
+    setVector(&car->motion.vel, 0, 0, 0);
+    setVector(&car->motion.pos, 0x3cd8, 0x250, 0x1e50);
+    setVector(&car->motion.rot, 0, 0, -0x1c7);
+    setVector(&car->motion.rotDelta, 0, 0, 0);
+    setVector(&car->motion.rot2Delta, 0, 0, 0);
+    car->motion.rot2 = car->motion.rot;
+    stats->unk38 = 1;
+    InitNoCollision(&car->collision);
+    MATRIX identity = { .m = { {4096, 0, 0}, {0, 4096, 0}, {0, 0, 4096} } };
+    car->motion.mat = car->motion.mat2 = identity;
+    stats->unkFC = stats->unk100 = 100;
+    RecomputeCarDeltas(stats);
+    stats->unkDC = 25;
+    stats->unkE8 = 3;
+    stats->unk34 = 0;
+    stats->unk3C = 1;
+    stats->damageThreshold = 75;
+    stats->unk18 = 0;
+    stats->spikeTimer = 0;
+    stats->unk1C = 0;
+    stats->blasts = 0;
+    stats->unk22 = 0;
+    stats->lostTimer = 0;
+    stats->unk16 = 0;
+    stats->unk03 = 0;
+    stats->monster = 0;
+    init_vehicle_stats(stats, car->uaIndex);
+    stats->unk78 = abs(stats->unk80) + abs(stats->unk84);
+    RecomputeCarDeltas(stats);
+    stats->updateRate = 60;
+    stats->unk40 = stats->unk44;
+    InitTireInfo(car->tires);
+    InitTireGroup(car->tires, 11);
+    s16 closest = GetClosestTriggerPt(car, 1);
+    memcpy(&car->flags[30], &closest, sizeof(closest));
+    car->weap.ammo[WEAPON_SPECIAL] = 20;
+    car->weap.gunHeat = car->weap.gunOverheat = 0;
+    init_camera_modes(car, fov);
+    car->unkC0 = 0;
+    SetBounce(car, 2, 2, 0, 1);
+    car->speedDelta = 0;
+    InitControlPad(car->skid);
+    uaPadInit(car, 1);
+    stats->cheatA = stats->cheatAArmed = 0;
+    stats->cheatB = stats->cheatBArmed = 0;
+    stats->unk01 = 0;
+}
+
 // UA.c uaInitBossCar, after slot 3 receives its default weapons.
-// The caller runs CarInit(which=0) when the player is below the roof.
-int tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed)
+void tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed, int fov)
 {
     AICar boss;
     PlayerCar player;
@@ -427,11 +601,12 @@ int tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed)
     boss.motion.pos.vz = lower_group ? 8000 : 7760;
     setVector(&player.motion.vel, 0, 0, 0);
     setVector(&player.motion.rotDelta, 0, 0, 0);
+    if (player.motion.pos.vz < 6400)
+        respawn_rooftops_player(&player, fov);
     memcpy(state, &boss, sizeof(boss));
     memcpy(target, &player, sizeof(player));
     *seed = random_state;
     trig = NULL;
-    return player.motion.pos.vz < 6400;
 }
 
 void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16* table,
@@ -617,10 +792,12 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
         contact_phase(&player, cars, 1, fields);
     }
+    tm1_start_death(&player, 1);
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
     for (int i = 0; i < count; i++) {
         AICarUpdate(&cars[i]);
         contact_phase(&player, &cars[i], 0, fields);
+        tm1_start_death(&cars[i], 0);
     }
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();

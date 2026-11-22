@@ -12,10 +12,24 @@ pub struct Drive {
     pub paused: bool,
     pub restart_count: u32,
     was_focused: bool,
+    boss_wait_fields: u16,
 }
 impl Drive {
     pub fn cleared(&self) -> bool {
-        self.opponents.iter().all(|ai| ai.health().0 <= 0)
+        !self.awaiting_minion() && self.opponents.iter().all(|ai| ai.health().0 <= 0)
+    }
+    fn awaiting_minion(&self) -> bool {
+        self.player.level() == tm1_core::drive::Level::Rooftops && self.opponents.len() == 3
+    }
+    pub fn recharge_sound(&self) -> usize {
+        12 + self.opponents.len() + usize::from(self.awaiting_minion())
+    }
+    fn advance_boss_delay(&mut self, fields: u16) {
+        self.boss_wait_fields += fields;
+        if self.boss_wait_fields > 180 {
+            self.opponents
+                .push(Opponent::spawn_minion(&mut self.player));
+        }
     }
     pub fn nearest_opponent(&self) -> &Opponent {
         let origin = self.player.position();
@@ -47,6 +61,7 @@ impl Drive {
             paused: false,
             restart_count: 0,
             was_focused: false,
+            boss_wait_fields: 0,
         }
     }
 }
@@ -73,7 +88,13 @@ pub fn advance(
         drive.contacts.reset_projectiles();
         drive.paused = false;
         drive.player.reset();
-        let kinds: Vec<_> = drive.opponents.iter().map(Opponent::vehicle).collect();
+        drive.boss_wait_fields = 0;
+        let kinds: Vec<_> = drive
+            .opponents
+            .iter()
+            .map(Opponent::vehicle)
+            .filter(|&kind| kind != Vehicle::Minion)
+            .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
@@ -170,18 +191,24 @@ pub fn advance(
         let count = state.contacts.effects(&mut effects);
         for &[x, y, z, kind, life] in &effects[..count] {
             let id = match (kind, life) {
-                (26, 2) => 12 + state.opponents.len(),
+                (26, 2) => state.recharge_sound(),
                 (0, 2) => 1,
                 (11, 2) => 6,
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
                 (1, 2) => 2,
-                (2, 7) => 3,
+                (2, 7) | (28, 32) | (29 | 30, 16) => 3,
                 (12, 2) => 4,
                 (kind @ 13..=17, 2) => (kind - 6) as usize,
                 _ => continue,
             };
             state.sounds.push((id, [x, y, z]));
+        }
+        if state.awaiting_minion()
+            && state.player.health().0 > 0
+            && state.opponents.iter().all(|car| car.health().0 <= 0)
+        {
+            state.advance_boss_delay(3);
         }
         drive.remainder -= STEP;
         if drive.player.health().0 <= 0 || drive.cleared() {
@@ -224,11 +251,15 @@ mod tests {
             let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
             let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
 
+            let mut models = kinds.clone();
+            if level == Level::Rooftops {
+                models.push(Vehicle::Minion);
+            }
             let scene = CollisionScene::for_opponents(
                 &data,
                 root(1),
                 root(vehicle as u16),
-                &kinds.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
+                &models.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
             )
             .unwrap();
             let player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
@@ -271,6 +302,19 @@ mod tests {
             assert_eq!(played.3.len(), kinds.len());
             for (before, after) in start.3.iter().zip(&played.3) {
                 assert_ne!(before.1, after.1);
+            }
+            if level == Level::Rooftops {
+                let mut drive = app.world_mut().resource_mut::<Drive>();
+                let sound = drive.recharge_sound();
+                for _ in 0..60 {
+                    drive.advance_boss_delay(3);
+                }
+                assert_eq!(drive.opponents.len(), 3);
+                drive.advance_boss_delay(3);
+                assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
+                assert_eq!(drive.opponents[3].health(), (250, 250));
+                assert_eq!(sound, drive.recharge_sound());
+                tick(&mut app, 50);
             }
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()

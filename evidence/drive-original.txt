@@ -1,57 +1,58 @@
-running 33 tests
+running 35 tests
 City Park retail encounter with SweetTooth
 Cyburbia retail encounter with SweetTooth
 test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... ok
 Freeway retail encounter with SweetTooth
 test drive::reference::group_battle_selection_original ... ok
-test drive::reference::arena_animation_matches_retail ... ok
-test drive::reference::bullet_impact_original ... ok
-test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
-test drive::reference::damage_body_switch_matches_retail ... ok
-test drive::reference::database_and_opponents_match_retail_shell ... ok
 Compared 42 Cyburbia camera probes and 900 ground probes with retail.
 test drive::reference::cyburbia_visibility_and_ground_groups_match_retail ... ok
+test drive::reference::bullet_impact_original ... ok
+test drive::reference::database_and_opponents_match_retail_shell ... ok
+test drive::reference::damage_body_switch_matches_retail ... ok
+test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
 test drive::reference::city_park_slick_drive_matches_retail ... ok
+test drive::reference::arena_animation_matches_retail ... ok
 test drive::reference::coupled_arena_original ... ok
+test drive::reference::minion_initial_record_matches_retail ... ok
 Hammerhead completed the crush at step 19
 test drive::reference::group_spawn_original ... ok
+test drive::reference::police_update_original ... ok
 Rooftops retail encounter with SweetTooth
 test drive::reference::radar_signals_original ... ok
-test drive::reference::police_update_original ... ok
-Rooftops player fell from 7760 to 45 and died at step 225
-test drive::reference::rooftop_edge_fall_matches_retail ... ok
 Freeway retail encounter with YellowJacket
 Cyburbia retail encounter with YellowJacket
 City Park retail encounter with YellowJacket
 test drive::reference::hammerhead_crush_original ... ok
-Warehouse retail encounter with SweetTooth
+Rooftops player fell from 7760 to 45 and died at step 225
+test drive::reference::rooftop_edge_fall_matches_retail ... ok
 test drive::reference::flamethrowers_original ... ok
+Warehouse retail encounter with SweetTooth
 test drive::reference::temporary_pothole_matches_retail_clock ... ok
 vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
 test drive::reference::outlaw_taser_original ... ok
+Rooftops retail encounter with YellowJacket
+Freeway retail encounter with Darkside
 test drive::reference::warehouse_group_hit_ids_original ... ok
+test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
 test drive::vehicle_body_thresholds ... ok
 test tests::original_timer_rounding_and_clamp ... ok
 test tests::unsigned_clock_wrap_and_replay_reset ... ok
-test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
 wall fixture at tick 73, taxi [3946, 3946, 16], police [4096, 2896, 0]
 test drive::reference::vehicle_and_wall_contact_original ... ok
-Rooftops retail encounter with YellowJacket
-Freeway retail encounter with Darkside
 Warehouse retail encounter with YellowJacket
-Cyburbia retail encounter with Darkside
 City Park retail encounter with Darkside
-test drive::reference::warehouse_stands_match_retail ... ok
+Cyburbia retail encounter with Darkside
 test drive::reference::player_special_launch_original ... ok
-test drive::reference::regular_missile_impacts_original ... ok
-Rooftops retail encounter with Darkside
+test drive::reference::warehouse_stands_match_retail ... ok
 Freeway retail encounter with Hammerhead
+Rooftops retail encounter with Darkside
 Warehouse retail encounter with Darkside
+test drive::reference::regular_missile_impacts_original ... ok
 test drive::reference::special_missiles_original ... ok
 City Park retail encounter with Hammerhead
 Cyburbia retail encounter with Hammerhead
-Rooftops retail encounter with Hammerhead
 Freeway retail encounter with Outlaw
+Rooftops retail encounter with Hammerhead
 Warehouse retail encounter with Hammerhead
 City Park retail encounter with Outlaw
 Cyburbia retail encounter with Outlaw
@@ -68,43 +69,44 @@ Freeway retail encounter with MrGrimm
 Warehouse retail encounter with Warthog
 Cyburbia retail encounter with Warthog
 Rooftops retail encounter with Warthog
-Warehouse retail encounter with MrGrimm
 Freeway retail encounter with PitViper
+Warehouse retail encounter with MrGrimm
 City Park retail encounter with MrGrimm
 Rooftops retail encounter with MrGrimm
 Cyburbia retail encounter with MrGrimm
-Warehouse retail encounter with PitViper
 Freeway retail encounter with Thumper
+Warehouse retail encounter with PitViper
 City Park retail encounter with PitViper
 Rooftops retail encounter with PitViper
 Cyburbia retail encounter with PitViper
-Warehouse retail encounter with Thumper
 Freeway retail encounter with Spectre
+Warehouse retail encounter with Thumper
 City Park retail encounter with Thumper
 Rooftops retail encounter with Thumper
 Cyburbia retail encounter with Thumper
 Warehouse retail encounter with Spectre
 Freeway retail encounter with RoadKill
-Rooftops retail encounter with Spectre
 City Park retail encounter with Spectre
+Rooftops retail encounter with Spectre
 Warehouse retail encounter with RoadKill
 test drive::reference::freeway_encounter_original ... ok
 Cyburbia retail encounter with Spectre
-Rooftops retail encounter with RoadKill
 City Park retail encounter with RoadKill
+Rooftops retail encounter with RoadKill
 test drive::reference::warehouse_encounter_original ... ok
+test drive::reference::minion_encounter_original ... ok
 Cyburbia retail encounter with RoadKill
 test drive::reference::rooftops_encounter_original ... ok
 test drive::reference::city_park_encounter_original ... ok
 test drive::reference::cyburbia_encounter_original ... ok
 
-test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.44s
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 27.28s
 
 
 running 4 tests
 test mips::executes_branch_and_load_delay_slots ... ok
-arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 16], [776, 3545, 15], 1805839267))
-arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 16], [776, 3545, 15], 1805839267))
+arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 31], [776, 3545, 15], 2770505014))
+arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 31], [776, 3545, 15], 2770505014))
 test arena_replay ... ok
 YellowJacket, timing [3], ramp false, 360 steps, max body height 134, all tires airborne false
 YellowJacket, timing [3], ramp true, 360 steps, max body height 164, all tires airborne true
@@ -124,7 +126,7 @@ Spectre, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 180, all ti
 RoadKill, timing [3, 4, 5, 3], ramp false, 360 steps, max body height 27, all tires airborne false
 test drive_trace ... ok
 
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.90s
 
 
 running 2 tests
@@ -132,7 +134,7 @@ test mips::executes_branch_and_load_delay_slots ... ok
 Original MIPS vs native C: 8192 matrix cases, 4096 normalization cases, 4444 square-root cases; seed 0x544d3101
 test native_math_matches_original_instructions ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.77s
 
 
 running 0 tests

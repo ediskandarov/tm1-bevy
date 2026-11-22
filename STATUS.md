@@ -7,7 +7,7 @@ The player completed a manual keyboard playthrough, heard game sounds and reache
 Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Warthog, Mr. Grimm, Pit Viper, Thumper, Spectre and Road Kill
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
-Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. The boss encounter, campaign, front end and multiplayer are outstanding.
+Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Campaign progression, the original front end and multiplayer are outstanding.
 
 ## Warehouse
 
@@ -27,7 +27,7 @@ Launch with `--level cyburbia` to fight eight opponents in SUBURB1 or SUBURB2. T
 
 ## Rooftops
 
-Launch with `--level rooftops` for the opening three-opponent battle. The level loads ROOF1 or ROOF2, uses 49 routing points and 14 ground groups, disables AI lane following, and plays CDDA track 8. Vehicles start at rooftop elevation. The boss transition and helicopter camera are outstanding.
+Launch with `--level rooftops` for the opening three-opponent battle. The level loads ROOF1 or ROOF2, uses 49 routing points and 14 ground groups, disables AI lane following, and plays CDDA track 8. After the third rival falls, the simulation continues through the original 180-field delay and spawns Minion on the roof selected by the player’s ground group. A player below height 6,400 respawns on the starting roof. The fourth opponent uses front and rear machine guns and a special that combines two swarm missiles, a projectile, a taser and a front flamethrower. R restarts the three-rival opening. A Metal capture with all three rivals set to zero health at startup showed Minion at 250 health and one survivor out of four. The original boss introduction screen and helicopter camera are outstanding.
 
 ## Reference execution
 
@@ -43,7 +43,8 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Battle selection | Checked the PlayGame scheduler against the JP instructions in 128 combinations of opponent count, occupied attack slots, surviving vehicles and elapsed fields. Compared the wait counter and every opponent record after selection. |
 | Opponent radar | For every regular vehicle, checked contact color, screen position and all four edge directions against retail hudAddRadarSig at seven headings and fourteen offsets (1,176 cases). Warehouse Metal capture shows the three opponents in their original colors. V toggles the overlay. Active Warehouse recharge stations flash on the radar. |
 | Temporary potholes | A collision can create one temporary pothole alongside the level geometry. Its remaining lifetime follows the original field counter, including when a second impact replaces the hole. A 120-step sequence compares the active pothole count against retail after each update. |
-| Minion initialization | Compared all 0x560 bytes of the fourth AI slot and the resulting RNG after the original boss initialization and default weapon assignment for three starting seeds. A separate call to the retail boss transition checks both rooftop placements, player velocity, the complete car records and RNG at heights 6,399, 6,400 and 8,000. The fixture records the request to respawn the player below 6,400. |
+| Minion initialization | Compared all 0x560 bytes of the fourth AI slot and the resulting RNG after the original boss initialization and default weapon assignment for three starting seeds. A separate call to the retail boss transition checks both rooftop placements, player velocity, the complete car records and RNG at heights 6,399, 6,400 and 8,000. The reference executes the fallen-player reset, including its changes to health, weapons and camera offsets. |
+| Minion battle | Twelve 360-step encounters compare all five car records, RNG, active fragments, bullet segments and missile positions with the retail functions. Minion used its special against every vehicle. A frontend fixture checks the delay and keyboard restart from the four-slot encounter. |
 | Rooftops pursuit and falls | Twelve 360-step replays compared all four vehicle records, active fragments and RNG. A separate acceleration trace drove Yellow Jacket over an edge. It fell from 7,760 to 45 height units and lost its remaining health on step 225, matching the retail player record on every step. |
 | Cyburbia pursuit, ground and visibility | Each of the twelve vehicles fought the full eight-opponent lineup for 360 mixed-timing updates. The tests compare all nine vehicle records, active fragments and RNG. Separate fixtures compare 900 ground-group boundary probes and 42 camera probes with the retail functions. |
 | City Park pursuit and traction | All twelve player choices ran for 360 mixed-timing steps against the original six opponents. The replay checks all seven car records, active fragment positions and RNG every step. A separate 150-step steering and acceleration trace crossed the slick and regained traction, with the entire player record checked on every step. |

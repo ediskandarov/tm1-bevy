@@ -1,4 +1,5 @@
-#include "tm1/arena_collision.h"
+#include "tm1/arena_ground.h"
+#include "tm1/arena_guns.h"
 
 void InitCatapult(Car* car, u8 isPlayer)
 {
@@ -442,6 +443,166 @@ void carTakeHit(s16 id, s32 amount, VECTOR3* a, u8 flag)
                     break;
                 }
             }
+        }
+    }
+}
+
+// UA.c StartDeathSequence. The frontend handles round completion.
+void tm1_start_death(Car* car, u8 player)
+{
+    CarStats* stats = player ? &PLAYER_CAR(car)->stats : &AI_CAR(car)->stats;
+    u8* flags = player ? PLAYER_CAR(car)->flags : AI_CAR(car)->flags;
+    if (stats->unk40 > 0 || flags[0])
+        return;
+    CarMotion* motion = player ? &PLAYER_CAR(car)->motion : &AI_CAR(car)->motion;
+    flags[0] = 1;
+    flags[21] = player || AI_CAR(car)->unk2C <= 0;
+    VECTOR3 pos = motion->pos;
+    pos.vz = 0;
+    do_smoke(&pos);
+    InitBombDamage(car, player, 1, 0);
+    flags[20] = 1;
+    stats->deathTimer = 120;
+    flags[16] = 1;
+    stats->unk18 = 300;
+    stats->monster = 0;
+    SetBounce(car, 0, 2, 0, player);
+    arena_effect(&motion->pos, 29);
+    arena_effect(&motion->pos, 28);
+    flags[26] = 1;
+}
+
+void UpdateCarDeath(Car* car, u8 isPlayer)
+{
+    CarStats* st;
+    CarMotion* m;
+    u8* f;
+    CarTire* t;
+    s32 limit;
+    VECTOR3 pos;
+    s32 value;
+
+    if (isPlayer) {
+        st = &PLAYER_CAR(car)->stats;
+        m = &PLAYER_CAR(car)->motion;
+        f = PLAYER_CAR(car)->flags;
+        t = PLAYER_CAR(car)->tires;
+    } else {
+        st = &AI_CAR(car)->stats;
+        m = &AI_CAR(car)->motion;
+        f = AI_CAR(car)->flags;
+        t = AI_CAR(car)->tires;
+    }
+
+    if (st->deathTimer > 0) {
+        st->deathTimer -= GetFieldsLastFrame();
+        value = (st->deathTimer % 40);
+        if (value == 1) {
+            pos.vx = m->pos.vx;
+            pos.vy = m->pos.vy;
+            pos.vz = m->pos.vz;
+            pos.vz = pos.vz - (st->unk6C / 2);
+            do_smoke(&pos);
+        }
+        if (f[21]) {
+            if (m->rot.vy >= -1023) {
+                s32 rollRate;
+                rollRate = st->unkD0 * m->rot.vy / -1024;
+                value = st->unkCC;
+                value += rollRate;
+                m->rotDelta.vy -= value;
+                m->vel.vy /= 2;
+            } else {
+                m->rotDelta.vy = 0;
+            }
+        } else if (m->rot.vy < 1024) {
+            s32 rollRate;
+            rollRate = st->unkD0 * m->rot.vy / 1024;
+            value = st->unkCC;
+            value += rollRate;
+            m->rotDelta.vy += value;
+            m->vel.vy /= 2;
+        } else {
+            m->rotDelta.vy = 0;
+        }
+        if (f[20]) {
+            if (m->vel.vy < st->unkA4) {
+                pos.vx = m->pos.vx;
+                pos.vy = m->pos.vy;
+                pos.vz = m->pos.vz;
+                pos.vz = t->unk24;
+                arena_effect(&pos, 27);
+                f[20] = 0;
+            }
+        } else {
+            limit = 3;
+            if (shellGetCurrentLevel() == LEVEL6_ROOFTOPS && m->pos.vz < 400) {
+                limit = 7;
+            }
+            if (st->blasts < limit && GetFrameCount() % 4 == 0 && (arena_rand() & 1)) {
+                st->blasts++;
+                f[26] = 1;
+                pos = m->pos;
+                if (limit == 7) {
+                    pos.vx += (arena_rand() & 63) - 32;
+                    pos.vy += (arena_rand() & 63) - 32;
+                    pos.vz += (arena_rand() & 15) - 8;
+                    arena_effect(&pos, (arena_rand() & 1) ? 29 : 30);
+                } else {
+                    // CAR.c samples three offsets, then overwrites the position.
+                    (void)arena_rand();
+                    (void)arena_rand();
+                    (void)arena_rand();
+                    arena_effect(&pos, (arena_rand() & 1) ? 28 : 29);
+                }
+            }
+        }
+    } else {
+        m->rotDelta.vx = 0;
+        m->rotDelta.vy = 0;
+        m->rotDelta.vz = 0;
+        m->vel.vx = 0;
+        m->vel.vy -= m->vel.vy / 16;
+        m->vel.vz = 0;
+
+        if (m->rot.vy >= 1138) {
+            if (m->rot.vy >= 1934) {
+                return;
+            }
+            if (m->rot.vy < 1536) {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 1024, 98);
+            } else {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 2036, 98);
+            }
+        } else if (m->rot.vy >= 114) {
+            if (m->rot.vy >= 910) {
+                return;
+            }
+            if (m->rot.vy < 512) {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 0, 98);
+            } else {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 1024, 98);
+            }
+        } else if (m->rot.vy < -113) {
+            if (m->rot.vy < -909) {
+                return;
+            }
+            if (m->rot.vy >= -511) {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 0, 98);
+            } else {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, 1024, 98);
+            }
+        } else if (m->rot.vy < -1137) {
+            if (m->rot.vy < -1933) {
+                return;
+            }
+            if (m->rot.vy >= -1535) {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, -1536, 98);
+            } else {
+                m->rot.vy = SmoothAngleValue(m->rot.vy, -2036, 98);
+            }
+        } else {
+            return;
         }
     }
 }

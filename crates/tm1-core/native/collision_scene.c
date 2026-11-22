@@ -13,7 +13,7 @@ typedef struct CollisionScene {
     size_t slots;
     Cs world, taxi, opponents[8];
     Cs* first_car;
-    int opponent_count;
+    int opponent_count, model_count;
     DbSwitch* stands[10];
     u16 stand_slots, active_stands;
     int regen_timer;
@@ -227,7 +227,7 @@ CollisionScene* tm1_scene_load(
         s->missiles[i].life = -15;
         s->missile_cs[i].unkC0 = 200 + i;
     }
-    s->opponent_count = count;
+    s->opponent_count = s->model_count = count;
     s->world.unkC0 = 8;
     s->taxi.unkC0 = 1;
     u32 roots;
@@ -412,6 +412,15 @@ Cs* csGetWorldCs(void)
 {
     return &current->world;
 }
+void tm1_active_opponents(CollisionScene* scene, int count)
+{
+    if (scene->opponent_count == count)
+        return;
+    for (int i = 0; i < scene->model_count; i++)
+        scene->opponents[i].drawMode = i < count;
+    scene->opponent_count = count;
+}
+
 s16 GetNumAICars(void)
 {
     return current ? current->opponent_count : 0;
@@ -699,7 +708,14 @@ void arena_effect(VECTOR3* pos, s32 kind)
     e[1] = pos->vy;
     e[2] = pos->vz;
     e[3] = kind;
-    e[4] = kind == 2 ? 7 : 2;
+    switch (kind) {
+    case 2: e[4] = 7; break;
+    case 27: e[4] = 8; break;
+    case 28: e[4] = 32; break;
+    case 29:
+    case 30: e[4] = 16; break;
+    default: e[4] = 2; break;
+    }
 }
 void tm1_age_effects(void)
 {

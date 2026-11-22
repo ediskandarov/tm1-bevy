@@ -209,22 +209,28 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
         VECTOR3 mounts[] = { { (s16)stats->dropPower, 0, stats->unk70 + 8 },
             { stats->unk110, stats->unk112, stats->unk114 },
             { -stats->unk110, stats->unk112, stats->unk114 } };
-        int count = kind == UA_HUMVEE ? 3 : 1;
+        int count = kind == UA_HUMVEE ? 3 : kind == UA_BOSS_CAR ? 2 : 1;
         for (int i = 0; i < count; i++) {
             int index = find_free_missile(0);
             if (index < 0)
                 break;
             Missile* m = &mlist[index];
-            mount_missile(m, motion, mounts[i]);
+            mount_missile(m, motion, mounts[kind == UA_BOSS_CAR ? 0 : i]);
+            if (kind == UA_BOSS_CAR && i == 1) {
+                car_lockon(owner < 50, 1, &target);
+                m->cs->rot.vz += 2048;
+                RotMatrixYXZ(&m->cs->rot, &m->cs->mat);
+            }
             m->target = target;
             m->unk50 = owner;
             m->life = 30;
             m->unk38 = 150;
             switch (kind) {
+            case UA_BOSS_CAR:
             case UA_HUMVEE:
                 m->unk2C = 2;
                 m->unk3C = 35;
-                m->damage = 3;
+                m->damage = kind == UA_BOSS_CAR ? 10 : 3;
                 break;
             case UA_CORVETTE:
                 m->unk2C = 3;
@@ -246,7 +252,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
                 break;
             }
             start_trail(m, kind == UA_CORVETTE ? 0xcdcdff : 0x808080);
-            if (i == 0) {
+            if (i == 0 && kind != UA_BOSS_CAR) {
                 pad->ammo[WEAPON_SPECIAL] -= cost;
                 arena_effect(&m->pos, owner < 50 ? 10 : 18 + owner - 50);
             }
