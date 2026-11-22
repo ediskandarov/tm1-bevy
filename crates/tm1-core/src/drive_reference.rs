@@ -1106,6 +1106,70 @@ fn exterior_damage_lights_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn wheel_motion_original() {
+    let mut r = Reference::new();
+    let tire = |slot: u32, stage: u32| RENDER_SCRATCH + slot * 128 + stage * 32;
+    for slot in 1..=13 {
+        for stage in 0..3 {
+            let node = tire(slot, stage);
+            put(&mut r.cpu, 0x8019cd78 + (slot * 3 + stage) * 4, node);
+            r.cpu.put(node + 6, &[2 + stage as u8, stage as u8]);
+        }
+    }
+    let wheel = RENDER_SCRATCH + 0x1000;
+    for i in 0..4 {
+        put(&mut r.cpu, 0x8019e5bc + 4 * i, wheel + 64 * i);
+    }
+    unsafe extern "C" {
+        fn tm1_update_car_speed(car_id: i32, speed: i32);
+    }
+    for speed in [
+        0, 160, 160, 1, 650, 320, -1, -321, -645, 6, -6, 7, -7, 250, 250,
+    ] {
+        for slot in 1..=13 {
+            r.cpu.call(0x801466b0, &[slot * 10, speed as u32]);
+            {
+                let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe {
+                    tm1_use_scene(r.scene.native.as_ptr());
+                    tm1_update_car_speed(slot as i32 * 10, speed);
+                    tm1_use_scene(std::ptr::null_mut());
+                }
+            }
+            let step = r.scene.wheel_steps()[slot as usize];
+            if slot == 4 {
+                assert_eq!(step, i64::from(r.cpu.word(0x8018c2f8) as i32));
+                let [sin, cos] = r.player.wheel_sin_cos(step);
+                for i in 0..4 {
+                    for (j, expected) in [4096, 0, 0, 0, cos, sin, 0, -sin, cos]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let at = ((wheel + 64 * i + 4) as usize & 0x1fffff) + 2 * j;
+                        assert_eq!(
+                            i16::from_le_bytes(r.cpu.ram[at..at + 2].try_into().unwrap()),
+                            expected,
+                            "speed {speed}, matrix element {j}"
+                        );
+                    }
+                }
+            } else {
+                for stage in 0..3 {
+                    let actual = r.cpu.ram[((tire(slot, stage) + 7) & 0x1fffff) as usize];
+                    assert_eq!(
+                        i64::from(actual),
+                        (step + i64::from(stage)).rem_euclid(2 + i64::from(stage))
+                    );
+                }
+            }
+        }
+    }
+    r.scene.reset_projectiles();
+    assert_eq!(r.scene.wheel_steps(), [0; 14]);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn victory_blocks_late_bullet_damage_original() {
     for simultaneous_death in [false, true] {
         let mut r = Reference::new();
@@ -2541,8 +2605,8 @@ fn compare_battle_controls(
         r.cpu.call(entry, &[]);
     }
     for at in [
-        0x801417d0, 0x801466b0, 0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84,
-        0x801371cc, 0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
+        0x801417d0, 0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84, 0x801371cc,
+        0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -2666,6 +2730,12 @@ fn compare_battle_controls(
         r.player.set_weapon_and_damage_modes(false, true);
         r.cpu.call(0x8014d354, &[0, 1]);
     }
+    // Observe the retail tire switch after every actor update, including reverse.
+    let tire = |slot: u32| 0x8000d000 + slot * 32;
+    for slot in 1..=13 {
+        put(&mut r.cpu, 0x8019cd78 + slot * 12, tire(slot));
+        r.cpu.put(tire(slot) + 6, &[251, 0]);
+    }
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -2781,6 +2851,22 @@ fn compare_battle_controls(
                 }
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
+        let steps = r.scene.wheel_steps();
+        for slot in 1..=13 {
+            if slot == 4 {
+                assert_eq!(
+                    steps[4],
+                    i64::from(r.cpu.word(0x8018c2f8) as i32),
+                    "Hammerhead tick {tick}"
+                );
+            } else {
+                assert_eq!(
+                    steps[slot as usize].rem_euclid(251),
+                    i64::from(r.cpu.ram[((tire(slot) + 7) & 0x1fffff) as usize]),
+                    "wheel slot {slot} tick {tick}"
+                );
+            }
         }
         assert_eq!(r.scene.level_won(), r.cpu.word(0x8018c360) != 0);
         assert_eq!(

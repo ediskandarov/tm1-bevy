@@ -597,6 +597,19 @@ impl PlayerVehicle {
         (self.word(0x398) / 32) * 100 / (i32::from(fields) * 19)
     }
 
+    /// Signed X rotation in DMD coordinates, after transposing the SDK matrix.
+    pub fn wheel_sin_cos(&self, angle: i64) -> [i16; 2] {
+        let i =
+            (0x80184d58u32 - 0x80183f14) as usize / 2 + 2 * (angle.unsigned_abs() as usize & 4095);
+        [
+            if angle < 0 {
+                -self.trig[i]
+            } else {
+                self.trig[i]
+            },
+            self.trig[i + 1],
+        ]
+    }
     pub fn cockpit_steering_angle(&self, previous: i32) -> i32 {
         let skid = &self.state[0xc8..];
         let pct = if skid[6] != 0 || skid[7] != 0 { 40 } else { 70 };
@@ -1149,6 +1162,16 @@ impl CollisionScene {
             tm1_new_life(self.native.as_ptr());
         }
         self.battle = [0; 3];
+    }
+    pub fn wheel_steps(&self) -> [i64; 14] {
+        unsafe extern "C" {
+            fn tm1_wheel_steps(scene: *const std::ffi::c_void, out: *mut i64);
+        }
+        let mut steps = [0; 14];
+        unsafe {
+            tm1_wheel_steps(self.native.as_ptr(), steps.as_mut_ptr());
+        }
+        steps
     }
     pub fn car_lights(&self) -> [u8; 9] {
         unsafe extern "C" {

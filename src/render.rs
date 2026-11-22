@@ -10,7 +10,7 @@ use bevy::{
 };
 use std::collections::BTreeMap;
 use tm1_assets::{
-    scene::{Scene, SpriteFrame, TextureKey},
+    scene::{Scene, SpriteFrame, TextureKey, Wheel},
     texture::Vram,
 };
 
@@ -370,7 +370,8 @@ pub fn setup(
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
             for polygon in &arena.scene.polygons[range.clone()] {
-                if !polygon.animation.is_empty()
+                if polygon.wheel.is_some()
+                    || !polygon.animation.is_empty()
                     || polygon.billboard.is_some()
                     || polygon.semi_transparent
                 {
@@ -1012,12 +1013,31 @@ fn draw_view(
     camera_up: Vec3,
     focal: f32,
 ) {
+    let wheel_steps = drive.contacts.wheel_steps();
+    let [sin, cos] = drive
+        .player
+        .wheel_sin_cos(wheel_steps[4])
+        .map(|n| f32::from(n) / 4096.);
     let transform = |index: usize, p: [f32; 3]| {
         if index >= arena.vehicle_start {
             let car = arena
                 .body_ranges
                 .partition_point(|ranges| ranges[2].end <= index);
             let (origin, matrix, _) = poses[car];
+            let p = if let Some(Wheel::Hammerhead { pivot, axis }) =
+                arena.scene.polygons[index].wheel
+            {
+                let axis = Vec3::from_array(axis);
+                let pivot = Vec3::from_array(pivot);
+                let offset = Vec3::from_array(p) - pivot;
+                (pivot
+                    + offset * cos
+                    + axis.cross(offset) * sin
+                    + axis * axis.dot(offset) * (1. - cos))
+                    .to_array()
+            } else {
+                p
+            };
             origin
                 + world(std::array::from_fn(|i| {
                     (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
@@ -1072,7 +1092,19 @@ fn draw_view(
         {
             continue;
         }
+        if let Some(Wheel::Tire {
+            slot,
+            initial,
+            count,
+            branch,
+        }) = p.wheel
+            && (wheel_steps[slot] + i64::from(initial)).rem_euclid(i64::from(count))
+                != i64::from(branch)
+        {
+            continue;
+        }
         if i >= arena.vehicle_start
+            && p.wheel.is_none()
             && p.animation.is_empty()
             && p.billboard.is_none()
             && !p.semi_transparent

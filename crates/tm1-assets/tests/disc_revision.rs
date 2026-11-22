@@ -46,7 +46,43 @@ fn supported_disc_arena_and_audio() {
     }
     for kind in (10..=120).step_by(10) {
         let [intact, damaged, critical] = db.vehicle_bodies(kind).unwrap();
-        assert_eq!(intact.object_ids, db.extract_kind(kind).unwrap().object_ids);
+        for stage in [&intact, &damaged, &critical] {
+            let wheels = stage.polygons.iter().filter_map(|p| p.wheel);
+            if kind == 40 {
+                let pivots = wheels
+                    .map(|wheel| {
+                        let tm1_assets::scene::Wheel::Hammerhead { pivot, axis } = wheel else {
+                            panic!("expected a rotating wheel");
+                        };
+                        assert_eq!(axis, [1., 0., 0.]);
+                        pivot.map(|v| v as i32)
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert_eq!(pivots.len(), 4);
+            } else {
+                // XARENA1 has no tire switches in Mr. Grimm's bike.
+                assert_eq!(wheels.count() > 0, kind != 80);
+            }
+        }
+        let rest = db.extract_kind(kind).unwrap();
+        let visible: Vec<_> = intact
+            .polygons
+            .iter()
+            .filter(|p| match p.wheel {
+                Some(tm1_assets::scene::Wheel::Tire {
+                    initial, branch, ..
+                }) => initial == branch,
+                _ => true,
+            })
+            .map(|p| p.source_offset)
+            .collect();
+        assert_eq!(
+            visible,
+            rest.polygons
+                .iter()
+                .map(|p| p.source_offset)
+                .collect::<Vec<_>>()
+        );
         assert_ne!(intact.object_ids, damaged.object_ids);
         assert_ne!(damaged.object_ids, critical.object_ids);
     }

@@ -494,6 +494,7 @@ void tm1_drive_step(u8* state, u8* opponent, u32 buttons, s16 fields, u32 frame,
     UpdateTirePositions(&car, 1);
     if (car.flags[0])
         UpdateCarDeath(&car, 1);
+    tm1_update_car_speed(car.uaIndex, car.motion.vel.vy);
     CarRotUpdate(&car, 1);
     CarTransUpdate(&car, 1);
     *seed = random_state;

@@ -64,9 +64,23 @@ impl AnimationFrame {
         self.lo + ((u64::from(self.initial - self.lo) + changes) % count) as u8
     }
 }
+#[derive(Clone, Copy, Debug)]
+pub enum Wheel {
+    Tire {
+        slot: usize,
+        initial: u8,
+        count: u8,
+        branch: u8,
+    },
+    Hammerhead {
+        pivot: [f32; 3],
+        axis: [f32; 3],
+    },
+}
 #[derive(Clone, Debug)]
 pub struct Polygon {
     pub animation: Vec<AnimationFrame>,
+    pub wheel: Option<Wheel>,
     pub billboard: Option<[f32; 2]>,
     pub pickup: Option<u8>,
     pub arena_switches: Vec<(u8, u8)>,
@@ -511,6 +525,9 @@ impl<'a> Dmd<'a> {
         let d = self.data;
         let mut children = Vec::new();
         let mut transform = transform;
+        let mut wheel = None;
+        let battle_body =
+            selection.is_some_and(|s| s.switch.is_some() && s.headlights_kind.is_some());
         let mut list = |count: usize, start: usize| -> Result<()> {
             bytes(
                 d,
@@ -631,6 +648,15 @@ impl<'a> Dmd<'a> {
                         }
                     }
                     transform.offset = parent.apply(offset);
+                    if battle_body && u16le(d, p + 2)? == 42 && (1..=4).contains(&u16le(d, p + 36)?)
+                    {
+                        // The original replaces the node rotation while retaining its translation.
+                        transform.axes = parent.axes;
+                        wheel = Some(Wheel::Hammerhead {
+                            pivot: transform.offset,
+                            axis: parent.rotate([1., 0., 0.]),
+                        });
+                    }
                     list(d[p + 38] as usize, p + 40)?;
                 }
             }
@@ -642,7 +668,33 @@ impl<'a> Dmd<'a> {
                     .map_or(d[p + 7], |(_, stage)| stage);
                 ensure!(child < d[p + 6], "switch child out of range");
                 let kind = u16le(d, p + 2)?;
-                if matches!(kind, 700 | 1001 | 1016 | 1018 | 1019) || (kind == 920 && d[p + 6] == 2)
+                if battle_body
+                    && (12..=132).contains(&kind)
+                    && kind % 10 == 2
+                    && kind != 42
+                    && (1..=3).contains(&u16le(d, p + 4)?)
+                {
+                    for branch in 0..d[p + 6] {
+                        let start = scene.polygons.len();
+                        self.visit(
+                            u32le(d, p + 8 + 4 * usize::from(branch))?,
+                            transform,
+                            selection,
+                            pickup,
+                            ancestors,
+                            scene,
+                        )?;
+                        for poly in &mut scene.polygons[start..] {
+                            poly.wheel = Some(Wheel::Tire {
+                                slot: usize::from(kind / 10),
+                                initial: child,
+                                count: d[p + 6],
+                                branch,
+                            });
+                        }
+                    }
+                } else if matches!(kind, 700 | 1001 | 1016 | 1018 | 1019)
+                    || (kind == 920 && d[p + 6] == 2)
                 {
                     let id = u16le(d, p + 4)?;
                     let slot = match kind {
@@ -742,6 +794,11 @@ impl<'a> Dmd<'a> {
         }
         for child in children {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
+        }
+        if wheel.is_some() {
+            for poly in &mut scene.polygons[start..] {
+                poly.wheel = wheel;
+            }
         }
         if d[p] == 1
             && matches!(
@@ -845,6 +902,7 @@ impl<'a> Dmd<'a> {
             }
             scene.polygons.push(Polygon {
                 animation: Vec::new(),
+                wheel: None,
                 billboard,
                 pickup,
                 arena_switches: Vec::new(),

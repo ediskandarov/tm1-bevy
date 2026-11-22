@@ -39,6 +39,7 @@ void AICarUpdate(AICar* car)
         car->unk34 = 0;
     }
     AICarUpdateTransition(car);
+    tm1_update_car_speed(car->uaIndex, car->motion.vel.vy);
 
     if (car->driving != 0) {
         CarRotUpdate(car, 0);

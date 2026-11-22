@@ -25,6 +25,12 @@ A normal launch displays the three original JP startup TIMs and plays the Sony l
 
 After 1,201 idle fields the title cycles through the battle movie, the contest history, and the vehicle demonstration on successive visits. History scrolls the 31 lines of HISTORY.TXT over SCRNCALY.TIM. Natural completion introduces the twelve competitors, while Enter skips to the title movie. The vehicle demonstration uses SCRND2.TIM, rotates through the original card order at 361 fields per vehicle, and plays each signature over the title theme. A disc-backed integration test covers startup order, logo skip timing, title frame changes, the theme handoff and the idle demo. To inspect the title movie in a deterministic Metal run, use `--menu --demo-screenshot local/title-cinema.png 378`.
 
+## Wheels in battle
+
+Player and AI updates feed longitudinal velocity into the original wheel animation rule. At 321 accumulated speed units an ordinary tire switch advances one branch and discards the remainder. Reversing steps backward and wraps. Hammerhead rotates all four wheel meshes around the pivots in the level DMD using the executable’s sine and cosine table. The main camera and mirror use the same wheel state. Mr. Grimm’s Arena bike has no tire switch in its model.
+
+JP executable tests compare all four Hammerhead matrices and the three ordinary switch slots through stops, reversals and threshold crossings. The battle replays also compare wheel state after each simulation step. Metal captures of Warehouse at steps 50 and 54 used a temporary side camera to inspect the changing spokes. The normal chase view is reproducible with `--level warehouse --car hammerhead --demo-screenshot local/warehouse-hammerhead-wheels.png 50`.
+
 ## Vehicle damage lighting
 
 The selected camera mode reaches the car update before each battle step. A cockpit hit sets the original red or white full-screen primitive. The damage timer uses the number of video fields per step. Each simulation step selects the next primitive and applies the original integer color fade. A JP executable replay compares the submitted polygon color and semitransparency flag for both buffers, including replacement of an active flash. The Bevy cockpit and instruments draw above the flash. The semitransparent buffer uses Bevy alpha blending. A Metal capture of the opaque flash during the Warehouse encounter is reproducible with `--level warehouse --demo-cockpit-screenshot local/warehouse-cockpit-hit.png 156`.

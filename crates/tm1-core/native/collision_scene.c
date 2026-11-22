@@ -51,6 +51,8 @@ typedef struct CollisionScene {
     Cs* first_car;
     int opponent_count, model_count;
     bool beat_level;
+    int wheel_distance[14];
+    int64_t wheel_steps[14];
     struct { Cs* node; int count; } hit_lights[6];
     bool hit_light_flash;
     u8 displayed_lights[9];
@@ -709,6 +711,8 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
     s->beat_level = false;
+    memset(s->wheel_distance, 0, sizeof s->wheel_distance);
+    memset(s->wheel_steps, 0, sizeof s->wheel_steps);
     memset(s->hit_lights, 0, sizeof s->hit_lights);
     memset(s->displayed_lights, 0, sizeof s->displayed_lights);
     s->hit_light_flash = false;
@@ -1627,6 +1631,25 @@ void tm1_capture_car_lights(void)
         Cs* cs = i ? GetAICs3D(i - 1) : GetPlayerCs3D(0);
         current->displayed_lights[i] = cs->env ? cs->env->index : 0;
     }
+}
+void tm1_update_car_speed(int car_id, int speed)
+{
+    if (!current || car_id < 10 || car_id > 130)
+        return;
+    int slot = car_id / 10;
+    if (car_id == 40) {
+        current->wheel_steps[slot] -= speed / 7;
+    } else {
+        current->wheel_distance[slot] += abs(speed);
+        if (current->wheel_distance[slot] >= 321) {
+            current->wheel_distance[slot] = 0;
+            current->wheel_steps[slot] += speed < 0 ? -1 : 1;
+        }
+    }
+}
+void tm1_wheel_steps(const CollisionScene* scene, int64_t* out)
+{
+    memcpy(out, scene->wheel_steps, sizeof scene->wheel_steps);
 }
 void tm1_car_lights(const CollisionScene* s, u8* out)
 {
