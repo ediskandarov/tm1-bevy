@@ -10,6 +10,11 @@ mod garage;
 mod gpu_timing;
 mod music;
 mod pause;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../crates/tm1-core/tests/support/mips.rs"]
+mod reference_cpu;
+
 mod render;
 mod scroll;
 mod sfx;
@@ -112,6 +117,11 @@ fn main() -> Result<()> {
         !cockpit_demo || !menu,
         "cockpit capture requires a running encounter"
     );
+    let rivals_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-rivals-screenshot"));
+    ensure!(
+        !rivals_demo || !menu,
+        "rivals capture requires a running encounter"
+    );
     let mirror_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-mirror-screenshot"));
     ensure!(
         !mirror_demo || !menu,
@@ -142,6 +152,7 @@ fn main() -> Result<()> {
         || battle_demo
         || boss_demo
         || pause_demo
+        || rivals_demo
         || mirror_demo
         || cockpit_demo
         || helicopter_demo
@@ -215,6 +226,9 @@ fn main() -> Result<()> {
         }
         if pause_demo {
             app.world_mut().resource_mut::<driving::Drive>().pause = Some(pause::Page::Choices(0));
+        }
+        if rivals_demo {
+            app.world_mut().resource_mut::<driving::Drive>().list_cars = true;
         }
         if mirror_demo {
             app.world_mut().resource_mut::<driving::Drive>().mirror = true;

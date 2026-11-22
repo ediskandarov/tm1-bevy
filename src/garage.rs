@@ -214,7 +214,7 @@ impl Garage {
         }
         if !demo {
             for (row, label) in ["SELECT", "CAR INFO", "EXIT"].into_iter().enumerate() {
-                fonts.at(
+                fonts.sprite_at(
                     &mut frame,
                     if row == self.row {
                         Face::Selected
@@ -227,7 +227,7 @@ impl Garage {
                 );
             }
             if self.field % 16 >= 8 {
-                fonts.centered_at(
+                fonts.sprite_centered_at(
                     &mut frame,
                     Face::Control,
                     centers[slot] as i32,
@@ -236,7 +236,7 @@ impl Garage {
                 );
             }
             if two_players {
-                fonts.centered_at(
+                fonts.sprite_centered_at(
                     &mut frame,
                     Face::Control,
                     centers[1 - slot] as i32,
@@ -250,14 +250,10 @@ impl Garage {
                 } else {
                     Face::Control
                 };
-                fonts.at(&mut frame, face, x, 215, label);
+                fonts.sprite_at(&mut frame, face, x, 215, label);
             }
         }
-        let name = Vehicle::CARD_ORDER[i]
-            .name()
-            .replace('.', "")
-            .to_ascii_uppercase();
-        fonts.centered(&mut frame, Face::Choice, 215, &name);
+        fonts.sprite_centered_at(&mut frame, Face::Choice, 159, 215, fonts.car_name(i));
         frame
     }
 }

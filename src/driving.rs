@@ -857,11 +857,6 @@ pub fn advance(
 }
 
 #[cfg(test)]
-#[allow(dead_code)]
-#[path = "../crates/tm1-core/tests/support/mips.rs"]
-mod reference_cpu;
-
-#[cfg(test)]
 mod tests {
     use super::*;
     fn tick(app: &mut App, milliseconds: u64) {
@@ -888,7 +883,7 @@ mod tests {
         )
         .unwrap()
         .drive;
-        let mut cpu = reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
         const PLAYER: u32 = 0x8019ee40;
         cpu.put(PLAYER, drive.player.state());
         cpu.put(PLAYER + 0xf4, &(drive.camera.mode as u32).to_le_bytes());

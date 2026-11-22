@@ -67,6 +67,7 @@ pub struct Fonts {
     signs: Vec<[u8; 4]>,
     sign_width: usize,
     car_signs: Vec<String>,
+    car_names: Vec<String>,
     metrics: [Vec<Glyph>; 4],
 }
 #[derive(Clone, Copy)]
@@ -125,16 +126,19 @@ impl Fonts {
                     .ok_or_else(|| anyhow::anyhow!("invalid executable address"))?
                     as usize)
         };
-        let table = file_offset(0x801712e0)?;
-        let mut car_signs = Vec::with_capacity(13);
-        for i in 0..13 {
-            let at = file_offset(u32le(&exe, table + 4 * i)?)?;
-            let text = std::ffi::CStr::from_bytes_until_nul(
-                exe.get(at..)
-                    .ok_or_else(|| anyhow::anyhow!("invalid car sign pointer"))?,
-            )?;
-            car_signs.push(text.to_str()?.to_owned());
-        }
+        let strings = |address| -> Result<Vec<String>> {
+            let table = file_offset(address)?;
+            let mut names = Vec::with_capacity(13);
+            for i in 0..13 {
+                let at = file_offset(u32le(&exe, table + 4 * i)?)?;
+                let text = std::ffi::CStr::from_bytes_until_nul(
+                    exe.get(at..)
+                        .ok_or_else(|| anyhow::anyhow!("invalid car sign pointer"))?,
+                )?;
+                names.push(text.to_str()?.to_owned());
+            }
+            Ok(names)
+        };
         let metrics =
             |address: u32, count: usize, width: usize, height: usize| -> Result<Vec<Glyph>> {
                 let at = file_offset(address)?;
@@ -161,7 +165,8 @@ impl Fonts {
             width,
             signs,
             sign_width,
-            car_signs,
+            car_signs: strings(0x801712e0)?,
+            car_names: strings(0x80171768)?,
             metrics: [
                 metrics(0x801709b8, 77, width, height)?,
                 metrics(0x801707e8, 77, width, height)?,
@@ -169,6 +174,9 @@ impl Fonts {
                 metrics(0x80170bc4, 77, sign_width, sign_height)?,
             ],
         })
+    }
+    pub fn car_name(&self, card: usize) -> &str {
+        &self.car_names[card]
     }
     pub fn car_sign(&self, card: usize) -> &str {
         &self.car_signs[card]
@@ -219,12 +227,37 @@ impl Fonts {
             Face::Speed => 3,
             Face::Sign | Face::Control | Face::ArrowActive => 0,
         };
-        let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        text.bytes()
-            .map(|c| if c == 8 { -1 } else { advance(c) })
-            .sum()
+        text.bytes().fold(0, |width, c| match c {
+            b'\n' => 0,
+            b'\r' => width,
+            8 => width - 1,
+            _ => width + self.glyph(face, c).w as i32 + spacing,
+        })
     }
-    pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
+    pub fn sprite_centered_at(
+        &self,
+        frame: &mut [u8],
+        face: Face,
+        center: i32,
+        y: i32,
+        text: &str,
+    ) {
+        self.sprite_at(frame, face, center - (self.width(face, text) >> 1), y, text);
+    }
+    pub fn sprite_at(&self, frame: &mut [u8], face: Face, x: i32, y: i32, text: &str) {
+        self.draw_text(frame, face, [x, y], text, true);
+    }
+    pub fn at(&self, frame: &mut [u8], face: Face, x: i32, y: i32, text: &str) {
+        self.draw_text(frame, face, [x, y], text, false);
+    }
+    fn draw_text(
+        &self,
+        frame: &mut [u8],
+        face: Face,
+        [mut x, mut y]: [i32; 2],
+        text: &str,
+        sprites: bool,
+    ) {
         let (spacing, tint) = match face {
             Face::PasswordLabel => (-1, [55, 88, 127]),
             Face::PasswordSelected => (-1, [100; 3]),
@@ -237,42 +270,58 @@ impl Fonts {
             Face::Speed => (3, [100, 0, 30]),
             Face::Sign => (0, [36, 150, 36]),
         };
-        let advance = |c| self.glyph(face, c).w as i32 + spacing;
         let (pixels, width) = if matches!(face, Face::Sign | Face::Control | Face::ArrowActive) {
             (&self.signs, self.sign_width)
         } else {
             (&self.pixels, self.width)
         };
-        for c in text.bytes() {
-            if c == 8 {
-                x -= 1;
-                continue;
-            }
-            let g = self.glyph(face, c);
-            if c != b' ' {
-                for dy in 0..g.h {
-                    let row = y - g.h as i32 + g.y + dy as i32;
-                    if !(0..HEIGHT as i32).contains(&row) {
+        let mut draw = |(x, y, g): (i32, i32, Glyph)| {
+            for dy in 0..g.h {
+                let row = y - g.h as i32 + g.y + dy as i32;
+                if !(0..HEIGHT as i32).contains(&row) {
+                    continue;
+                }
+                for dx in 0..g.w {
+                    let col = x + dx as i32;
+                    if !(0..WIDTH as i32).contains(&col) {
                         continue;
                     }
-                    for dx in 0..g.w {
-                        let col = x + dx as i32;
-                        if !(0..WIDTH as i32).contains(&col) {
-                            continue;
+                    let pixel = pixels[(g.v + dy) * width + g.u + dx];
+                    if pixel[3] != 0 {
+                        let at = 4 * (row as usize * WIDTH + col as usize);
+                        for i in 0..3 {
+                            let shaded = ((u16::from(pixel[i] >> 3) * tint[i]) >> 7).min(31) as u8;
+                            frame[at + i] = (shaded << 3) | (shaded >> 2);
                         }
-                        let pixel = pixels[(g.v + dy) * width + g.u + dx];
-                        if pixel[3] != 0 {
-                            let at = 4 * (row as usize * WIDTH + col as usize);
-                            for i in 0..3 {
-                                frame[at + i] =
-                                    (u16::from(pixel[i]) * tint[i] / 128).min(255) as u8;
-                            }
-                            frame[at + 3] = 255;
-                        }
+                        frame[at + 3] = 255;
                     }
                 }
             }
-            x += advance(c);
+        };
+        let glyphs = text.bytes().filter_map(|c| match c {
+            b'\n' | b'\r' => {
+                if c == b'\n' {
+                    x = 0;
+                }
+                y += self.glyph(face, b'[').h as i32;
+                None
+            }
+            8 => {
+                x -= 1;
+                None
+            }
+            _ => {
+                let g = self.glyph(face, c);
+                let position = (x, y, g);
+                x += g.w as i32 + spacing;
+                (c != b' ').then_some(position)
+            }
+        });
+        if sprites {
+            // FONT.c links sprites at the head of the ordering table.
+            glyphs.collect::<Vec<_>>().into_iter().rev().for_each(draw);
+        } else {
+            glyphs.for_each(&mut draw);
         }
     }
 }

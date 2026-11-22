@@ -696,7 +696,6 @@ pub fn hud_letters(
     mut overlay: Single<(&mut HudLetters, &mut Sprite)>,
 ) {
     use tm1_assets::screen::Face;
-    use tm1_core::drive::Vehicle;
     let (state, sprite) = &mut *overlay;
     sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
     let speed = drive.player.speed_mph(3).abs() % 1000;
@@ -726,36 +725,60 @@ pub fn hud_letters(
         pixels.fill(0);
         arena
             .fonts
-            .at(pixels, Face::Speed, 102, 214, &format!("{speed:3}"));
+            .sprite_at(pixels, Face::Speed, 102, 214, &format!("{speed:3}"));
         if at_capacity {
-            arena
-                .fonts
-                .centered_at(pixels, Face::Control, 159, 155, "Max Carrying Capacity");
+            arena.fonts.sprite_centered_at(
+                pixels,
+                Face::Control,
+                159,
+                155,
+                "Max Carrying Capacity",
+            );
         }
-        let name = |car: Vehicle| {
-            let card = Vehicle::CARD_ORDER
-                .iter()
-                .position(|&v| v == car)
-                .unwrap_or(12);
-            arena.fonts.car_sign(card)
-        };
         if let Some(car) = sign {
-            arena.fonts.centered(pixels, Face::Sign, 33, name(car));
+            arena.fonts.sprite_centered_at(
+                pixels,
+                Face::Sign,
+                146,
+                33,
+                rival_name(&arena.fonts, car),
+            );
         }
-        for (i, ai) in drive.opponents.iter().enumerate() {
-            if mask & (1 << i) != 0 {
-                arena.fonts.at(
-                    pixels,
-                    Face::Sign,
-                    220,
-                    70 + i as i32 * 12,
-                    name(ai.vehicle()),
-                );
-            }
-        }
+        draw_rival_list(
+            pixels,
+            &arena.fonts,
+            drive.opponents.iter().map(|ai| ai.vehicle()),
+            mask,
+        );
     }
 }
 
+fn rival_name(fonts: &tm1_assets::screen::Fonts, car: tm1_core::drive::Vehicle) -> &str {
+    let card = tm1_core::drive::Vehicle::CARD_ORDER
+        .iter()
+        .position(|&v| v == car)
+        .unwrap_or(12);
+    fonts.car_sign(card)
+}
+
+fn draw_rival_list(
+    pixels: &mut [u8],
+    fonts: &tm1_assets::screen::Fonts,
+    cars: impl Iterator<Item = tm1_core::drive::Vehicle>,
+    living: u16,
+) {
+    for (slot, car) in cars.enumerate() {
+        if living & (1 << slot) != 0 {
+            fonts.sprite_at(
+                pixels,
+                tm1_assets::screen::Face::Sign,
+                220,
+                70 + slot as i32 * 12,
+                rival_name(fonts, car),
+            );
+        }
+    }
+}
 pub fn hud(
     window: Single<&Window>,
     drive: Res<crate::driving::Drive>,
@@ -2039,5 +2062,141 @@ pub fn duel_view(
             up,
             focal,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tm1_core::drive::Vehicle;
+
+    fn draw_jp_font_packets(cpu: &crate::reference_cpu::Cpu, ot: u32, tim: &[u8]) -> Vec<u8> {
+        let bitmap = 8 + u32::from_le_bytes(tim[8..12].try_into().unwrap()) as usize;
+        let stride =
+            2 * u16::from_le_bytes(tim[bitmap + 8..bitmap + 10].try_into().unwrap()) as usize;
+        let mut expected = vec![0; 320 * 240 * 4];
+        let mut packet = cpu.word(ot) & 0xffffff;
+        while packet != 0xffffff {
+            let tag = cpu.word(packet);
+            if tag >> 24 == 4 {
+                let rgb = cpu.word(packet + 4).to_le_bytes();
+                let xy = cpu.word(packet + 8);
+                let uv = cpu.word(packet + 12);
+                let wh = cpu.word(packet + 16);
+                let (u, v) = (uv as u8 as usize, (uv >> 8) as u8 as usize - 160);
+                for dy in 0..(wh >> 16) as usize {
+                    let y = (xy >> 16) as usize + dy;
+                    for dx in 0..(wh as u16) as usize {
+                        let x = xy as u16 as usize + dx;
+                        if x >= 320 || y >= 240 {
+                            continue;
+                        }
+                        let texel = tim[bitmap + 12 + (v + dy) * stride + (u + dx) / 2];
+                        let index = usize::from((texel >> (4 * ((u + dx) % 2))) & 15);
+                        let at = 20 + index * 2;
+                        let word = u16::from_le_bytes([tim[at], tim[at + 1]]);
+                        if word == 0 {
+                            continue;
+                        }
+                        let dst = &mut expected[4 * (320 * y + x)..][..4];
+                        for ch in 0..3 {
+                            let shade = (((word >> (ch * 5)) & 31) * u16::from(rgb[ch]) / 128)
+                                .min(31) as u8;
+                            dst[ch] = shade * 8 + shade / 4;
+                        }
+                        dst[3] = 255;
+                    }
+                }
+            } else {
+                assert_eq!(
+                    tag >> 24,
+                    2,
+                    "packet={packet:#x} tag={tag:#x} head={:#x}",
+                    cpu.word(ot)
+                );
+            }
+            packet = tag & 0xffffff;
+        }
+        expected
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn remaining_rivals_match_jp_sprite_chain() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let fonts = tm1_assets::screen::Fonts::load(&disc).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let tim = disc.read("TIM/CPFONT.TIM").unwrap();
+        const OT: u32 = 0x80006000;
+        // fontInit's metrics, sprite and draw-mode templates for CP font 2.
+        cpu.put(0x80198c14, &0x80170bc4u32.to_le_bytes());
+        cpu.put(0x80198b64 + 2 * 20 + 3, &[4]);
+        cpu.put(0x80198b64 + 2 * 20 + 7, &[0x64]);
+        cpu.put(0x80198b10 + 2 * 12 + 3, &[2]);
+        cpu.put(0x8018c338, &8u16.to_le_bytes());
+        let roster: Vec<_> = Vehicle::CARD_ORDER
+            .into_iter()
+            .chain([Vehicle::Minion])
+            .collect();
+        for (card, &vehicle) in roster.iter().enumerate() {
+            let name = cpu.call(0x80150cb4, &[vehicle as u32]);
+            let name = std::ffi::CStr::from_bytes_until_nul(&cpu.ram[(name & 0x1fffff) as usize..])
+                .unwrap();
+            assert_eq!(fonts.car_name(card).as_bytes(), name.to_bytes());
+        }
+        for start in [0, 5] {
+            let cars = &roster[start..start + 8];
+            for (enabled, living) in [(true, 0xffu16), (true, 0xad), (true, 0), (false, 0xff)] {
+                cpu.put(OT, &0xffffffu32.to_le_bytes());
+                cpu.put(0x8018c5e8, &u32::from(enabled).to_le_bytes());
+                for (slot, &car) in cars.iter().enumerate() {
+                    let at = 0x8019f7a8 + slot as u32 * 0x560;
+                    cpu.put(at + 0x3c, &(car as u32).to_le_bytes());
+                    cpu.put(
+                        at + 0x24c,
+                        &(if (living >> slot) & 1 != 0 {
+                            100i32
+                        } else {
+                            -1
+                        })
+                        .to_le_bytes(),
+                    );
+                }
+                cpu.call(0x801461e4, &[OT]);
+                let expected = draw_jp_font_packets(&cpu, OT, &tim);
+                let mut actual = vec![0; expected.len()];
+                draw_rival_list(
+                    &mut actual,
+                    &fonts,
+                    cars.iter().copied(),
+                    if enabled { living } else { 0 },
+                );
+                assert_eq!(
+                    actual.iter().zip(&expected).position(|(a, b)| a != b),
+                    None,
+                    "start={start} mask={living:#x} enabled={enabled}"
+                );
+            }
+        }
+        // Centering measures the final line. A line feed resets X, while a CR keeps it.
+        let text = "YELLOW\x08 JACKET\nA\rB";
+        const STRING: u32 = 0x80006100;
+        cpu.put(STRING, text.as_bytes());
+        cpu.put(STRING + text.len() as u32, &[0]);
+        let face = tm1_assets::screen::Face::Sign;
+        assert_eq!(
+            fonts.width(face, text),
+            cpu.call(0x8010b03c, &[2, STRING]) as i32
+        );
+        cpu.call(0x8010bf60, &[2, 36, 150, 36]);
+        cpu.put(OT, &0xffffffu32.to_le_bytes());
+        cpu.call(
+            0x8010b4f4,
+            &[2, 146, 33, 0x80006300, 0x80006400, STRING, OT],
+        );
+        let expected = draw_jp_font_packets(&cpu, OT, &tim);
+        let mut actual = vec![0; expected.len()];
+        fonts.sprite_centered_at(&mut actual, face, 146, 33, text);
+        assert!(actual == expected);
     }
 }
