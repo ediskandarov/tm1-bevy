@@ -1459,6 +1459,22 @@ pub fn particle_frame(kind: i32, ticks: i32) -> Option<ParticleFrame> {
     })
 }
 
+/// draw_tasers rejects the whole segment if either endpoint fails projection.
+pub fn project_taser_point(
+    [x, y, z]: [i32; 3],
+    focal: [i32; 2],
+    center: [i32; 2],
+) -> Option<[i32; 2]> {
+    if !(4..16364).contains(&z) {
+        return None;
+    }
+    let xy = [x.wrapping_mul(focal[0]) / z, y.wrapping_mul(focal[1]) / z];
+    xy.into_iter()
+        .zip(center)
+        .all(|(v, c)| (-4000..=4000).contains(&v.wrapping_add(c)))
+        .then_some(xy)
+}
+
 /// INTERACT.c culls the drop center before projecting either kind of quad.
 pub fn drop_visible([x, y, z]: [i32; 3]) -> bool {
     (-640..=640).contains(&x) && (-640..=640).contains(&y) && (16..=30000).contains(&z)

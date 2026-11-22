@@ -1499,12 +1499,19 @@ fn draw_view(
         }
     }
     for arc in &arcs[..arc_count] {
-        let points = arc.map(camera_point);
+        let points = arc.map(|p| {
+            let camera = camera_point(p);
+            let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
+            let [x, y] = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
+            Some((
+                Vec2::new(x as f32, -y as f32) * pixel_scale,
+                coords[2] as f32,
+            ))
+        });
         for (j, segment) in points.windows(2).enumerate() {
-            if segment.iter().any(|p| !(4.0..16364.0).contains(&p.z)) {
+            let (Some((a, _)), Some((b, depth))) = (segment[0], segment[1]) else {
                 continue;
-            }
-            let [a, b] = [segment[0], segment[1]].map(|p| p.truncate() * (focal / p.z));
+            };
             let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
             let colors = [j, j + 1].map(|i| {
                 let level = (250 - 12 * i) as u8;
@@ -1513,7 +1520,7 @@ fn draw_view(
             quad(
                 &mut solids,
                 [a - normal, a + normal, b - normal, b + normal],
-                [segment[0].z, segment[0].z, segment[1].z, segment[1].z],
+                [depth.max(near + 0.01); 4],
                 colors,
             );
         }

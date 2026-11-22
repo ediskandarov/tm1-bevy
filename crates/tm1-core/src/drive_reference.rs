@@ -2313,6 +2313,91 @@ fn identity_projection(cpu: &mut Cpu) -> ([i32; 2], [i32; 2]) {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn outlaw_taser_draw_packets_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let (center, _) = identity_projection(&mut cpu);
+    let focal = [204, 91];
+    for (getter, value) in [0x80109e3c, 0x80109e74].into_iter().zip(focal) {
+        put(&mut cpu, getter, 0x03e00008);
+        put(&mut cpu, getter + 4, 0x24020000 | value as u32);
+    }
+    // Suppress particle allocation while retaining the retail line builder.
+    for effect in [0x8013721c, 0x801369b0, 0x80135f90] {
+        cpu.put(effect, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let taser = 0x80199d88;
+    put(&mut cpu, taser, VIEW_OUTPUT);
+    put(&mut cpu, taser + 4, VIEW_OUTPUT + 16);
+    put(&mut cpu, taser + 12, 1);
+    let packet = RENDER_SCRATCH + 0x100;
+    let ot = 0x80010000;
+    put(&mut cpu, RENDER_SCRATCH, ot);
+    put(&mut cpu, RENDER_SCRATCH + 12, packet + 16 * 80);
+    let mut full = false;
+    let mut partial = false;
+    let mut empty = false;
+    for (x, y, z) in [
+        (15, -37, 320),
+        (0, 0, 3),
+        (0, 0, 4),
+        (0, 0, 16363),
+        (0, 0, 16364),
+        (4000 - center[0], 0, 204),
+        (-4000 - center[0], 0, 204),
+        (4001 - center[0], 0, 204),
+        (0, 4000 - center[1], 91),
+        (0, -4001 - center[1], 91),
+        (50000, 50000, 12),
+    ] {
+        for (i, v) in [x, y, z - 30, 0, x + 7, y - 11, z].into_iter().enumerate() {
+            put(&mut cpu, VIEW_OUTPUT + i as u32 * 4, v as u32);
+        }
+        cpu.put(taser + 8, &2i16.to_le_bytes());
+        put(&mut cpu, RENDER_SCRATCH + 8, packet);
+        let mut points = Vec::new();
+        cpu.call_observed(0x801333d0, &[RENDER_SCRATCH, 0], 0x80000080, |cpu| {
+            if cpu.pc() == 0x800fe9c4 {
+                points.push([0, 4, 8].map(|i| cpu.word(cpu.r[5] + i) as i32));
+            }
+        });
+        assert_eq!(points.len(), 16);
+        let mut next = packet;
+        let mut buckets = std::collections::BTreeMap::new();
+        for (j, pair) in points.windows(2).enumerate() {
+            let [Some(a), Some(b)] =
+                [pair[0], pair[1]].map(|p| project_taser_point(p, focal, center))
+            else {
+                continue;
+            };
+            for (k, [u, v]) in [a, b].into_iter().enumerate() {
+                let xy = cpu.word(next + 8 + 8 * k as u32);
+                assert_eq!(
+                    [xy as i16 as i32, (xy >> 16) as i16 as i32],
+                    [center[0] + u, center[1] + v]
+                );
+                let level = (250 - 12 * (j + k)) as u8;
+                assert_eq!(
+                    cpu.word(next + 4 + 8 * k as u32) & 0xffffff,
+                    u32::from_le_bytes([level, level, 255, 0])
+                );
+            }
+            buckets.insert(pair[1][2] / 4, next);
+            next += 80;
+        }
+        assert_eq!(cpu.word(RENDER_SCRATCH + 8), next);
+        for (bucket, last) in buckets {
+            assert_eq!(cpu.word(ot + bucket as u32 * 4) & 0xffffff, last & 0xffffff);
+        }
+        full |= next == packet + 15 * 80;
+        partial |= next > packet && next < packet + 15 * 80;
+        empty |= next == packet;
+    }
+    assert!(full && partial && empty);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn drop_draw_packets_original() {
     let mut r = Reference::new();
     let cpu = &mut r.cpu;
