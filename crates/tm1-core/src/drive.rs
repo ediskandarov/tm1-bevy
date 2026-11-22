@@ -1377,6 +1377,7 @@ unsafe extern "C" {
         guns: *mut u8,
         sounds: *mut [i32; 5],
         audio: *mut std::ffi::c_void,
+        next_audio: *mut std::ffi::c_void,
     ) -> u8;
     #[cfg(test)]
     fn tm1_contacts(
@@ -1675,6 +1676,7 @@ pub struct CollisionScene {
     gun_requests: [u8; 9],
     car_sounds: [[i32; 5]; 9],
     audio: Vec<BattleEvent>,
+    next_audio: Vec<BattleEvent>,
     before_primary_view: usize,
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
@@ -1722,6 +1724,7 @@ impl CollisionScene {
             gun_requests: [0; 9],
             car_sounds: [[0; 5]; 9],
             audio: Vec::new(),
+            next_audio: Vec::new(),
             before_primary_view: 0,
             turbo_requests: [0; 2],
         })
@@ -1851,6 +1854,7 @@ impl CollisionScene {
         self.radar = Radar::default();
         self.battle = [0; 3];
         self.audio.clear();
+        self.next_audio.clear();
     }
     pub fn wheel_steps(&self) -> [i64; 14] {
         unsafe extern "C" {
@@ -1889,6 +1893,7 @@ impl CollisionScene {
         self.radar = Radar::default();
         self.battle = [0; 3];
         self.audio.clear();
+        self.next_audio.clear();
         unsafe {
             tm1_reset_projectiles(self.native.as_ptr());
         }
@@ -1979,6 +1984,7 @@ impl CollisionScene {
                 turbo: *mut u8,
                 sounds: *mut [i32; 5],
                 audio: *mut std::ffi::c_void,
+                next_audio: *mut std::ffi::c_void,
                 updated: *mut u8,
             ) -> usize;
         }
@@ -1990,6 +1996,7 @@ impl CollisionScene {
         if self.duel_winner.is_some() {
             return self.duel_winner;
         }
+        self.audio.append(&mut self.next_audio);
         let was_dead = players.each_ref().map(|car| car.state[0xa0] != 0);
         let [first, second] = players;
         assert_eq!(first.state[2..4], [0, 0]);
@@ -2017,6 +2024,7 @@ impl CollisionScene {
                 self.turbo_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
                 (&raw mut self.audio).cast(),
+                (&raw mut self.next_audio).cast(),
                 self.duel_updated.as_mut_ptr(),
             );
         }
@@ -2059,6 +2067,7 @@ impl CollisionScene {
     ) -> PreparedBout {
         assert!((1..=5).contains(&fields));
         self.audio.clear();
+        self.audio.append(&mut self.next_audio);
         player.last_fields = fields;
         player.frame = player.frame.wrapping_add(1);
         let update_player = self.bout_phase(player, opponents, 0, fields, None, false);
@@ -2140,6 +2149,7 @@ impl CollisionScene {
                 self.gun_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
                 (&raw mut self.audio).cast(),
+                (&raw mut self.next_audio).cast(),
             ) != 0
         }
     }

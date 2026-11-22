@@ -22,8 +22,17 @@ pub enum ExclusiveVoice {
     ScaledEffect(u8),
 }
 
+#[derive(Clone, Copy, Default)]
+pub struct EngineMix {
+    pub rev: i32,
+    pub channels: [i32; 2],
+    pub range: u32,
+}
+
 pub enum BattleRequest {
-    Engine { slot: usize, running: bool },
+    EngineRev(usize, EngineMix),
+    EngineStop(usize),
+    EngineDeferred(usize),
     Play(BattleSound),
     Stop(ExclusiveVoice),
     Turbo,
@@ -117,6 +126,35 @@ pub(crate) fn effect_sample(kind: i32, recharge: usize) -> Option<usize> {
     })
 }
 
+// soundPlayId and soundStopPlayId leave the request count at 45 once full.
+// soundProcessIds walks only the counted entries, then resets the queue.
+struct BattleQueue {
+    remaining: usize,
+}
+
+impl BattleQueue {
+    fn new() -> Self {
+        Self { remaining: 45 }
+    }
+
+    fn submit(&mut self, request: BattleRequest, emit: &mut impl FnMut(BattleRequest)) {
+        if matches!(request, BattleRequest::EngineStop(_)) {
+            // uasoundStopCarSounds queues IDs 0, engine, 2, gun in that order.
+            // The two legacy IDs have no active voice. The gun has its own event.
+            let engine_fits = self.remaining >= 2;
+            self.remaining = self.remaining.saturating_sub(3);
+            if engine_fits {
+                emit(request);
+            }
+        } else if self.remaining > 0 {
+            self.remaining -= 1;
+            emit(request);
+        } else if let BattleRequest::EngineRev(slot, _) = request {
+            emit(BattleRequest::EngineDeferred(slot));
+        }
+    }
+}
+
 // Deliver requests as they were emitted by the simulation. A rendering frame can
 // contain several steps, so each call finishes the pending hover motor request.
 pub(crate) fn battle_audio(
@@ -125,10 +163,13 @@ pub(crate) fn battle_audio(
     volume: u8,
     recharge: usize,
     previous_view: Option<&tm1_core::drive::SoundListener>,
-    car: impl Fn(usize) -> Vehicle,
+    actor: impl Fn(usize) -> (Vehicle, i32, [i32; 3]),
     mut emit: impl FnMut(BattleRequest),
 ) {
     use tm1_core::drive::{BattleEvent, CarSound};
+    let mut queue = BattleQueue::new();
+    let mut emit = |request| queue.submit(request, &mut emit);
+    let car = |slot| actor(slot).0;
     for (index, event) in scene.battle_events(listener).enumerate() {
         let listener = previous_view
             .filter(|_| index < scene.duel_events_before_primary_view())
@@ -182,10 +223,7 @@ pub(crate) fn battle_audio(
                     BattleRequest::Stop(key)
                 });
             }
-            BattleEvent::EngineStop(slot) => emit(BattleRequest::Engine {
-                slot,
-                running: false,
-            }),
+            BattleEvent::EngineStop(slot) => emit(BattleRequest::EngineStop(slot)),
             BattleEvent::Actor(slot) => {
                 let effect = |(sound, position)| {
                     let (id, key, level) = car_sample(sound, car(slot), slot, recharge);
@@ -206,10 +244,23 @@ pub(crate) fn battle_audio(
                 }) {
                     emit(effect(sound));
                 }
-                emit(BattleRequest::Engine {
+                let (_, rev, position) = actor(slot);
+                let (channels, range) = if previous_view.is_some() {
+                    ([i32::from(volume); 2], 0)
+                } else {
+                    (
+                        listener.channels(position, volume, false),
+                        listener.sound_range(position),
+                    )
+                };
+                emit(BattleRequest::EngineRev(
                     slot,
-                    running: true,
-                });
+                    EngineMix {
+                        rev,
+                        channels,
+                        range,
+                    },
+                ));
                 for sound in sounds {
                     emit(effect(sound));
                 }
@@ -946,9 +997,18 @@ pub fn advance(
             None,
             |slot| {
                 if slot == 0 {
-                    state.player.vehicle()
+                    (
+                        state.player.vehicle(),
+                        state.player.rev(),
+                        state.player.position(),
+                    )
                 } else {
-                    state.opponents[slot - 1].vehicle()
+                    let rival = &state.opponents[slot - 1];
+                    (
+                        rival.vehicle(),
+                        rival.engine_rev().unwrap_or_default(),
+                        rival.position(),
+                    )
                 }
             },
             |request| state.sounds.push(request),
@@ -982,6 +1042,47 @@ pub fn advance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_queue_matches_retail_at_the_last_request() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(0x8016fecc + 24, &(3357u32 * 3357).to_le_bytes());
+        let gun = ExclusiveVoice::MachineGuns(Vehicle::YellowJacket);
+        for fill in 0..=50 {
+            cpu.put(0x8018bf7c, &u32::MAX.to_le_bytes());
+            let mut queue = BattleQueue::new();
+            let mut accepted = Vec::new();
+            let mut deferred = false;
+            let mut emit = |r| match r {
+                BattleRequest::Turbo => accepted.push((2, 0x82)),
+                BattleRequest::EngineStop(0) => accepted.push((3, 0x4e)),
+                BattleRequest::Stop(k) if k == gun => accepted.push((3, 0x5b)),
+                BattleRequest::EngineRev(0, _) => accepted.push((2, 0x4e)),
+                BattleRequest::EngineDeferred(0) => deferred = true,
+                _ => unreachable!(),
+            };
+            for _ in 0..fill {
+                cpu.call(0x80106d60, &[0x82, 0, 0, 0, 0, 0]);
+                queue.submit(BattleRequest::Turbo, &mut emit);
+            }
+            cpu.call(0x80107a1c, &[Vehicle::YellowJacket as u32]);
+            queue.submit(BattleRequest::EngineStop(0), &mut emit);
+            queue.submit(BattleRequest::Stop(gun), &mut emit);
+            cpu.call(0x80106d60, &[0x4e, 0, 0, 1, 30, 0]);
+            queue.submit(BattleRequest::EngineRev(0, Default::default()), &mut emit);
+            let original: Vec<_> = (0..cpu.word(0x8018bf7c))
+                .map(|i| {
+                    let at = 0x801984e8 + 28 * i;
+                    (cpu.word(at + 24), cpu.word(at))
+                })
+                .filter(|(_, id)| !matches!(id, 0 | 2))
+                .collect();
+            assert_eq!(accepted, original, "after {fill} turbo requests");
+            assert_eq!(deferred, !original.contains(&(2, 0x4e)));
+        }
+    }
+
     fn tick(app: &mut App, milliseconds: u64) {
         app.world_mut()
             .resource_mut::<Time<Real>>()

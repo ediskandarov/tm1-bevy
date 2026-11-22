@@ -166,6 +166,9 @@ pub fn mix(
                 }
                 continue;
             }
+            if sequence.engines_deferred[engine.slot] && !audible {
+                continue;
+            }
             if restarted[engine.slot] {
                 voice.order = sequence.next();
                 if audible {
@@ -176,7 +179,7 @@ pub fn mix(
         ranked.push(Candidate {
             entity,
             order: voice.order,
-            finishing: engine.is_none(),
+            finishing: engine.is_none_or(|e| sequence.engines_deferred[e.slot]),
             priority: voice.priority,
             range: voice.distance,
             engine: engine.is_some(),
@@ -187,7 +190,9 @@ pub fn mix(
     }
     for request in &duel.sounds {
         let (layers, key, channels, percent, distance) = match request {
-            BattleRequest::Engine { .. } => continue,
+            BattleRequest::EngineRev(..)
+            | BattleRequest::EngineStop(_)
+            | BattleRequest::EngineDeferred(_) => continue,
             BattleRequest::Turbo => (
                 &bank.turbo,
                 Some(ExclusiveVoice::Turbo),
@@ -269,9 +274,13 @@ pub fn mix(
             let Ok((_, _, Some(engine), audible)) = playing.get(entity) else {
                 continue;
             };
-            engine
-                .register
-                .set(engine.pitch.register(duel.cars[engine.slot].rev()));
+            if !sequence.engines_deferred[engine.slot] {
+                engine
+                    .register
+                    .set(engine.pitch.register(duel.cars[engine.slot].rev()));
+            } else if let Some(mix) = sequence.engine_mix[engine.slot] {
+                engine.register.set(engine.pitch.register(mix.rev));
+            }
             if rank < 24 {
                 if !audible {
                     commands
@@ -296,6 +305,63 @@ mod tests {
     use bevy::ecs::system::RunSystemOnce;
     use std::time::Duration;
     use tm1_core::drive::{ContactVoice, Difficulty, Level};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn bottom_view_taser_sparks_enter_the_next_sound_queue() {
+        use tm1_core::drive::{BattleEvent, SoundListener};
+        let mut world = crate::contest::menu_world();
+        crate::duel::start(
+            &mut world,
+            Level::Warehouse,
+            [Vehicle::Outlaw, Vehicle::Spectre],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let mut keys = ButtonInput::default();
+        keys.press(KeyCode::KeyF);
+        world.insert_resource(keys);
+        for tick in 0..2 {
+            let duel = world.resource::<Duel>();
+            let views =
+                [0, 1].map(|slot| SoundListener::new(&duel.cars[slot], &duel.cameras[slot], None));
+            world.run_system_once(crate::duel::advance).unwrap();
+            let duel = world.resource::<Duel>();
+            let before_primary = duel.scene.duel_events_before_primary_view();
+            let mut expected = Vec::new();
+            let mut spark_count = [0; 2];
+            for (i, event) in duel.scene.battle_events(&views[0]).enumerate() {
+                if let BattleEvent::Effect { kind: 1, position } = event {
+                    let view = usize::from(i < before_primary);
+                    spark_count[view] += 1;
+                    expected.push((
+                        views[view].sound_range(position),
+                        views[view].channels(position, duel.settings.effects_volume(), false),
+                    ));
+                }
+            }
+            assert_eq!(spark_count, if tick == 0 { [0, 0] } else { [2, 2] });
+            let requests: Vec<_> = duel
+                .sounds
+                .iter()
+                .filter_map(|r| match r {
+                    BattleRequest::Play(s)
+                        if s.exclusive == Some(ExclusiveVoice::ScaledEffect(103)) =>
+                    {
+                        Some((s.range, s.channels))
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(requests, expected);
+            world.insert_resource(ButtonInput::<KeyCode>::default());
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

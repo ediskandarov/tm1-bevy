@@ -276,6 +276,8 @@ pub struct OneShot {
 pub struct VoiceSequence {
     serial: u64,
     engines_stopped: [bool; 9],
+    engines_deferred: [bool; 9],
+    engine_mix: [Option<crate::driving::EngineMix>; 9],
     last_frame: Option<u32>,
 }
 impl VoiceSequence {
@@ -283,9 +285,17 @@ impl VoiceSequence {
     fn update_engines(&mut self, requests: &[crate::driving::BattleRequest]) -> [bool; 9] {
         let mut restarted = [false; 9];
         for request in requests {
-            if let crate::driving::BattleRequest::Engine { slot, running } = *request {
-                restarted[slot] |= running && self.engines_stopped[slot];
-                self.engines_stopped[slot] = !running;
+            use crate::driving::BattleRequest::*;
+            match *request {
+                EngineRev(slot, mix) => {
+                    restarted[slot] |= self.engines_stopped[slot];
+                    self.engines_stopped[slot] = false;
+                    self.engines_deferred[slot] = false;
+                    self.engine_mix[slot] = Some(mix);
+                }
+                EngineStop(slot) => self.engines_stopped[slot] = true,
+                EngineDeferred(slot) => self.engines_deferred[slot] = true,
+                _ => {}
             }
         }
         restarted
@@ -432,6 +442,8 @@ pub fn update(
     let new_frame = sequence.last_frame.replace(frame) != Some(frame);
     if reset {
         sequence.engines_stopped = [false; 9];
+        sequence.engines_deferred = [false; 9];
+        sequence.engine_mix = [None; 9];
     }
     let restarted = sequence.update_engines(&drive.sounds);
     for (entity, mut engine, rival, playing, sink) in &mut engines {
@@ -464,22 +476,28 @@ pub fn update(
             }
             continue;
         };
-        if !playing && !new_frame && !reset {
+        let deferred = sequence.engines_deferred[slot];
+        if !playing && (deferred || (!new_frame && !reset)) {
             continue;
         }
         let position = rival
             .map(|r| drive.opponents[r.slot].position())
             .unwrap_or_else(|| drive.player.position());
+        let mix = sequence.engine_mix[slot].filter(|_| deferred);
         ranked.push(Candidate {
             entity,
             order: *engine.order.get_or_insert_with(|| sequence.next()),
             priority: engine.priority,
-            range: drive.listener.sound_range(position),
-            finishing: false,
+            range: mix.map_or_else(|| drive.listener.sound_range(position), |m| m.range),
+            finishing: deferred,
             engine: true,
         });
-        engine.levels.set(channels, 99);
-        engine.register.set(engine.pitch.register(rev));
+        if !deferred || mix.is_some() {
+            engine.levels.set(mix.map_or(channels, |m| m.channels), 99);
+            engine
+                .register
+                .set(engine.pitch.register(mix.map_or(rev, |m| m.rev)));
+        }
         if restart_engine && playing {
             commands.entity(entity).remove::<AudioSink>();
         }
@@ -543,7 +561,9 @@ pub fn update(
     use crate::driving::{BattleRequest, ExclusiveVoice};
     for request in &drive.sounds {
         let (tones, key, channels, percent, range) = match request {
-            BattleRequest::Engine { .. } => continue,
+            BattleRequest::EngineRev(..)
+            | BattleRequest::EngineStop(_)
+            | BattleRequest::EngineDeferred(_) => continue,
             BattleRequest::Play(sound) => (
                 &sounds.effects[sound.id],
                 sound.exclusive,
@@ -649,16 +669,10 @@ mod tests {
 
     #[test]
     fn engine_stop_survives_render_updates_until_the_next_rev_request() {
-        use crate::driving::BattleRequest::Engine;
+        use crate::driving::BattleRequest::{EngineRev, EngineStop};
         let mut sequence = VoiceSequence::default();
-        let rev = || Engine {
-            slot: 1,
-            running: true,
-        };
-        let stop = || Engine {
-            slot: 1,
-            running: false,
-        };
+        let rev = || EngineRev(1, Default::default());
+        let stop = || EngineStop(1);
         sequence.update_engines(&[rev(), stop()]);
         sequence.update_engines(&[]);
         assert!(sequence.engines_stopped[1]);
@@ -667,6 +681,54 @@ mod tests {
         assert!(sequence.update_engines(&[stop(), rev(), rev()])[1]);
         assert!(!sequence.engines_stopped[1]);
         assert!(!sequence.update_engines(&[rev()])[1]);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn saturated_queue_holds_engine_pitch_and_releases_its_voice_under_pressure() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::{BattleRequest, BattleSound, Drive, EngineMix};
+        let mut world = crate::contest::menu_world();
+        let stage = Stage::load(
+            &world.resource::<Campaign>().0,
+            Level::Warehouse,
+            Vehicle::RoadKill,
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        let rev = EngineMix {
+            rev: 80,
+            channels: [15, 28],
+            range: 120,
+        };
+        // Two simulation steps arrive together. Only the first rev reached the sound queue.
+        world.resource_mut::<Drive>().sounds = vec![
+            BattleRequest::EngineRev(0, rev),
+            BattleRequest::EngineDeferred(0),
+        ];
+        world.run_system_once(update).unwrap();
+        let mut motors = world
+            .query_filtered::<&EngineTone, (With<Engine>, With<AudioPlayer<pcm::StereoPcm>>)>();
+        assert_eq!(motors.iter(&world).count(), 2);
+        for engine in motors.iter(&world) {
+            assert_eq!(engine.pitch_register(), engine.pitch.register(80));
+        }
+        let mut requests: Vec<_> = (0..10)
+            .map(|_| {
+                BattleRequest::Play(BattleSound {
+                    id: 4,
+                    exclusive: None,
+                    volume_percent: 99,
+                    range: 0,
+                    channels: [33; 2],
+                })
+            })
+            .collect();
+        requests.push(BattleRequest::EngineDeferred(0));
+        world.resource_mut::<Drive>().sounds = requests;
+        world.run_system_once(update).unwrap();
+        assert_eq!(motors.iter(&world).count(), 0);
     }
 
     #[test]

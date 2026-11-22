@@ -549,7 +549,10 @@ pub fn advance(
             duel.settings.effects_volume(),
             13,
             Some(&previous_view),
-            |slot| duel.cars[slot].vehicle(),
+            |slot| {
+                let car = &duel.cars[slot];
+                (car.vehicle(), car.rev(), car.position())
+            },
             |request| duel.sounds.push(request),
         );
         for ((camera, car), updated) in duel
@@ -805,15 +808,11 @@ mod tests {
             world.insert_resource(keys);
             world.run_system_once(advance).unwrap();
             world.run_system_once(crate::sfx::duel::mix).unwrap();
-            let requests_stop = world.resource::<Duel>().sounds.iter().any(|r| {
-                matches!(
-                    r,
-                    crate::driving::BattleRequest::Engine {
-                        slot: 0,
-                        running: false
-                    }
-                )
-            });
+            let requests_stop = world
+                .resource::<Duel>()
+                .sounds
+                .iter()
+                .any(|r| matches!(r, crate::driving::BattleRequest::EngineStop(0)));
             let audible = world.query_filtered::<&crate::sfx::duel::DuelEngine, With<AudioPlayer<crate::sfx::pcm::StereoPcm>>>().iter(&world).any(|engine| engine.slot == 0);
             if requests_stop {
                 assert!(!audible, "wreck kept an active engine");

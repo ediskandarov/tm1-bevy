@@ -1177,7 +1177,7 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
 // so CheckVRMode can use the post-impact car state.
 // The original routines can change other cars during collision and weapon updates.
 u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio, void* next_audio)
 {
     tm1_bind_step_audio(audio);
     gun_requests = requests;
@@ -1252,8 +1252,10 @@ u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct Colli
     tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
-    if (rear_view)
+    if (rear_view) {
+        tm1_bind_step_audio(next_audio);
         display_weapon_pass(1);
+    }
 store_frame:
     tm1_store_battle(battle);
     tm1_bind_step_audio(NULL);
@@ -1273,7 +1275,7 @@ store_frame:
 // Both human actors update in slot order against the same collision graph.
 // The bottom viewport processes its display-time weapons after both actors.
 size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio, u8 updated[2])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio, void* next_audio, u8 updated[2])
 {
     tm1_bind_step_audio(audio);
     memset(sounds, 0, 9 * sizeof(*sounds));
@@ -1312,6 +1314,7 @@ size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     tm1_regenerate_stands();
     move_arena_targets(&cars[0].motion.pos);
     UpdateNumPotHoles();
+    tm1_bind_step_audio(next_audio);
     display_weapon_pass(1);
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
