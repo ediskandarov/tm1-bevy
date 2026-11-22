@@ -185,7 +185,7 @@ pub fn start(
         vec![second],
         &scene,
     )?;
-    let music = crate::music::track(disc, crate::music::opening_track(level, true))?;
+    let music = crate::music::StageTrack::load(disc, crate::music::opening_track(level, true))?;
     let bank = disc.read("SND/UACORE.VAB")?;
     let sounds = crate::sfx::duel::DuelBank::load(&bank, kinds, world)?;
     let settings = world
@@ -242,12 +242,14 @@ pub fn start(
         .run_system_once(render::setup)
         .map_err(|e| anyhow::anyhow!("render setup: {e:?}"))?;
     sounds.install(world, settings.effects_gain());
-    let track = world.resource_mut::<Assets<AudioSource>>().add(music);
+    let track = world
+        .get_resource_or_init::<Assets<crate::music::StageTrack>>()
+        .add(music);
     world.spawn((
         StageEntity,
         DuelMusic,
-        AudioPlayer::new(track),
-        PlaybackSettings::LOOP
+        AudioPlayer(track),
+        PlaybackSettings::ONCE
             .with_volume(bevy::audio::Volume::Linear(0.35 * settings.music_gain())),
     ));
     let score_image = crate::ending::screen_image(world, vec![0; 320 * 240 * 4]);
@@ -280,13 +282,14 @@ pub fn pause_menu(
     window: Single<&Window>,
     time: Res<Time<Real>>,
     sounds: Res<crate::sfx::duel::DuelBank>,
+    tracks: Res<Assets<crate::music::StageTrack>>,
     mut images: ResMut<Assets<Image>>,
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
     mut audio: Query<
         (
             Entity,
             Has<DuelEffect>,
-            Has<DuelMusic>,
+            Option<&AudioPlayer<crate::music::StageTrack>>,
             Has<AudioPlayer<crate::sfx::pcm::StereoPcm>>,
             &mut PlaybackSettings,
             Option<&mut AudioSink>,
@@ -405,13 +408,18 @@ pub fn pause_menu(
                     .entity(entity)
                     .remove::<(AudioPlayer<crate::sfx::pcm::StereoPcm>, AudioSink)>();
             }
-            playback.paused =
-                duel.pause.is_some() && !(music && matches!(duel.pause, Some(Page::Audio(_))));
-            playback.volume = bevy::audio::Volume::Linear(if music {
+            playback.paused = duel.pause.is_some()
+                && !(music.is_some() && matches!(duel.pause, Some(Page::Audio(_))));
+            playback.volume = bevy::audio::Volume::Linear(if music.is_some() {
                 0.35 * duel.settings.music_gain()
             } else {
                 0.28 * duel.settings.effects_gain()
             });
+            if matches!(duel.pause, Some(Page::Audio(_)))
+                && let Some(track) = music.and_then(|p| tracks.get(&p.0))
+            {
+                track.extend_loop(true);
+            }
             if let Some(mut sink) = sink {
                 sink.set_volume(playback.volume);
                 if playback.paused {

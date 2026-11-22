@@ -1,14 +1,103 @@
 use anyhow::{Result, ensure};
 use bevy::{
-    audio::{AudioSinkPlayback, Volume},
+    audio::{AudioSinkPlayback, ChannelCount, Decodable, SampleRate, Source, Volume},
     prelude::*,
+};
+use std::{
+    fs::File,
+    io::Read,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
 };
 use tm1_assets::disc::Disc;
 
+const SECTOR_BYTES: usize = 2352;
+const CD_START: usize = 150 * SECTOR_BYTES;
+
+#[derive(Asset, TypePath, Clone)]
+pub struct StageTrack {
+    pcm: Arc<[u8]>,
+    normal_end: usize,
+    extended: Arc<AtomicBool>,
+}
+
+impl StageTrack {
+    pub fn load(disc: &Disc, number: usize) -> Result<Self> {
+        let mut pcm = disc.audio_track(number)?;
+        let next = disc
+            .tracks
+            .get(number)
+            .ok_or_else(|| anyhow::anyhow!("missing next CD track"))?;
+        let normal_end = pcm.len();
+        ensure!(normal_end > CD_START, "stage track is too short");
+        pcm.resize(normal_end + next.index01 as usize * SECTOR_BYTES, 0);
+        File::open(&next.path)?.read_exact(&mut pcm[normal_end..])?;
+        Ok(Self {
+            pcm: pcm.into(),
+            normal_end,
+            extended: Arc::default(),
+        })
+    }
+
+    pub fn extend_loop(&self, extended: bool) {
+        self.extended.store(extended, Ordering::Relaxed);
+    }
+}
+
+pub struct CdPlayback {
+    track: StageTrack,
+    cursor: usize,
+}
+
+impl Decodable for StageTrack {
+    type Decoder = CdPlayback;
+    fn decoder(&self) -> Self::Decoder {
+        CdPlayback {
+            track: self.clone(),
+            cursor: CD_START,
+        }
+    }
+}
+
+impl Iterator for CdPlayback {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> {
+        // screenAudioOptions changes EndPos while soundResumePlayDA resumes
+        // from cdInterruptLoc. Only the next loop boundary changes.
+        if self.cursor == self.track.pcm.len()
+            || (self.cursor == self.track.normal_end
+                && !self.track.extended.load(Ordering::Relaxed))
+        {
+            self.cursor = CD_START;
+        }
+        let pcm = &self.track.pcm[self.cursor..self.cursor + 2];
+        self.cursor += 2;
+        Some(f32::from(i16::from_le_bytes([pcm[0], pcm[1]])) / 32768.)
+    }
+}
+
+impl Source for CdPlayback {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+    fn channels(&self) -> ChannelCount {
+        ChannelCount::new(2).unwrap()
+    }
+    fn sample_rate(&self) -> SampleRate {
+        SampleRate::new(44100).unwrap()
+    }
+}
+
 #[derive(Resource)]
 pub struct Music {
-    opening: Option<AudioSource>,
-    battle: Option<AudioSource>,
+    opening: Option<StageTrack>,
+    battle: Option<StageTrack>,
 }
 impl Music {
     pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
@@ -22,8 +111,8 @@ impl Music {
             _ => None,
         };
         Ok(Self {
-            opening: Some(track(disc, opening)?),
-            battle: battle.map(|n| track(disc, n)).transpose()?,
+            opening: Some(StageTrack::load(disc, opening)?),
+            battle: battle.map(|n| StageTrack::load(disc, n)).transpose()?,
         })
     }
 }
@@ -63,27 +152,28 @@ pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
 }
 #[derive(Component)]
 pub struct ArenaMusic {
-    opening: Handle<AudioSource>,
-    battle: Option<Handle<AudioSource>>,
+    opening: Handle<StageTrack>,
+    battle: Option<Handle<StageTrack>>,
     restart: u32,
 }
 pub fn start(
     mut commands: Commands,
     mut music: ResMut<Music>,
     drive: Res<crate::driving::Drive>,
-    mut assets: ResMut<Assets<AudioSource>>,
+    mut assets: ResMut<Assets<StageTrack>>,
 ) {
     if let Some(source) = music.opening.take() {
         let opening = assets.add(source);
+        let player = AudioPlayer(opening.clone());
         commands.spawn((
             crate::campaign::StageEntity,
             ArenaMusic {
-                opening: opening.clone(),
+                opening,
                 battle: music.battle.take().map(|s| assets.add(s)),
                 restart: drive.restart_count,
             },
-            AudioPlayer::new(opening),
-            PlaybackSettings::LOOP.with_volume(Volume::Linear(0.35 * drive.settings.music_gain())),
+            player,
+            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.35 * drive.settings.music_gain())),
         ));
     }
 }
@@ -92,12 +182,13 @@ pub fn control(
     mut music: Query<(
         Entity,
         &mut ArenaMusic,
-        &AudioPlayer,
+        &AudioPlayer<StageTrack>,
         &mut PlaybackSettings,
         Option<&mut AudioSink>,
     )>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
+    assets: Res<Assets<StageTrack>>,
 ) {
     let Ok((entity, mut tracks, player, mut settings, sink)) = music.single_mut() else {
         return;
@@ -109,6 +200,7 @@ pub fn control(
         || !window.focused;
     let restart = tracks.restart != drive.restart_count;
     tracks.restart = drive.restart_count;
+    let audio_options = matches!(drive.pause, Some(crate::pause::Page::Audio(_)));
     let desired = if drive.contacts.battle_music_playing() {
         tracks.battle.as_ref().unwrap_or(&tracks.opening)
     } else {
@@ -117,13 +209,18 @@ pub fn control(
     settings.paused = pause;
     settings.volume = volume;
     if restart || player.0 != *desired {
-        // Bevy's buffered CDDA loop cannot seek. Removing the sink opens a
-        // fresh decoder, including when the restart selects the same track.
+        if let Some(track) = assets.get(desired) {
+            track.extend_loop(false);
+        }
+        // Stage entry and life restarts open a new decoder at the CD start sector.
         commands
             .entity(entity)
             .remove::<AudioSink>()
-            .insert(AudioPlayer::new(desired.clone()));
+            .insert(AudioPlayer(desired.clone()));
         return;
+    }
+    if audio_options && let Some(track) = assets.get(desired) {
+        track.extend_loop(true);
     }
     let Some(mut sink) = sink else { return };
     sink.set_volume(volume);
@@ -132,6 +229,71 @@ pub fn control(
             sink.pause();
         } else {
             sink.play();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn stage_cd_loops_follow_retail_audio_options() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let mut sector = 0;
+        for track in &disc.tracks {
+            cpu.call(
+                0x80156f80,
+                &[
+                    sector + track.index01 as u32,
+                    0x801961e8 + 4 * track.number as u32,
+                ],
+            );
+            sector += (track.size / SECTOR_BYTES as u64) as u32;
+        }
+        for addr in [0x80156540, 0x801632b8] {
+            cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        for number in 2..=8 {
+            let track = StageTrack::load(&disc, number).unwrap();
+            cpu.put(0x8018bf68, &0u32.to_le_bytes());
+            cpu.call_until(0x801057e0, &[number as u32], 0x80105b60);
+            let (start, end) = (cpu.r[4], cpu.r[5]);
+            assert_eq!(
+                (end - start) as usize * SECTOR_BYTES,
+                track.normal_end - CD_START
+            );
+            cpu.put(0x8018bf68, &4u32.to_le_bytes());
+            cpu.call_until(0x801057e0, &[number as u32], 0x80105a1c);
+            assert_eq!(start, cpu.word(0x8018c4e4));
+            assert_eq!(
+                (cpu.word(0x8018c4e8) - start) as usize * SECTOR_BYTES,
+                track.pcm.len() - CD_START
+            );
+
+            let mut playback = track.decoder();
+            playback.cursor = track.normal_end - 2;
+            playback.next();
+            playback.next();
+            assert_eq!(playback.cursor, CD_START + 2);
+            playback.cursor = track.normal_end - 2;
+            track.extend_loop(true);
+            assert_eq!(playback.cursor, track.normal_end - 2);
+            playback.next();
+            let mut next_bin = File::open(&disc.tracks[number].path).unwrap();
+            let mut pregap = vec![0; 150 * SECTOR_BYTES];
+            next_bin.read_exact(&mut pregap).unwrap();
+            for bytes in pregap.chunks_exact(2) {
+                assert_eq!(
+                    playback.next(),
+                    Some(f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.)
+                );
+            }
+            assert_eq!(playback.cursor, track.pcm.len());
+            playback.next();
+            assert_eq!(playback.cursor, CD_START + 2);
         }
     }
 }

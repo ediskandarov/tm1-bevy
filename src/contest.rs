@@ -1605,7 +1605,7 @@ mod tests {
         }
         for (player, playback, engine) in world
             .query_filtered::<(
-                Option<&AudioPlayer>,
+                Option<&AudioPlayer<crate::music::StageTrack>>,
                 &PlaybackSettings,
                 Has<crate::sfx::duel::DuelEngine>,
             ), Or<(With<duel::DuelMusic>, With<crate::sfx::duel::DuelEngine>)>>()
@@ -1613,13 +1613,22 @@ mod tests {
         {
             assert_eq!(playback.paused, engine);
             if !engine {
+                use bevy::audio::Decodable;
                 let audio = world
-                    .resource::<Assets<AudioSource>>()
+                    .resource::<Assets<crate::music::StageTrack>>()
                     .get(&player.unwrap().0)
                     .unwrap();
-                let disc = &world.resource::<Campaign>().0;
-                let track = disc.audio_track(7).unwrap();
-                assert_eq!(&audio.bytes[44..], &track[150 * 2352..]);
+                let track = world.resource::<Campaign>().0.audio_track(7).unwrap();
+                for (sample, bytes) in audio
+                    .decoder()
+                    .take(4096)
+                    .zip(track[150 * 2352..].chunks_exact(2))
+                {
+                    assert_eq!(
+                        sample,
+                        f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.
+                    );
+                }
             }
         }
         assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
