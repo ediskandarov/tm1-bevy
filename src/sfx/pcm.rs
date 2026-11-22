@@ -36,7 +36,7 @@ impl VabVolume {
 }
 
 #[derive(Clone)]
-pub(super) struct Levels(Arc<AtomicU32>);
+pub(crate) struct Levels(Arc<AtomicU32>);
 
 impl Levels {
     pub fn new(channels: [i32; 2], percent: i32) -> Self {
@@ -112,6 +112,12 @@ pub struct StereoPcm {
 }
 
 impl StereoPcm {
+    pub(crate) fn one_shot(tone: &tm1_assets::sound::Tone) -> Self {
+        let mut raw = Vec::new();
+        super::Sample::mix_tone(&mut raw, tone, false, 1.);
+        Self::new(&raw, VabVolume::from_tone(tone))
+    }
+
     pub(super) fn new(stereo: &[[f32; 2]], volume: VabVolume) -> Self {
         Self {
             volume,
@@ -137,7 +143,7 @@ impl StereoPcm {
         clip.decoder()
     }
 
-    pub(super) fn with_levels(&self, levels: Levels) -> Self {
+    pub(crate) fn with_levels(&self, levels: Levels) -> Self {
         Self {
             levels: Some(levels),
             ..self.clone()

@@ -257,7 +257,7 @@ impl Contest {
             _ => None,
         };
         self.garage
-            .sound(world, sound, self.settings.effects_gain());
+            .sound(world, sound, self.settings.effects_volume());
         if matches!(
             self.page,
             Page::Title
@@ -1534,7 +1534,7 @@ mod tests {
     }
     fn assert_menu_engine(world: &World, car: Vehicle) -> Vec<Entity> {
         use crate::sfx::{EngineSample, pcm::StereoPcm};
-        use bevy::audio::Decodable;
+        use bevy::audio::{Decodable, Source};
         let voices: Vec<_> = world.resource::<Contest>().garage.voices().collect();
         let bank = world
             .resource::<Campaign>()
@@ -1545,6 +1545,15 @@ mod tests {
         let engines: Vec<_> = voices
             .iter()
             .filter_map(|&entity| world.get::<AudioPlayer<StereoPcm>>(entity))
+            .filter(|p| {
+                world
+                    .resource::<Assets<StereoPcm>>()
+                    .get(&p.0)
+                    .unwrap()
+                    .decoder()
+                    .total_duration()
+                    .is_none()
+            })
             .collect();
         assert!(!engines.is_empty());
         assert_eq!(engines.len(), expected.len());
@@ -1554,9 +1563,14 @@ mod tests {
                 .get(&player.0)
                 .unwrap();
             assert!(
-                clip.decoder()
-                    .take(4096)
-                    .eq(tone.voice(30).decoder().take(4096))
+                clip.decoder().take(4096).eq(tone
+                    .voice(30)
+                    .with_levels(crate::sfx::pcm::Levels::new(
+                        [i32::from(world.resource::<Contest>().settings.effects_volume()); 2],
+                        99
+                    ))
+                    .decoder()
+                    .take(4096))
             );
         }
         voices
@@ -2417,23 +2431,49 @@ mod tests {
         let mut world = menu_world();
         open_garage(&mut world, true);
         let voices = assert_menu_engine(&world, Vehicle::YellowJacket);
-        assert!(
-            voices
-                .iter()
-                .all(|&entity| world.get::<AudioPlayer<AudioSource>>(entity).is_none())
+        let bank = world
+            .resource::<Campaign>()
+            .0
+            .read("SND/UACORE.VAB")
+            .unwrap();
+        let tone_count = |prog| tm1_assets::sound::program(&bank, prog).unwrap().len();
+        assert_eq!(
+            voices.len(),
+            tone_count(Vehicle::YellowJacket.sound_programs().0)
         );
 
         open_garage(&mut world, false);
-        press(&mut world, ArrowRight);
-        let vehicle = Vehicle::CARD_ORDER[world.resource::<Contest>().vehicle];
-        let showroom = assert_menu_engine(&world, vehicle);
-        assert_eq!(
-            showroom
-                .iter()
-                .filter(|&&entity| world.get::<AudioPlayer<AudioSource>>(entity).is_some())
-                .count(),
-            1
+        crate::pause::navigate(
+            crate::pause::Page::Audio(1),
+            crate::pause::Action::Right,
+            &mut world.resource_mut::<Contest>().settings,
         );
+        press(&mut world, ArrowRight);
+        let menu = world.resource::<Contest>();
+        let vehicle = Vehicle::CARD_ORDER[menu.vehicle];
+        let volume = menu.settings.effects_volume();
+        assert_ne!(volume, 33);
+        let showroom = assert_menu_engine(&world, vehicle);
+        let (motor, signature) = vehicle.sound_programs();
+        let signatures = &showroom[tone_count(motor)..];
+        let expected = tm1_assets::sound::program(&bank, signature).unwrap();
+        assert_eq!(signatures.len(), expected.len());
+        for (&entity, tone) in signatures.iter().zip(expected) {
+            use crate::sfx::pcm::{Levels, StereoPcm};
+            use bevy::audio::{Decodable, Volume};
+            let player = world.get::<AudioPlayer<StereoPcm>>(entity).unwrap();
+            let actual = world
+                .resource::<Assets<StereoPcm>>()
+                .get(&player.0)
+                .unwrap();
+            let clip =
+                StereoPcm::one_shot(&tone).with_levels(Levels::new([i32::from(volume); 2], 99));
+            assert_eq!(
+                world.get::<PlaybackSettings>(entity).unwrap().volume,
+                Volume::Linear(0.44)
+            );
+            assert!(actual.decoder().eq(clip.decoder()));
+        }
         for key in [ArrowDown, Enter, Enter, ArrowUp, Enter] {
             press(&mut world, key);
             assert!(

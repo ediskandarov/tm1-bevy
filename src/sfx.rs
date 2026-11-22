@@ -38,10 +38,7 @@ impl EffectTone {
                     let pitch = sample_pitch(&tone, false) as u16;
                     pcm::LoopingTone::new(tone)?.voice(pitch).0
                 } else {
-                    let volume = pcm::VabVolume::from_tone(&tone);
-                    let mut raw = Vec::new();
-                    Sample::mix_tone(&mut raw, &tone, false, 1.);
-                    pcm::StereoPcm::new(&raw, volume)
+                    pcm::StereoPcm::one_shot(&tone)
                 };
                 Ok(Self { clip, priority })
             })

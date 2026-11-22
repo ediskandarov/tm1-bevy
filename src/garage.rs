@@ -1,4 +1,5 @@
 //! The vehicle carousel in SCREEN.c.
+use crate::sfx::pcm::{Levels, StereoPcm};
 use anyhow::{Result, ensure};
 use bevy::prelude::*;
 use tm1_assets::{
@@ -18,7 +19,8 @@ pub enum GarageSound {
 pub struct Garage {
     backdrop: Vec<u8>,
     demo_backdrop: Vec<u8>,
-    audio: Vec<(Vec<crate::sfx::EngineSample>, AudioSource)>,
+    audio: Vec<(Vec<crate::sfx::EngineSample>, Vec<StereoPcm>)>,
+    levels: Levels,
     boss_engine: Vec<crate::sfx::EngineSample>,
     voices: Option<(GarageSound, Vec<Entity>)>,
     cars: Vec<Scene>,
@@ -50,7 +52,10 @@ impl Garage {
             let (_, signature) = car.sound_programs();
             audio.push((
                 crate::sfx::EngineSample::load(&bank, car)?,
-                crate::sfx::Sample::load(&bank, signature, false)?.wave()?,
+                tm1_assets::sound::program(&bank, signature)?
+                    .iter()
+                    .map(StereoPcm::one_shot)
+                    .collect(),
             ));
             cars.push(dmd.garage_vehicle(car as u16)?);
             bios.push(screen::background(
@@ -62,6 +67,7 @@ impl Garage {
             backdrop: screen::background(&disc.read("UASCREEN/SCRND.TIM")?)?,
             cars,
             audio,
+            levels: Levels::new([33; 2], 99),
             boss_engine: crate::sfx::EngineSample::load(&bank, Vehicle::Minion)?,
             voices: None,
             bios,
@@ -82,7 +88,8 @@ impl Garage {
             .iter()
             .flat_map(|(_, voices)| voices.iter().copied())
     }
-    pub fn sound(&mut self, world: &mut World, sound: Option<GarageSound>, gain: f32) {
+    pub fn sound(&mut self, world: &mut World, sound: Option<GarageSound>, volume: u8) {
+        self.levels.set([i32::from(volume); 2], 99);
         if self.voices.as_ref().map(|v| v.0) == sound {
             return;
         }
@@ -107,33 +114,28 @@ impl Garage {
             };
             use bevy::audio::Volume;
             world.init_resource::<Assets<crate::sfx::pcm::StereoPcm>>();
-            let mut voices = Vec::with_capacity(engine.len() + 1);
-            for tone in engine {
+            let mut spawn = |clip: StereoPcm, gain| {
                 let handle = world
-                    .resource_mut::<Assets<crate::sfx::pcm::StereoPcm>>()
-                    .add(tone.voice(30));
-                voices.push(
-                    world
-                        .spawn((
-                            crate::campaign::StageEntity,
-                            AudioPlayer(handle),
-                            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28 * gain)),
-                        ))
-                        .id(),
-                );
-            }
+                    .resource_mut::<Assets<StereoPcm>>()
+                    .add(clip.with_levels(self.levels.clone()));
+                world
+                    .spawn((
+                        crate::campaign::StageEntity,
+                        AudioPlayer(handle),
+                        PlaybackSettings::ONCE.with_volume(Volume::Linear(gain)),
+                    ))
+                    .id()
+            };
+            let mut voices: Vec<_> = engine
+                .iter()
+                .map(|tone| spawn(tone.voice(30), 0.28))
+                .collect();
             if let GarageSound::Vehicle(index) = sound {
-                let handle = world
-                    .resource_mut::<Assets<AudioSource>>()
-                    .add(self.audio[index].1.clone());
-                voices.push(
-                    world
-                        .spawn((
-                            crate::campaign::StageEntity,
-                            AudioPlayer::new(handle),
-                            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.44 * gain)),
-                        ))
-                        .id(),
+                voices.extend(
+                    self.audio[index]
+                        .1
+                        .iter()
+                        .map(|tone| spawn(tone.clone(), 0.44)),
                 );
             }
             self.voices = Some((sound, voices));
