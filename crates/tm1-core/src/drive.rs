@@ -1349,7 +1349,8 @@ impl CollisionScene {
         second.seed = first.seed;
         // UpdatePlayerDamageModel queues returns in slot order. RT chooses the
         // last expired entry, including when both cars die in the same frame.
-        for (slot, car) in players.iter().enumerate() {
+        for (slot, car) in players.iter_mut().enumerate() {
+            car.cap_turbo_reserve();
             if !was_dead[slot] && car.state[0xa0] != 0 {
                 self.duel_returns.push((1 - slot, 180));
             }
@@ -1400,6 +1401,7 @@ impl CollisionScene {
                 &mut player.seed,
             );
         }
+        player.cap_turbo_reserve();
     }
     #[cfg(test)]
     fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {
@@ -1501,9 +1503,19 @@ impl PlayerVehicle {
             special,
         )
     }
-    pub fn turbo_charge(&self) -> i32 {
+    fn turbo_units(&self) -> i32 {
         let tens = i16::from_le_bytes(self.state[0x49e..0x4a0].try_into().unwrap());
-        (i32::from(tens) * 10 + self.word(0x230) / 18).clamp(0, 99)
+        i32::from(tens) * 10 + self.word(0x230) / 18
+    }
+    // UAdashDrawInstruments also caps the reserve used by the next physics update.
+    fn cap_turbo_reserve(&mut self) {
+        if self.turbo_units() >= 100 {
+            self.state[0x49e..0x4a0].copy_from_slice(&10i16.to_le_bytes());
+            self.state[0x230..0x234].fill(0);
+        }
+    }
+    pub fn turbo_charge(&self) -> i32 {
+        self.turbo_units().clamp(0, 99)
     }
     pub fn gun_overheated(&self) -> bool {
         self.state[0x490] != 0

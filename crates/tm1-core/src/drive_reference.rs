@@ -1481,6 +1481,36 @@ fn vec3_cpu(cpu: &mut Cpu, at: u32, xyz: [i32; 3]) {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn turbo_reserve_matches_original_dashboard() {
+    let mut r = Reference::new();
+    // Supply the player pointer in s6 before entering the retail fuel calculation.
+    put(&mut r.cpu, 0x80142d14, 0x0080b021); // addu s6, a0, zero
+    for reserve in [0i16, 1, 8, 9, 10, 11, 12] {
+        for remaining in [0i32, 1, 17, 18, 161, 162, 179, 180] {
+            r.player.state[0x49e..0x4a0].copy_from_slice(&reserve.to_le_bytes());
+            r.player.state[0x230..0x234].copy_from_slice(&remaining.to_le_bytes());
+            r.cpu.put(PLAYER, &r.player.state);
+            r.cpu.call_until(0x80142d14, &[PLAYER], 0x80142d84);
+            r.player.cap_turbo_reserve();
+            assert_eq!(r.player.turbo_charge(), r.cpu.r[4] as i32);
+            let start = (PLAYER & 0x1fffff) as usize;
+            assert_eq!(
+                r.player.state[..],
+                r.cpu.ram[start..start + r.player.state.len()]
+            );
+        }
+    }
+    // A pickup can take the bank over capacity while the current charge is partly used.
+    r.player.state[0x49e..0x4a0].copy_from_slice(&11i16.to_le_bytes());
+    r.player.state[0x230..0x234].copy_from_slice(&90i32.to_le_bytes());
+    r.scene
+        .step(&mut r.player, &mut r.police, Input::default(), 3);
+    assert_eq!(r.player.turbo_units(), 100);
+    assert_eq!(r.player.word(0x230), 0);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn windshield_damage_original() {
     let mut r = Reference::new();
     for pct in -1..=101 {
@@ -4253,6 +4283,9 @@ fn duel_stages_from_disc() {
             CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
         let mut cars =
             PlayerVehicle::duel_players(&exe, kinds, level, 1, Difficulty::Medium).unwrap();
+        for (slot, car) in cars.iter_mut().enumerate() {
+            car.state[0x49e..0x4a0].copy_from_slice(&(11 + slot as i16).to_le_bytes());
+        }
         let initial = cars.each_ref().map(PlayerVehicle::position);
         let inputs = [Input {
             accelerate: true,
@@ -4262,6 +4295,7 @@ fn duel_stages_from_disc() {
             scene.step_duel(&mut cars, inputs, 3);
         }
         for (slot, car) in cars.iter().enumerate() {
+            assert_eq!(car.turbo_units(), 100, "{stem} slot {slot}");
             assert_ne!(
                 initial[slot][..2],
                 car.position()[..2],
