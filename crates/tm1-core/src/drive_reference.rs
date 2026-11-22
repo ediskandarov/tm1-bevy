@@ -236,6 +236,69 @@ fn warehouse_group_spawn_original() {
         assert_eq!(cpu.random_state, player.seed);
     }
 }
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn group_battle_selection_original() {
+    unsafe extern "C" {
+        fn tm1_schedule_battle(
+            waited: &mut i32,
+            cars: *mut u8,
+            count: i16,
+            engaged: i16,
+            fields: i16,
+        );
+    }
+    // The C routine accesses these PS1-layout records as an array of AICar.
+    #[repr(align(4))]
+    struct Records([[u8; 0x560]; 3]);
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut player =
+        PlayerVehicle::on_level(&exe, Vehicle::YellowJacket, Level::Warehouse).unwrap();
+    let lineup = Opponent::spawn_lineup(
+        &mut player,
+        [Vehicle::Darkside, Vehicle::Thumper, Vehicle::CrimsonFury],
+    );
+    for count in 1..=3 {
+        for engaged in 0..=count.min(2) {
+            for live in 1..(1 << count) {
+                for wait in [0, 177, 178, 180] {
+                    let mut native = Records(std::array::from_fn(|i| lineup[i].state));
+                    for (i, car) in native.0.iter_mut().enumerate().take(count) {
+                        car[0x24c..0x250].copy_from_slice(
+                            &(if live & (1 << i) != 0 { 50i32 } else { 0 }).to_le_bytes(),
+                        );
+                        car[0x4a] = u8::from(i == 1);
+                        car[1] = u8::from(i != 1);
+                        car[2] = (i + 1) as u8;
+                        cpu.put(POLICE + 0x560 * i as u32, car);
+                    }
+                    let mut waited = wait;
+                    put(&mut cpu, 0x8018c370, wait as u32);
+                    cpu.put(0x8018c338, &(count as i16).to_le_bytes());
+                    cpu.put(0x8018bfd0, &(engaged as i16).to_le_bytes());
+                    cpu.put(0x80170238, &3u16.to_le_bytes());
+                    cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
+                    unsafe {
+                        tm1_schedule_battle(
+                            &mut waited,
+                            native.0[0].as_mut_ptr(),
+                            count as i16,
+                            engaged as i16,
+                            3,
+                        );
+                    }
+                    assert_eq!(cpu.word(0x8018c370), waited as u32);
+                    for (i, car) in native.0.iter().enumerate().take(count) {
+                        let base = (POLICE as usize & 0x1fffff) + 0x560 * i;
+                        assert_eq!(&cpu.ram[base..base + 0x560], car);
+                    }
+                }
+            }
+        }
+    }
+}
 fn vec3(state: &mut [u8], at: usize, xyz: [i32; 3]) {
     for (i, v) in xyz.into_iter().enumerate() {
         state[at + 4 * i..at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());

@@ -435,7 +435,7 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         AICarOutOfBattle(&car);
         car.driving = 1;
     } else {
-        arena_summon_police(&car, fields);
+        arena_schedule_battle(&car, 1, car.unk41 != 0, fields);
         AICarUpdate(&car);
     }
     *seed = random_state;

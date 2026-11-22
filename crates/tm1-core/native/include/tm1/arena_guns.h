@@ -49,7 +49,7 @@ int arena_launch_flame(Cs*, int);
 void arena_move_flames(void);
 void arena_animate_flames(void);
 void arena_move_tasers(void);
-void arena_summon_police(AICar *,s16);
+void arena_schedule_battle(AICar *,s16,s16,s16);
 void arena_move_missiles(void);
 void tm1_age_effects(void);
 void arena_effect(VECTOR3 *,s32);

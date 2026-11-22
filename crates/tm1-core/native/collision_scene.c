@@ -227,19 +227,42 @@ Bullet* arena_bullets(void)
 {
     return current ? current->bullets : NULL;
 }
-void arena_summon_police(AICar* car, s16 fields)
+// UA.c PlayGame runs this once before updating the AI cars in slot order.
+void tm1_schedule_battle(s32* waited, AICar* cars, s16 count, s16 engaged, s16 fields)
 {
-    if (!current)
+    if (count == 0 || engaged >= (count == 1 ? 1 : 2)) {
+        *waited = 0;
+        for (int i = 0; i < count; i++)
+            cars[i].chosen = 0;
         return;
-    if (car->unk41) {
-        current->battle_wait = 0;
-        car->chosen = 0;
-    } else if ((current->battle_wait += fields) > 180) {
-        car->chosen = 1;
-        car->unk01 = 0;
-        car->routeVal = car->profile.route[car->unk02].val;
-        current->battle_wait = 0;
     }
+    *waited += fields;
+    if (*waited <= 180)
+        return;
+    AICar* best = NULL;
+    s32 priority = -1;
+    for (int i = 0; i < count; i++) {
+        AICar* candidate = &cars[i];
+        if (candidate->stats.unk40 <= 0)
+            continue;
+        CarRoute* route = &candidate->profile.route[candidate->unk02];
+        if (!best || (candidate->unk01 && priority < route->prio)) {
+            best = candidate;
+            priority = route->prio;
+        }
+    }
+    if (best) {
+        best->chosen = 1;
+        best->unk01 = 0;
+        best->routeVal = best->profile.route[best->unk02].val;
+    }
+    *waited = 0;
+}
+
+void arena_schedule_battle(AICar* cars, s16 count, s16 engaged, s16 fields)
+{
+    if (current)
+        tm1_schedule_battle(&current->battle_wait, cars, count, engaged, fields);
 }
 DropWeap* arena_drops(void)
 {
