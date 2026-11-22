@@ -11,6 +11,10 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 Single-player stage setup carries the deal sequence through card angles and pedestrian setup. It samples the counter again before placing vehicles and when entering combat, following the reseeds in uaInitDB and InitLevel. The shell then consumes twelve BIOS random values for six windshield marks in both game modes. A new life samples a fresh combat seed and regenerates the marks. Keyboard restart restores the original stage combat seed and spawn layout. The host counter models the JP counter frequency and wraparound. Exact boot and disc-load timings are platform dependent.
 
+## Cockpit steering
+
+The cockpit reads the steering quad and texture coordinates from each stage DMD. It transforms the wheel and both motorcycle grips with the JP executable's fixed-point rotation table. The two steering routines retain their separate angles while hidden and between stage loads. A disc-backed replay checks all twelve projected corners and their texture coordinates against the original drawing routines over fifteen steering updates, including hard turns, opposite inputs and release. The Warehouse capture at `local/warehouse-handlebars.png` shows Mr. Grimm's cockpit on Metal.
+
 ## Flamethrower launch audio
 
 A successful forward launch by Thumper or Minion plays the flamethrower and vehicle special from the collision model position plus the weapon direction. With all five emitters active, only the special plays, from the car position. A rear shot plays its launch sound even when the emitters are full and only consumes ammo if an emitter starts. A seven-shot JP replay checks both positions, request order and car state at several headings. The Rooftops boss replays check Minion’s sound positions during AI combat. Both game modes restart the shared flamethrower sound on each launch and replace each vehicle’s previous special voice. The disc program table supplies program 21 for the flamethrower, 49 for Thumper’s special and 56 for Minion’s special.

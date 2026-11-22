@@ -1702,6 +1702,58 @@ fn windshield_damage_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn cockpit_wheel_tracks_retail_steering_primitive() {
+    let mut r = Reference::new();
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let quad = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .steering_wheel()
+        .unwrap();
+    let [right, left] = quad.handlebars();
+    let primitives = [
+        (quad, [125, 230], 0x8019e54c),
+        (left, [159, 202], 0x8019e574),
+        (right, [159, 202], 0x8019e59c),
+    ];
+    let texture_origin = [0, 8].map(|shift| {
+        (0..4)
+            .map(|i| (r.cpu.word(0x8019d978 + 8 * i) >> shift & 255) as i32)
+            .min()
+            .unwrap()
+    });
+    let mut angle = 0;
+    for flags in [1, 1, 1, 5, 5, 2, 2, 10, 10, 3, 0, 0, 0, 0, 0] {
+        for (bit, offset) in [0xca, 0xcb, 0xce, 0xcf].into_iter().enumerate() {
+            r.player.state[offset] = (flags >> bit) & 1;
+        }
+        r.cpu.put(PLAYER, &r.player.state);
+        r.cpu.call(0x80145264, &[RENDER_SCRATCH]);
+        r.cpu.call(0x80145568, &[RENDER_SCRATCH]);
+        angle = r.player.cockpit_steering_angle(angle);
+        let rotation = r.player.wheel_sin_cos(i64::from(angle * 4096 / 360));
+        for (face, center, at) in primitives {
+            for (i, expected) in face.project(center, rotation).into_iter().enumerate() {
+                let xy = r.cpu.word(at + 8 * i as u32);
+                let uv = r.cpu.word(at + 8 * i as u32 + 4);
+                assert_eq!(
+                    face.uv[i],
+                    [
+                        (uv & 255) as i32 - texture_origin[0],
+                        (uv >> 8 & 255) as i32 - texture_origin[1]
+                    ]
+                );
+                assert_eq!(
+                    expected,
+                    [xy as i16 as i32, (xy >> 16) as i16 as i32],
+                    "flags={flags} angle={angle} corner={i}"
+                );
+            }
+        }
+    }
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn control_options_match_original() {
     let mut r = Reference::new();
     r.cpu.put(PLAYER, &r.player.state);

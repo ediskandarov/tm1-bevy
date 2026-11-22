@@ -368,6 +368,38 @@ impl<'a> Dmd<'a> {
         }
         Ok(portraits)
     }
+    pub fn steering_wheel(&self) -> Result<crate::screen::SteeringQuad> {
+        let p = self.sprite_node(0, 1280)?;
+        ensure!(
+            u32le(self.data, p + 16)? == 1,
+            "unexpected steering wheel face count"
+        );
+        let verts = self.offset(u32le(self.data, p + 4)?)?;
+        let poly = self.offset(u32le(self.data, p + 12)?)?;
+        let uv = poly + 16 + 4 * ((u32le(self.data, poly + 12)? >> 28) & 7) as usize;
+        let mut xy = [[0; 2]; 4];
+        let mut tex = [[0; 2]; 4];
+        for i in 0..4 {
+            let v = verts + 8 * usize::from(u16le(self.data, poly + 4 + 2 * i)?);
+            xy[i] = [
+                i32::from(u16le(self.data, v)? as i16) / 8 - 120,
+                -(i32::from(u16le(self.data, v + 2)? as i16) / 8) - 64,
+            ];
+            let pair = bytes(self.data, uv + 4 * i, 2)?;
+            tex[i] = [i32::from(pair[0]), i32::from(pair[1])];
+        }
+        for axis in 0..2 {
+            let origin = tex.iter().map(|point| point[axis]).min().unwrap();
+            for point in &mut tex {
+                point[axis] -= origin;
+            }
+        }
+        ensure!(
+            tex.iter().all(|&[u, v]| u < 256 && v < 128),
+            "steering UV outside cockpit TIM"
+        );
+        Ok(crate::screen::SteeringQuad { xy, uv: tex })
+    }
     pub fn cockpit_rectangles(&self) -> Result<[[i32; 4]; 7]> {
         let p = self.sprite_node(0, 1240)?;
         ensure!(

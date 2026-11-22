@@ -269,7 +269,7 @@ pub fn setup(
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        arena.cockpit.frame(0),
+        arena.cockpit.frame([0, 4096]),
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
     );
@@ -633,6 +633,7 @@ pub fn cockpit(
     arena: Res<Arena>,
     mut images: ResMut<Assets<Image>>,
     mut overlay: Single<(&mut CockpitOverlay, &mut Sprite, &mut Visibility)>,
+    mut steering: Local<[i32; 2]>,
 ) {
     let (state, sprite, visibility) = &mut *overlay;
     let showing = drive.camera.mode == tm1_core::drive::CarView::Cockpit
@@ -653,11 +654,18 @@ pub fn cockpit(
         return;
     }
     state.frame = Some(drive.player.frame());
-    let angle = drive.player.cockpit_steering_angle(state.degrees);
+    // Each JP drawing routine retains its angle between dashboard loads.
+    let slot = usize::from(drive.player.vehicle() == tm1_core::drive::Vehicle::MrGrimm);
+    let angle = drive.player.cockpit_steering_angle(steering[slot]);
+    steering[slot] = angle;
     if angle != state.degrees {
         state.degrees = angle;
         if let Some(mut image) = images.get_mut(&sprite.image) {
-            image.data = Some(arena.cockpit.frame(angle));
+            image.data = Some(
+                arena
+                    .cockpit
+                    .frame(drive.player.wheel_sin_cos(i64::from(angle * 4096 / 360))),
+            );
         }
     }
 }

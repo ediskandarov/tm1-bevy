@@ -80,6 +80,7 @@ fn load_cockpit(
     tm1_assets::screen::Cockpit::load(
         &disc.read(&format!("UADASH/{dash}.TMS"))?,
         dmd.cockpit_rectangles()?,
+        dmd.steering_wheel()?,
         vehicle == Vehicle::MrGrimm,
     )
 }
@@ -397,14 +398,18 @@ mod tests {
         let dmd = Dmd::parse(&data).unwrap();
         for vehicle in Vehicle::ROSTER {
             let cockpit = load_cockpit(&disc, &dmd, vehicle).unwrap();
-            let straight = cockpit.frame(0);
+            let straight = cockpit.frame([0, 4096]);
             assert_eq!(
                 straight[4 * (100 * 320 + 160) + 3],
                 0,
                 "windshield {vehicle:?}"
             );
             assert!(straight.chunks_exact(4).any(|p| p[3] == 255));
-            assert_ne!(straight, cockpit.frame(24), "steering {vehicle:?}");
+            assert_ne!(
+                straight,
+                cockpit.frame([1662, 3744]),
+                "steering {vehicle:?}"
+            );
         }
     }
 }

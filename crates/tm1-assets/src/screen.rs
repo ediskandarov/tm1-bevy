@@ -277,15 +277,51 @@ impl Fonts {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct SteeringQuad {
+    pub xy: [[i32; 2]; 4],
+    pub uv: [[i32; 2]; 4],
+}
+
+impl SteeringQuad {
+    pub fn handlebars(self) -> [Self; 2] {
+        [
+            SteeringQuad {
+                xy: [[114, 126], [14, 126], [114, -130], [14, -130]],
+                uv: [3, 1, 2, 0].map(|i| self.uv[i]),
+            },
+            SteeringQuad {
+                xy: [[-14, 126], [-114, 126], [-14, -130], [-114, -130]],
+                uv: [1, 3, 0, 2].map(|i| self.uv[i]),
+            },
+        ]
+    }
+    pub fn project(&self, [cx, cy]: [i32; 2], [sin, cos]: [i16; 2]) -> [[i32; 2]; 4] {
+        let (sin, cos) = (i32::from(sin), i32::from(cos));
+        self.xy.map(|[x, y]| {
+            [
+                cx + ((x * cos - y * sin) >> 12),
+                cy + ((x * sin + y * cos) >> 12),
+            ]
+        })
+    }
+}
+
 /// The car-specific UADASH TMS replaces seven cockpit panels and a steering
 /// wheel. Mr. Grimm uses three instrument panels and two mirrored handlebars.
 pub struct Cockpit {
     panels: Vec<u8>,
     steering: Vec<u8>,
     motorcycle: bool,
+    quads: Vec<SteeringQuad>,
 }
 impl Cockpit {
-    pub fn load(data: &[u8], layout: [[i32; 4]; 7], motorcycle: bool) -> Result<Self> {
+    pub fn load(
+        data: &[u8],
+        layout: [[i32; 4]; 7],
+        wheel_face: SteeringQuad,
+        motorcycle: bool,
+    ) -> Result<Self> {
         let count = if motorcycle { 4 } else { 8 };
         ensure!(
             u32le(data, 0)? == 0x50535854 && u32le(data, 4)? == 0x43 && u32le(data, 12)? == count,
@@ -358,37 +394,64 @@ impl Cockpit {
         Ok(Self {
             panels,
             steering: wheel,
+            quads: if motorcycle {
+                wheel_face.handlebars().to_vec()
+            } else {
+                vec![wheel_face]
+            },
             motorcycle,
         })
     }
 
-    pub fn frame(&self, degrees: i32) -> Vec<u8> {
+    pub fn frame(&self, [sin, cos]: [i16; 2]) -> Vec<u8> {
         let mut pixels = self.panels.clone();
-        let (sin, cos) = (degrees as f32).to_radians().sin_cos();
         let (cx, cy) = if self.motorcycle {
-            (159., 202.)
+            (159, 202)
         } else {
-            (125., 230.)
+            (125, 230)
         };
-        for y in 0..HEIGHT {
-            for x in 0..WIDTH {
-                let dx = x as f32 + 0.5 - cx;
-                let dy = y as f32 + 0.5 - cy;
-                let lx = cos * dx + sin * dy;
-                let ly = -sin * dx + cos * dy;
-                let (u, v) = if self.motorcycle {
-                    if !(14.0..114.0).contains(&lx.abs()) || !(-130.0..126.0).contains(&ly) {
-                        continue;
-                    }
-                    (126. - ly, (114. - lx.abs()) * 128. / 100.)
-                } else {
-                    (lx + 120., ly + 64.)
-                };
-                if !(0.0..256.0).contains(&u) || !(0.0..128.0).contains(&v) {
+        for quad in &self.quads {
+            let points = quad.project([cx, cy], [sin, cos]);
+            for tri in [[0, 1, 2], [1, 3, 2]] {
+                self.draw_triangle(&mut pixels, tri.map(|i| points[i]), tri.map(|i| quad.uv[i]));
+            }
+        }
+        pixels
+    }
+
+    fn draw_triangle(&self, pixels: &mut [u8], xy: [[i32; 2]; 3], uv: [[i32; 2]; 3]) {
+        let edge = |[ax, ay]: [i32; 2], [bx, by]: [i32; 2], x: i32, y: i32| {
+            (bx - ax) * (y - 2 * ay) - (by - ay) * (x - 2 * ax)
+        };
+        let area = edge(xy[0], xy[1], 2 * xy[2][0], 2 * xy[2][1]);
+        if area == 0 {
+            return;
+        }
+        let [xs, ys] = [0, 1].map(|axis| xy.map(|p| p[axis]));
+        let bounds = |v: [i32; 3], limit| {
+            (*v.iter().min().unwrap()).max(0)..(*v.iter().max().unwrap()).min(limit)
+        };
+        for y in bounds(ys, HEIGHT as i32) {
+            for x in bounds(xs, WIDTH as i32) {
+                let edges = [(1, 2), (2, 0), (0, 1)];
+                let weights =
+                    edges.map(|(a, b)| edge(xy[a], xy[b], 2 * x + 1, 2 * y + 1) * area.signum());
+                // Include top and left edges only, so translucent shared edges blend once.
+                if edges.iter().zip(weights).any(|(&(a, b), w)| {
+                    let dx = (xy[b][0] - xy[a][0]) * area.signum();
+                    let dy = (xy[b][1] - xy[a][1]) * area.signum();
+                    w < 0 || (w == 0 && !(dy < 0 || dy == 0 && dx > 0))
+                }) {
                     continue;
                 }
+                let [u, v] = [0, 1].map(|axis| {
+                    (0..3)
+                        .map(|i| i64::from(weights[i]) * i64::from(uv[i][axis]))
+                        .sum::<i64>()
+                        / i64::from(area.abs())
+                });
                 let src = 4 * (v as usize * 256 + u as usize);
-                let dst = 4 * (y * WIDTH + x);
+                let dst = 4 * (y as usize * WIDTH + x as usize);
                 let alpha = self.steering[src + 3];
                 if alpha == 0 {
                     continue;
@@ -405,6 +468,5 @@ impl Cockpit {
                 pixels[dst + 3] = if blend { 255 } else { alpha };
             }
         }
-        pixels
     }
 }

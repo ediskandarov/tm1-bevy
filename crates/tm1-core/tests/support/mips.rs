@@ -8,6 +8,7 @@ pub struct Cpu {
     lo: u32,
     lzcr: u32,
     gte: [u32; 32],
+    gte_flags: Option<u32>,
     rotation_translation: [u32; 8],
     pc: u32,
     next: u32,
@@ -26,6 +27,7 @@ impl Cpu {
             lo: 0,
             lzcr: 0,
             gte: [0; 32],
+            gte_flags: None,
             rotation_translation: [0; 8],
             pc: 0,
             next: 0,
@@ -238,26 +240,35 @@ impl Cpu {
             15 => write = Some((rt, ins << 16)),
             18 => match (rs, rd) {
                 (6, 0..=7) => self.rotation_translation[rd] = b,
-                // PsyQ MulRotMatrix0 uses V0, the rotation matrix and no translation.
-                _ if ins == 0x4a486012 => {
+                // MulRotMatrix0 rotates V0. RotTrans also adds the translation registers.
+                _ if matches!(ins, 0x4a486012 | 0x4a480012) => {
+                    self.gte_flags = Some(0);
                     let v = [
                         self.gte[0] as i16,
                         (self.gte[0] >> 16) as i16,
                         self.gte[1] as i16,
                     ];
                     for row in 0..3 {
-                        let mut acc = 0i64;
+                        let mut acc = if ins == 0x4a480012 {
+                            i64::from(self.rotation_translation[5 + row] as i32) << 12
+                        } else {
+                            0
+                        };
                         for (col, value) in v.iter().enumerate() {
                             let k = row * 3 + col;
                             let packed = self.rotation_translation[k / 2];
                             let factor = (packed >> (16 * (k % 2))) as i16;
                             acc += i64::from(factor) * i64::from(*value);
                         }
+                        if !(i64::from(i16::MIN)..=i64::from(i16::MAX)).contains(&(acc >> 12)) {
+                            self.gte_flags = None;
+                        }
                         let mac = (acc >> 12) as i32;
                         self.gte[25 + row] = mac as u32;
                         self.gte[9 + row] = mac.clamp(-32768, 32767) as u32;
                     }
                 }
+                (2, 31) => self.load = Some((rt, self.gte_flags.expect("unsupported GTE flags"))),
                 (4, 30) => {
                     self.lzcr = if (b as i32) < 0 {
                         (!b).leading_zeros()
@@ -269,6 +280,7 @@ impl Cpu {
                 (4, 0..=29) => self.gte[rd] = b,
                 (0, 0..=29) => self.load = Some((rt, self.gte[rd])),
                 (16..=31, _) if matches!(ins & 63, 0x28 | 0x3d) => {
+                    self.gte_flags = None;
                     let shift = if ins & (1 << 19) != 0 { 12 } else { 0 };
                     for i in 1..=3 {
                         let ir = self.gte[8 + i] as i16 as i32;
