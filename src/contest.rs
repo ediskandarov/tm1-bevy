@@ -635,18 +635,19 @@ impl Contest {
         let index = match before {
             Page::DuelJoin(Some(_)) if matches!(self.page, Page::DuelGarage { .. }) => 1,
             Page::DuelJoin(_) => return None,
-            Page::DuelGarage { slot, bio, .. } => {
+            Page::DuelGarage { slot, second, bio } => {
                 let (select, vertical, horizontal) = if slot == 0 {
                     (Space, [KeyW, KeyS], [KeyA, KeyD])
                 } else {
                     (Comma, [ArrowUp, ArrowDown], [ArrowLeft, ArrowRight])
                 };
-                if keys.just_pressed(select) {
+                if !bio && keys.any_just_pressed(vertical) {
+                    0
+                } else if second && !bio && horizontal.into_iter().all(|key| keys.pressed(key)) {
+                    return None;
+                } else if keys.just_pressed(select) {
                     1
-                } else if !bio
-                    && (keys.any_just_pressed(vertical)
-                        || (self.garage.row != 2 && keys.any_just_pressed(horizontal)))
-                {
+                } else if !bio && self.garage.row != 2 && keys.any_just_pressed(horizontal) {
                     0
                 } else {
                     return None;
@@ -737,6 +738,11 @@ impl Contest {
                             bio: false,
                         };
                     }
+                } else if !key(Escape) && (key(up) || key(down)) {
+                    self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
+                } else if second && !key(Escape) && keys.pressed(left) && keys.pressed(right) {
+                    // After the first pick this chord consumes Select too.
+                    return false;
                 } else if key(Escape) || (key(select) && self.garage.row == 2) {
                     self.leave_battle();
                 } else if key(select) {
@@ -758,8 +764,6 @@ impl Contest {
                         };
                         self.garage.lock_portrait();
                     }
-                } else if key(up) || key(down) {
-                    self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
                 } else if self.garage.row != 2 && (key(left) || key(right)) {
                     let n = Vehicle::CARD_ORDER.len();
                     let step = if key(left) { n - 1 } else { 1 };
@@ -1529,6 +1533,49 @@ mod tests {
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn jp_hidden_duel_card_retains_the_previously_registered_vehicle() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let data = disc.read("UADMD/CARS.DMD").unwrap();
+        let garage = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        // uaInit through its write to playerCar[0]. Omit unrelated subsystem setup.
+        for address in [0x8014_b37c, 0x8014_b3b8, 0x8015_0274] {
+            cpu.put(address, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        cpu.call_until(0x8014_b294, &[], 0x8014_b358);
+        // DB.c registers these showroom root types with UAAddCs.
+        let names: Vec<_> = garage
+            .roots
+            .iter()
+            .map(|&(_, kind)| kind)
+            .filter(|&kind| (10..=130).contains(&kind) && kind % 10 == 0)
+            .collect();
+        assert_eq!(names.len(), 12);
+        assert!(!names.contains(&(Vehicle::Minion as u16)));
+        cpu.put(0x8018_c336, &(names.len() as u16).to_le_bytes());
+        for (i, kind) in names.into_iter().enumerate() {
+            cpu.put(0x8019_edd8 + 4 * i as u32, &u32::from(kind).to_le_bytes());
+        }
+        // A fresh second slot reaches the battle-options picture lookup with ID zero.
+        let picture = cpu.call(0x8015_09e8, &[0]);
+        assert_eq!(picture, 12);
+        assert_eq!(cpu.word(0x8017_0e24 + 4 * picture), 0x00d7_000e);
+        let hidden = cpu.call(0x8013_b988, &[12]);
+        assert_eq!(hidden, Vehicle::Minion as u32);
+        for (slot, cold) in [Vehicle::YellowJacket as u32, 0].into_iter().enumerate() {
+            let slot = slot as u32;
+            assert_eq!(cpu.call(0x8014_d32c, &[slot]), cold);
+            for previous in [cold, Vehicle::RoadKill as u32, Vehicle::Outlaw as u32] {
+                cpu.call(0x8014_d2b4, &[slot, previous, 1]);
+                cpu.call(0x8014_d2b4, &[slot, hidden, 1]);
+                assert_eq!(cpu.call(0x8014_d32c, &[slot]), previous);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn duel_handoff_preserves_the_carousel_and_anchors_the_locked_portrait() {
         use KeyCode::*;
         let mut world = menu_world();
@@ -1555,6 +1602,16 @@ mod tests {
                 bio: false
             }
         ));
+        let picks = menu.duel_cars;
+        let mut chord = ButtonInput::default();
+        chord.press(ArrowLeft);
+        chord.press(ArrowRight);
+        chord.press(Comma);
+        let page = menu.page;
+        menu.input(&chord);
+        assert_eq!(menu.page, page);
+        assert_eq!(menu.duel_cars, picks);
+        assert!(menu.input_sound(page, &chord).is_none());
         let disc = &world.resource::<Campaign>().0;
         let exe = disc.read("SIPS_600.07").unwrap();
         let dmd = disc.read("UADMD/CARS.DMD").unwrap();
