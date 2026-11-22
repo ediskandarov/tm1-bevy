@@ -411,6 +411,29 @@ static s16 reserve_ai_start(u16* used)
     return 0;
 }
 
+// UA.c uaInitBossCar, after slot 3 receives its default weapons.
+// The caller runs CarInit(which=0) when the player is below the roof.
+int tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed)
+{
+    AICar boss;
+    PlayerCar player;
+    memcpy(&boss, state, sizeof(boss));
+    memcpy(&player, target, sizeof(player));
+    trig = table;
+    random_state = *seed;
+    int lower_group = player.unkC0 < 6;
+    boss.stats.triggerPt = lower_group ? 28 : 4;
+    InitTriggerPoint(&boss);
+    boss.motion.pos.vz = lower_group ? 8000 : 7760;
+    setVector(&player.motion.vel, 0, 0, 0);
+    setVector(&player.motion.rotDelta, 0, 0, 0);
+    memcpy(state, &boss, sizeof(boss));
+    memcpy(target, &player, sizeof(player));
+    *seed = random_state;
+    trig = NULL;
+    return player.motion.pos.vz < 6400;
+}
+
 void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16* table,
     u32* seed, s32 kind, u16* spawn_points, s16 fields, u32 frame)
 {

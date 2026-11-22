@@ -1192,6 +1192,52 @@ fn minion_initial_record_matches_retail() {
             assert_eq!(v, r.cpu.ram[start + i], "Minion byte {i:x}");
         }
         assert_eq!(seed, r.cpu.random_state);
+
+        // UASetAICar completed above. Record the subsequent CarInit call in
+        // scratch RAM so placement and the respawn threshold can be checked separately.
+        r.cpu.put(0x8014d838, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        for (i, word) in [0x3c08800eu32, 0x24090001, 0xad092000, 0x03e00008, 0]
+            .into_iter()
+            .enumerate()
+        {
+            put(&mut r.cpu, 0x8012287c + i as u32 * 4, word);
+        }
+        for (group, height) in [(5i16, 6400i32), (6, 6399), (12, 8000)] {
+            let mut boss = state;
+            let mut player = r.player.state;
+            player[0xc0..0xc2].copy_from_slice(&group.to_le_bytes());
+            player[0x390..0x394].copy_from_slice(&height.to_le_bytes());
+            player[0x394..0x3a0].fill(71);
+            player[0x3ac..0x3b8].fill(93);
+            let mut placement_seed = seed;
+            r.cpu.random_state = seed;
+            r.cpu.put(addr, &boss);
+            r.cpu.put(PLAYER, &player);
+            put(&mut r.cpu, 0x800e2000, 0);
+            r.cpu.call(0x80150d04, &[]);
+            unsafe extern "C" {
+                fn tm1_place_boss(
+                    boss: *mut u8,
+                    player: *mut u8,
+                    table: *const i16,
+                    seed: *mut u32,
+                ) -> i32;
+            }
+            let respawn = unsafe {
+                tm1_place_boss(
+                    boss.as_mut_ptr(),
+                    player.as_mut_ptr(),
+                    r.player.trig.as_ptr(),
+                    &mut placement_seed,
+                )
+            };
+            assert_eq!(respawn as u8, r.cpu.ram[0xe2000]);
+            assert_eq!(respawn != 0, height < 6400);
+            assert_eq!(placement_seed, r.cpu.random_state);
+            assert_eq!(boss, r.cpu.ram[start..start + boss.len()]);
+            let p = (PLAYER & 0x1fffff) as usize;
+            assert_eq!(player[..], r.cpu.ram[p..p + player.len()]);
+        }
     }
 }
 
