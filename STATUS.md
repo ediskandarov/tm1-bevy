@@ -181,7 +181,7 @@ The retail comparison covers AI spawn records across all three difficulties and 
 
 ## Arena 5 and stage passwords
 
-The contest selector accepts the six JP stage passwords. P opens a five-slot editor with four controller symbols, left/right cursor wrap, submission and retry. During a fight, P shows the current stage password in keyboard digits. The bonus Arena 5 password is 21422. XARENA1 supplies the arena, the retail random deck deals five rivals and CDDA track 2 plays. Clearing this bonus contest returns to the title.
+The contest selector accepts the six JP stage passwords. P opens a five-slot editor with four controller symbols, left/right cursor wrap, submission and retry. The editor waits for all mapped keys to be released on entry and after each edit. Simultaneous symbols follow the JP pad polling order and take precedence over movement and submission. The cursor blinks every 20 fields. An edit clears its image and spends one field redrawing the password. Entry has no idle deadline. The boss preview starts its five-second timer after release and plays the password reward sound on dismissal. During a fight, P shows the current stage password in keyboard digits. The bonus Arena 5 password is 21422. XARENA1 supplies the arena, the retail random deck deals five rivals and CDDA track 2 plays. Clearing this bonus contest returns to the title.
 
 The bonus encounter comparison runs all twelve vehicle selections against the JP executable. The frontend test enters an invalid password, retries, enters 21422 and starts a five-opponent fight as Darkside. Metal captures on Apple M3 Pro cover the title and a running bonus encounter.
 

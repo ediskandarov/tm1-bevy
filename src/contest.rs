@@ -101,6 +101,9 @@ pub struct Contest {
     button_sounds: Vec<Handle<AudioSource>>,
     password_from_options: bool,
     cursor_fields: u32,
+    password_wait_release: bool,
+    cursor_redraw_pending: bool,
+    cursor_erased: bool,
     controls_view: crate::pause::ControlsView,
     entry: Vec<u8>,
     image: Handle<Image>,
@@ -579,7 +582,7 @@ impl Contest {
                     183,
                     std::str::from_utf8(&self.slots).unwrap(),
                 );
-                if self.page == Page::Password && self.cursor_fields / 20 % 2 == 1 {
+                if self.page == Page::Password && self.cursor_fields >= 20 && !self.cursor_erased {
                     self.fonts.at(
                         &mut frame,
                         Face::Password,
@@ -648,10 +651,83 @@ impl Contest {
     fn open_password(&mut self, from_options: bool) {
         self.password_from_options = from_options;
         self.cursor_fields = 0;
+        self.field_fraction = 0;
+        self.cursor_redraw_pending = false;
+        self.cursor_erased = false;
+        self.password_wait_release = true;
         self.slots = [b' '; 5];
         self.cursor = 0;
         self.page = Page::Password;
     }
+    fn password_input(&mut self, keys: &ButtonInput<KeyCode>) -> Option<usize> {
+        use KeyCode::*;
+        if keys.just_pressed(Escape) {
+            self.page = self.after_password();
+            return None;
+        }
+        if self.password_wait_release {
+            self.password_wait_release = crate::pause::campaign_pad_held(keys, None);
+            return None;
+        }
+        let symbol = [
+            (Digit1, b'<'),
+            (Digit2, b'='),
+            (Digit4, b'@'),
+            (Digit3, b'>'),
+            (Space, b' '),
+        ]
+        .into_iter()
+        .find(|(key, _)| keys.pressed(*key));
+        let edit_sound = if let Some((_, ch)) = symbol {
+            self.slots[self.cursor] = ch;
+            self.cursor = (self.cursor + 1) % 5;
+            Some(1)
+        } else if keys.pressed(ArrowLeft) || keys.pressed(ArrowRight) {
+            self.cursor = (self.cursor + if keys.pressed(ArrowLeft) { 4 } else { 1 }) % 5;
+            Some(0)
+        } else {
+            None
+        };
+        if edit_sound.is_some() {
+            self.password_wait_release = true;
+            self.cursor_erased = true;
+            self.cursor_redraw_pending = true;
+            return edit_sound;
+        }
+        if !keys.pressed(Enter) {
+            return None;
+        }
+        let code = std::str::from_utf8(&self.slots).unwrap();
+        self.page = self.after_password();
+        match code {
+            INFINITE_WEAPONS => self.modes.infinite_weapons = true,
+            HELICOPTER => self.modes.helicopter = true,
+            GOD_MODE => self.modes.god_mode = true,
+            "<><<@" => {
+                self.password_wait_release = true;
+                self.page = Page::BossPreview(Duration::from_secs(5));
+            }
+            MINION_AND_FRIENDS => {
+                self.modes.minion = true;
+                self.level = Level::Rooftops;
+            }
+            _ => {
+                if let Some(level) = Level::from_stage_password(code) {
+                    self.level = level;
+                    self.modes.minion = false;
+                } else {
+                    self.page = Page::Wrong(0);
+                    self.idle = Duration::ZERO;
+                }
+            }
+        }
+        match self.page {
+            Page::Wrong(_) => Some(3),
+            Page::BossPreview(_) => None,
+            _ => Some(2),
+        }
+    }
+
     fn after_password(&self) -> Page {
         if self.password_from_options {
             Page::Options(2)
@@ -694,13 +770,6 @@ impl Contest {
             }
             Page::DuelStage if horizontal || keys.any_just_pressed([KeyA, KeyD]) => 0,
             Page::Duel(0) if keys.any_just_pressed([Space, Comma]) => 1,
-            Page::Password if enter => {
-                if matches!(self.page, Page::Wrong(_)) {
-                    3
-                } else {
-                    2
-                }
-            }
             Page::Options(0 | 1) if enter => 0,
             Page::StaffRoll | Page::History | Page::Showcase(_) => return None,
             Page::Title | Page::MainOptions(_) if vertical => 0,
@@ -708,8 +777,6 @@ impl Contest {
             Page::Contest if vertical => 0,
             Page::Contest if keys.pressed(ArrowLeft) && keys.pressed(ArrowRight) => return None,
             _ if enter => 1,
-            Page::Password if keys.any_just_pressed([Digit1, Digit2, Digit3, Digit4, Space]) => 1,
-            Page::Password if horizontal => 0,
             Page::Battle(_) | Page::Wrong(_) if vertical => 0,
             Page::Options(n) if vertical || (n < 2 && horizontal) => 0,
             Page::Contest if self.garage.row != 2 && horizontal => 0,
@@ -1016,54 +1083,7 @@ impl Contest {
                 }
             }
             Page::Controls => {}
-            Page::Password => {
-                if key(KeyCode::Escape) {
-                    self.page = self.after_password();
-                } else if key(KeyCode::Enter) {
-                    let code = std::str::from_utf8(&self.slots).unwrap();
-                    self.page = self.after_password();
-                    match code {
-                        INFINITE_WEAPONS => self.modes.infinite_weapons = true,
-                        HELICOPTER => self.modes.helicopter = true,
-                        GOD_MODE => self.modes.god_mode = true,
-                        "<><<@" => self.page = Page::BossPreview(std::time::Duration::from_secs(5)),
-                        MINION_AND_FRIENDS => {
-                            self.modes.minion = true;
-                            self.level = Level::Rooftops;
-                        }
-                        _ => {
-                            if let Some(level) = Level::from_stage_password(code) {
-                                self.level = level;
-                                self.modes.minion = false;
-                            } else {
-                                self.page = Page::Wrong(0);
-                                self.idle = Duration::ZERO;
-                            }
-                        }
-                    }
-                } else if key(KeyCode::ArrowLeft) {
-                    self.cursor = (self.cursor + 4) % 5;
-                } else if key(KeyCode::ArrowRight) {
-                    self.cursor = (self.cursor + 1) % 5;
-                } else if let Some((_, ch)) = [
-                    (KeyCode::Digit1, b'<'),
-                    (KeyCode::Digit2, b'='),
-                    (KeyCode::Digit3, b'>'),
-                    (KeyCode::Digit4, b'@'),
-                    (KeyCode::Space, b' '),
-                ]
-                .into_iter()
-                .find(|(k, _)| key(*k))
-                {
-                    self.slots[self.cursor] = ch;
-                    self.cursor = (self.cursor + 1) % 5;
-                }
-            }
-            Page::BossPreview(_) => {
-                if key(KeyCode::Enter) {
-                    self.page = self.after_password();
-                }
-            }
+            Page::Password | Page::BossPreview(_) => {}
             Page::Wrong(row) => {
                 if key(KeyCode::ArrowUp) || key(KeyCode::ArrowDown) {
                     self.page = Page::Wrong(row ^ 1);
@@ -1146,6 +1166,9 @@ pub fn show(
         button_sounds: Vec::new(),
         password_from_options: false,
         cursor_fields: 0,
+        password_wait_release: false,
+        cursor_redraw_pending: false,
+        cursor_erased: false,
         controls_view: Default::default(),
         entry: screen::background(&disc.read("UASCREEN/SCRNFD.TIM")?)?,
         theme: default(),
@@ -1301,15 +1324,21 @@ pub fn update(world: &mut World) {
             _ => controls.map_or(held, |input| input.reset_idle),
         };
         let timed_out = menu.tick_setup_timeout(reset_idle, menu_delta(world));
-        let expired = if let Page::BossPreview(remaining) = &mut menu.page {
-            *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
-            remaining.is_zero()
+        let preview_confirmed = matches!(menu.page, Page::BossPreview(_)) && keys.any_pressed([KeyCode::Enter, KeyCode::Space]);
+        let preview_finished = if let Page::BossPreview(remaining) = menu.page {
+            if menu.password_wait_release {
+                menu.password_wait_release = crate::pause::campaign_pad_held(keys, None);
+                return;
+            }
+            let left = remaining.saturating_sub(menu_delta(world));
+            if !preview_confirmed && !left.is_zero() {
+                menu.page = Page::BossPreview(left);
+                return;
+            }
+            true
         } else {
             false
         };
-        if expired {
-            menu.page = menu.after_password();
-        }
         let animate = if !join_wait && matches!(menu.page, Page::Contest | Page::DuelJoin(None) | Page::DuelGarage{bio:false,..}) {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
@@ -1317,14 +1346,25 @@ pub fn update(world: &mut World) {
         } else if let Some(input) = controls {
             input.redraw || input.action.is_some()
         } else if menu.page==Page::Password {
-            let before=menu.cursor_fields/20;
-            let fields=menu.presentation_fields(menu_delta(world));
-            menu.cursor_fields=menu.cursor_fields.wrapping_add(fields);
-            before!=menu.cursor_fields/20
+            let mut fields = menu.presentation_fields(menu_delta(world));
+            if fields > 0 && menu.cursor_redraw_pending {
+                // Redrawing the password consumes a VSync without polling the cursor.
+                fields -= 1;
+                menu.cursor_redraw_pending = false;
+            }
+            let visible = menu.cursor_fields >= 20 && !menu.cursor_erased;
+            if fields >= 20 - menu.cursor_fields % 20 {
+                menu.cursor_erased = false;
+            }
+            menu.cursor_fields = (menu.cursor_fields + fields % 40) % 40;
+            visible != (menu.cursor_fields >= 20 && !menu.cursor_erased)
         } else {
             false
         };
-        if !join_wait && !timed_out && !animate && !expired && keys.get_just_pressed().next().is_none() {
+        if !join_wait && !timed_out && !animate && !preview_finished && keys.get_just_pressed().next().is_none() {
+            if menu.page == Page::Password && menu.password_wait_release {
+                menu.password_wait_release = crate::pause::campaign_pad_held(keys, None);
+            }
             return;
         }
         let previous = menu.page;
@@ -1344,12 +1384,21 @@ pub fn update(world: &mut World) {
                 crate::pause::navigation_sound(crate::pause::Page::Controls, action, old != settings.layout)
             });
             (false, sound.map(|select| menu.button_sounds[usize::from(select)].clone()))
-        } else if timed_out || expired {
+        } else if timed_out {
             (false, (joining && timed_out).then(|| menu.button_sounds[1].clone()))
+        } else if preview_finished {
+            menu.page = menu.after_password();
+            (false, Some(menu.button_sounds[2].clone()))
+        } else if menu.page == Page::Password {
+            let sound = menu.password_input(keys);
+            (false, sound.map(|index| menu.button_sounds[index].clone()))
         } else {
             let start = menu.input(keys);
             (start, menu.input_sound(previous, keys))
         };
+        if preview_confirmed {
+            menu.play_button(world, menu.button_sounds[1].clone());
+        }
         if menu.player_cars != *world.resource::<PlayerCars>() {
             world.insert_resource(menu.player_cars);
         }
@@ -1461,10 +1510,12 @@ mod tests {
         world.insert_resource(keys);
         update(world);
         world.insert_resource(ButtonInput::<KeyCode>::default());
-        if world
-            .get_resource::<Contest>()
-            .is_some_and(|menu| matches!(menu.page, Page::DuelJoin(Some(_)) | Page::Controls))
-        {
+        if world.get_resource::<Contest>().is_some_and(|menu| {
+            matches!(
+                menu.page,
+                Page::DuelJoin(Some(_)) | Page::Controls | Page::Password | Page::BossPreview(_)
+            )
+        }) {
             update(world);
         }
         if world.contains_resource::<crate::transition::Transition>() {
@@ -2575,6 +2626,118 @@ mod tests {
         press(&mut world, KeyCode::KeyP);
         assert!(clip(&world) == Some(Clip::Title));
         assert_eq!(confirmations(&mut world), 2);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn password_edits_wait_for_release_and_redraw_the_blinking_cursor() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, Enter);
+        let step = |world: &mut World, keys: &[KeyCode], nanos| {
+            let mut input = ButtonInput::default();
+            for &key in keys {
+                input.press(key);
+            }
+            world.insert_resource(input);
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_nanos(nanos));
+            update(world);
+        };
+        step(&mut world, &[KeyP], 0);
+        step(&mut world, &[KeyP, Digit1], 0);
+        step(&mut world, &[], 0);
+        assert_eq!(world.resource::<Contest>().slots, *b"     ");
+        let frame = |world: &World| {
+            let menu = world.resource::<Contest>();
+            world
+                .resource::<Assets<Image>>()
+                .get(&menu.image)
+                .unwrap()
+                .data
+                .clone()
+                .unwrap()
+        };
+        let plain = frame(&world);
+        step(&mut world, &[], 333_333_334);
+        let mut cursor = plain;
+        let menu = world.resource::<Contest>();
+        menu.fonts.at(&mut cursor, Face::Password, 108, 183, "_");
+        assert!(frame(&world) == cursor);
+        step(&mut world, &[Enter, ArrowLeft, Digit3, Digit4], 0);
+        let menu = world.resource::<Contest>();
+        assert_eq!((menu.slots, menu.cursor), (*b"@    ", 1));
+        let plain = frame(&world);
+        step(&mut world, &[Digit4, Digit1, ArrowRight], 0);
+        step(&mut world, &[ArrowRight], 0);
+        assert_eq!(world.resource::<Contest>().cursor, 1);
+        step(&mut world, &[], 666_666_667);
+        assert!(frame(&world) == plain);
+        step(&mut world, &[], 16_666_667);
+        let menu = world.resource::<Contest>();
+        let mut cursor = plain;
+        menu.fonts.at(
+            &mut cursor,
+            Face::Password,
+            108 + menu.fonts.password_stride(),
+            183,
+            "_",
+        );
+        assert!(frame(&world) == cursor);
+        step(&mut world, &[ArrowLeft, Enter], 0);
+        assert_eq!(world.resource::<Contest>().cursor, 0);
+        step(&mut world, &[], 0);
+        step(&mut world, &[ArrowLeft], 0);
+        assert_eq!(world.resource::<Contest>().cursor, 4);
+        step(&mut world, &[], 0);
+        step(&mut world, &[KeyQ], 3_600_000_000_000);
+        assert_eq!(world.resource::<Contest>().page, Page::Password);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn boss_password_waits_for_release_before_timing_and_playing_the_reward() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [Enter, KeyP, Digit1, Digit3, Digit1, Digit1, Digit4] {
+            press(&mut world, key);
+        }
+        let reward = world.resource::<Contest>().button_sounds[2].clone();
+        let rewards = |world: &mut World| {
+            world
+                .query::<&AudioPlayer>()
+                .iter(world)
+                .filter(|p| p.0 == reward)
+                .count()
+        };
+        world.resource_mut::<ButtonInput<KeyCode>>().press(Enter);
+        update(&mut world);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(6));
+        update(&mut world);
+        assert_eq!(
+            world.resource::<Contest>().page,
+            Page::BossPreview(Duration::from_secs(5))
+        );
+        assert_eq!(rewards(&mut world), 0);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        update(&mut world);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(4));
+        update(&mut world);
+        assert_eq!(
+            world.resource::<Contest>().page,
+            Page::BossPreview(Duration::from_secs(1))
+        );
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::ZERO);
+        press(&mut world, Space);
+        assert_eq!(world.resource::<Contest>().page, Page::Contest);
+        assert_eq!(rewards(&mut world), 1);
     }
 
     #[test]
