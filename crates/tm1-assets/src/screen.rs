@@ -27,6 +27,33 @@ pub fn background(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Indexed 128 × 64 TIM used for each entry in screenCarPictures.
+pub fn vehicle_card(data: &[u8]) -> Result<Vec<[u8; 4]>> {
+    ensure!(
+        u32le(data, 0)? == 16 && u32le(data, 4)? == 9,
+        "expected 8-bit vehicle card"
+    );
+    let palette = bytes(data, 8, u32le(data, 8)? as usize)?;
+    let colors = bytes(palette, 12, 512)?;
+    let start = 8 + palette.len();
+    let bitmap = bytes(data, start, u32le(data, start)? as usize)?;
+    ensure!(
+        u16le(bitmap, 8)? == 64 && u16le(bitmap, 10)? == 64,
+        "unexpected vehicle card dimensions"
+    );
+    Ok(bytes(bitmap, 12, 128 * 64)?
+        .iter()
+        .map(|&index| {
+            let at = usize::from(index) * 2;
+            let mut color = rgb555(u16::from_le_bytes([colors[at], colors[at + 1]]));
+            for v in &mut color[..3] {
+                *v = (u16::from(*v) * 127 / 128) as u8;
+            }
+            color
+        })
+        .collect())
+}
+
 pub struct Fonts {
     pixels: Vec<[u8; 4]>,
     width: usize,
@@ -52,6 +79,8 @@ pub enum Face {
     Selected,
     Control,
     ArrowActive,
+    PasswordLabel,
+    PasswordSelected,
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
@@ -133,11 +162,14 @@ impl Fonts {
             47
         };
         let metrics = &self.metrics[match face {
-            Face::Choice | Face::Selected => 1,
+            Face::Choice | Face::Selected | Face::PasswordLabel | Face::PasswordSelected => 1,
             Face::Control | Face::ArrowActive => 3,
             _ => face as usize,
         }];
         metrics.get(idx).copied().unwrap_or(metrics[47])
+    }
+    pub fn password_stride(&self) -> i32 {
+        self.glyph(Face::Password, b'=').w as i32 + 7
     }
     pub fn line_height(&self) -> i32 {
         self.glyph(Face::Text, b'M').h as i32
@@ -148,7 +180,11 @@ impl Fonts {
     }
     pub fn centered_at(&self, frame: &mut [u8], face: Face, center: i32, y: i32, text: &str) {
         let spacing = match face {
-            Face::Text | Face::Choice | Face::Selected => -1,
+            Face::Text
+            | Face::Choice
+            | Face::Selected
+            | Face::PasswordLabel
+            | Face::PasswordSelected => -1,
             Face::Password => 7,
             Face::Speed => 3,
             Face::Sign | Face::Control | Face::ArrowActive => 0,
@@ -162,6 +198,8 @@ impl Fonts {
     }
     pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
         let (spacing, tint) = match face {
+            Face::PasswordLabel => (-1, [55, 88, 127]),
+            Face::PasswordSelected => (-1, [100; 3]),
             Face::Choice => (-1, [93, 30, 23]),
             Face::Selected => (-1, [115, 61, 27]),
             Face::Control => (0, [128; 3]),

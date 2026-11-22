@@ -119,7 +119,13 @@ fn main() -> Result<()> {
         !boss_demo || (!menu && level == Level::Rooftops),
         "boss capture requires Rooftops"
     );
-    let demo = boss_demo
+    let battle_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-battle-screenshot"));
+    ensure!(
+        !battle_demo || garage,
+        "battle card capture requires --garage"
+    );
+    let demo = battle_demo
+        || boss_demo
         || pause_demo
         || mirror_demo
         || cockpit_demo
@@ -204,7 +210,7 @@ fn main() -> Result<()> {
             (!garage).then_some(cinema::Clip::Presents),
         )?;
         if garage {
-            contest::open_garage(app.world_mut());
+            contest::open_garage(app.world_mut(), battle_demo);
         }
     }
     app.add_plugins(additive::AdditivePlugin);

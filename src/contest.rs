@@ -9,15 +9,18 @@ use tm1_core::drive::{Difficulty, Level, Vehicle};
 
 #[derive(Component)]
 struct ContestScreen;
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Title,
     History,
     Showcase(usize),
     Contest,
+    Battle(usize),
+    Options(usize),
+    Controls,
     Bio,
     Password,
-    Wrong,
+    Wrong(usize),
     BossPreview(std::time::Duration),
 }
 pub const INFINITE_WEAPONS: &str = "< =@@";
@@ -34,6 +37,14 @@ pub struct Contest {
     field_fraction: u128,
     history: crate::scroll::Scroll,
     history_background: Vec<u8>,
+    battle: Vec<u8>,
+    cards: Vec<Vec<[u8; 4]>>,
+    options: Vec<u8>,
+    controls: crate::pause::Art,
+    settings: crate::pause::Settings,
+    button_sounds: Vec<Handle<AudioSource>>,
+    password_from_options: bool,
+    cursor_fields: u32,
     entry: Vec<u8>,
     image: Handle<Image>,
     theme: Handle<AudioSource>,
@@ -149,7 +160,13 @@ impl Contest {
     }
     fn sync_theme(&mut self, world: &mut World) {
         let car = match self.page {
-            Page::Contest | Page::Bio => Some(self.vehicle),
+            Page::Contest
+            | Page::Bio
+            | Page::Battle(_)
+            | Page::Options(_)
+            | Page::Controls
+            | Page::Password
+            | Page::Wrong(_) => Some(self.vehicle),
             Page::Showcase(i) => Some(i),
             _ => None,
         };
@@ -219,6 +236,25 @@ impl Contest {
     }
     fn frame(&self) -> Vec<u8> {
         let mut frame = match self.page {
+            Page::Battle(_) => {
+                let mut out = self.battle.clone();
+                for (n, px) in self.cards[self.vehicle].iter().enumerate() {
+                    if px[3] != 0 {
+                        let at = 4 * ((65 + n / 128) * 320 + 94 + n % 128);
+                        out[at..at + 4].copy_from_slice(px);
+                    }
+                }
+                out
+            }
+            Page::Options(_) => self.options.clone(),
+            Page::Controls => {
+                return self.controls.frame(
+                    &self.fonts,
+                    self.level,
+                    crate::pause::Page::Controls,
+                    self.settings,
+                );
+            }
             Page::Title => self.title.clone(),
             Page::Contest => return self.garage.frame(&self.fonts, self.vehicle, false),
             Page::History => {
@@ -232,35 +268,80 @@ impl Contest {
         };
         let mut line = |y, face, text: &str| self.fonts.centered(&mut frame, face, y, text);
         match self.page {
+            Page::Battle(row) | Page::Options(row) => {
+                let difficulty = match self.difficulty {
+                    Difficulty::Easy => "EASY",
+                    Difficulty::Medium => "MEDIUM",
+                    Difficulty::Hard => "HARD",
+                };
+                let controls = ["CTL FREAK", "STANDARD", "DEADLY FORCE", "RUN N' GUN"]
+                    [usize::from(self.settings.layout)];
+                let choices: &[(&str, &str)] = if matches!(self.page, Page::Battle(_)) {
+                    &[("START", ""), ("OPTIONS", ""), ("EXIT", "")]
+                } else {
+                    &[
+                        ("DIFFICULTY:", difficulty),
+                        ("CONTROLS:", controls),
+                        ("PASSWORD", ""),
+                        ("EXIT", ""),
+                    ]
+                };
+                let bottom = if matches!(self.page, Page::Battle(_)) {
+                    210
+                } else {
+                    180
+                };
+                for (i, (label, value)) in choices.iter().enumerate() {
+                    let face = if i == row {
+                        Face::Selected
+                    } else {
+                        Face::Choice
+                    };
+                    let y = bottom - 20 * (choices.len() - 1 - i) as i32;
+                    self.fonts.at(&mut frame, face, 30, y, label);
+                    self.fonts.at(&mut frame, face, 160, y, value);
+                }
+            }
+            Page::Controls => unreachable!(),
             Page::Title => {
                 line(165, Face::Text, "1P CONTEST");
                 line(193, Face::Text, "PRESS ENTER");
             }
             Page::Contest | Page::Bio | Page::History | Page::Showcase(_) => unreachable!(),
-            Page::Password => {
-                line(72, Face::Text, "ENTER PASSWORD");
-                line(98, Face::Text, "SPACE  BLANK");
-                line(125, Face::Text, "1 TRIANGLE   2 SQUARE");
-                line(145, Face::Text, "3 CROSS   4 CIRCLE");
-                // Draw one fixed-width slot per glyph, including spaces in cheat codes.
-                for (i, &symbol) in self.slots.iter().enumerate() {
-                    let x = 107 + i as i32 * 22;
+            Page::Password | Page::Wrong(_) => {
+                if let Page::Wrong(row) = self.page {
+                    line(95, Face::PasswordLabel, "WRONG!");
+                    for (i, label) in ["TRY AGAIN?", "EXIT"].into_iter().enumerate() {
+                        line(
+                            133 + i as i32 * 20,
+                            if i == row {
+                                Face::PasswordSelected
+                            } else {
+                                Face::PasswordLabel
+                            },
+                            label,
+                        );
+                    }
+                } else {
+                    line(113, Face::PasswordLabel, "ENTER");
+                    line(133, Face::PasswordLabel, "PASSWORD");
+                }
+                self.fonts.at(
+                    &mut frame,
+                    Face::Password,
+                    107,
+                    183,
+                    std::str::from_utf8(&self.slots).unwrap(),
+                );
+                if self.page == Page::Password && self.cursor_fields / 20 % 2 == 1 {
                     self.fonts.at(
                         &mut frame,
                         Face::Password,
-                        x,
+                        108 + self.cursor as i32 * self.fonts.password_stride(),
                         183,
-                        std::str::from_utf8(&[symbol]).unwrap(),
+                        "_",
                     );
-                    if i == self.cursor {
-                        for col in x..x + 14 {
-                            let at = 4 * (188 * screen::WIDTH + col as usize);
-                            frame[at..at + 4].copy_from_slice(&[233, 184, 88, 255]);
-                        }
-                    }
                 }
-                self.fonts
-                    .centered(&mut frame, Face::Text, 221, "ENTER  ACCEPT");
             }
             Page::BossPreview(_) => {
                 for pixel in frame.chunks_exact_mut(4) {
@@ -270,13 +351,80 @@ impl Contest {
                 }
                 crate::render::boss_text(&self.fonts, &mut frame);
             }
-            Page::Wrong => {
-                line(115, Face::Text, "WRONG PASSWORD");
-                line(155, Face::Text, "ENTER  TRY AGAIN");
-                line(185, Face::Text, "ESC  EXIT");
-            }
         }
         frame
+    }
+    fn leave_battle(&mut self) {
+        self.page = Page::Title;
+        self.level = Level::Arena;
+        self.modes = Default::default();
+        self.idle = Duration::ZERO;
+        self.released = false;
+    }
+    fn tick_setup_timeout(&mut self, held: bool, dt: Duration) -> bool {
+        let limit = match self.page {
+            Page::Options(_) => 18001,
+            Page::Battle(_) | Page::Wrong(_) => 1201,
+            _ => return false,
+        };
+        if held {
+            self.idle = Duration::ZERO;
+            return false;
+        }
+        self.idle += dt;
+        if self.idle.as_nanos() * 60 < limit * 1_000_000_000 {
+            return false;
+        }
+        self.idle = Duration::ZERO;
+        match self.page {
+            Page::Battle(_) => self.leave_battle(),
+            Page::Wrong(_) => self.page = self.after_password(),
+            _ => self.page = Page::Battle(0),
+        }
+        true
+    }
+    fn open_password(&mut self, from_options: bool) {
+        self.password_from_options = from_options;
+        self.cursor_fields = 0;
+        self.slots = [b' '; 5];
+        self.cursor = 0;
+        self.page = Page::Password;
+    }
+    fn after_password(&self) -> Page {
+        if self.password_from_options {
+            Page::Options(2)
+        } else {
+            Page::Contest
+        }
+    }
+    fn input_sound(
+        &self,
+        before: Page,
+        keys: &ButtonInput<KeyCode>,
+    ) -> Option<Handle<AudioSource>> {
+        use KeyCode::*;
+        let enter = keys.just_pressed(Enter);
+        let vertical = keys.any_just_pressed([ArrowUp, ArrowDown]);
+        let horizontal = keys.any_just_pressed([ArrowLeft, ArrowRight]);
+        let index = match before {
+            Page::Password if enter => {
+                if matches!(self.page, Page::Wrong(_)) {
+                    3
+                } else {
+                    2
+                }
+            }
+            Page::Options(0 | 1) if enter => 0,
+            Page::History | Page::Showcase(_) => return None,
+            _ if enter => 1,
+            Page::Password if keys.any_just_pressed([Digit1, Digit2, Digit3, Digit4, Space]) => 1,
+            Page::Password | Page::Controls if horizontal => 0,
+            Page::Battle(_) | Page::Wrong(_) if vertical => 0,
+            Page::Options(n) if vertical || (n < 2 && horizontal) => 0,
+            Page::Contest if vertical || (self.garage.row != 2 && horizontal) => 0,
+            _ => return None,
+        };
+        Some(self.button_sounds[index].clone())
     }
     fn input(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let key = |k| keys.just_pressed(k);
@@ -295,7 +443,9 @@ impl Contest {
             }
             Page::Contest => {
                 if key(KeyCode::Enter) && self.garage.row == 0 {
-                    return true;
+                    self.page = Page::Battle(0);
+                    self.idle = Duration::ZERO;
+                    return false;
                 }
                 if key(KeyCode::Enter) && self.garage.row == 1 {
                     self.page = Page::Bio;
@@ -310,9 +460,7 @@ impl Contest {
                 } else if key(KeyCode::KeyD) {
                     self.difficulty = self.difficulty.next();
                 } else if key(KeyCode::KeyP) {
-                    self.page = Page::Password;
-                    self.slots = [b' '; 5];
-                    self.cursor = 0;
+                    self.open_password(false);
                 } else if key(KeyCode::ArrowRight) && self.garage.row != 2 {
                     self.garage.slide = 0;
                     self.garage.left = false;
@@ -324,12 +472,58 @@ impl Contest {
                         (self.vehicle + Vehicle::CARD_ORDER.len() - 1) % Vehicle::CARD_ORDER.len();
                 }
             }
+            Page::Battle(row) => {
+                if key(KeyCode::ArrowUp) {
+                    self.page = Page::Battle((row + 2) % 3);
+                } else if key(KeyCode::ArrowDown) {
+                    self.page = Page::Battle((row + 1) % 3);
+                } else if key(KeyCode::Enter) && row == 0 {
+                    return true;
+                } else if key(KeyCode::Enter) && row == 1 {
+                    self.page = Page::Options(0);
+                } else if key(KeyCode::Escape) || key(KeyCode::Enter) {
+                    self.leave_battle();
+                }
+            }
+            Page::Options(row) => {
+                if key(KeyCode::ArrowUp) {
+                    self.page = Page::Options((row + 3) % 4);
+                } else if key(KeyCode::ArrowDown) {
+                    self.page = Page::Options((row + 1) % 4);
+                } else if key(KeyCode::Escape) || (row == 3 && key(KeyCode::Enter)) {
+                    self.page = Page::Battle(0);
+                } else if key(KeyCode::Enter) || key(KeyCode::ArrowLeft) || key(KeyCode::ArrowRight)
+                {
+                    match row {
+                        0 => {
+                            self.difficulty = self.difficulty.next();
+                            if key(KeyCode::ArrowLeft) {
+                                self.difficulty = self.difficulty.next();
+                            }
+                        }
+                        1 => self.page = Page::Controls,
+                        2 if key(KeyCode::Enter) => {
+                            self.open_password(true);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Page::Controls => {
+                if key(KeyCode::Enter) || key(KeyCode::Escape) {
+                    self.page = Page::Options(1);
+                } else if key(KeyCode::ArrowLeft) {
+                    self.settings.layout = self.settings.layout.saturating_sub(1);
+                } else if key(KeyCode::ArrowRight) {
+                    self.settings.layout = (self.settings.layout + 1).min(3);
+                }
+            }
             Page::Password => {
                 if key(KeyCode::Escape) {
-                    self.page = Page::Contest;
+                    self.page = self.after_password();
                 } else if key(KeyCode::Enter) {
                     let code = std::str::from_utf8(&self.slots).unwrap();
-                    self.page = Page::Contest;
+                    self.page = self.after_password();
                     match code {
                         INFINITE_WEAPONS => self.modes.infinite_weapons = true,
                         HELICOPTER => self.modes.helicopter = true,
@@ -344,7 +538,8 @@ impl Contest {
                                 self.level = level;
                                 self.modes.minion = false;
                             } else {
-                                self.page = Page::Wrong;
+                                self.page = Page::Wrong(0);
+                                self.idle = Duration::ZERO;
                             }
                         }
                     }
@@ -368,16 +563,16 @@ impl Contest {
             }
             Page::BossPreview(_) => {
                 if key(KeyCode::Enter) {
-                    self.page = Page::Contest;
+                    self.page = self.after_password();
                 }
             }
-            Page::Wrong => {
-                if key(KeyCode::Enter) {
-                    self.slots = [b' '; 5];
-                    self.cursor = 0;
-                    self.page = Page::Password;
-                } else if key(KeyCode::Escape) {
-                    self.page = Page::Contest;
+            Page::Wrong(row) => {
+                if key(KeyCode::ArrowUp) || key(KeyCode::ArrowDown) {
+                    self.page = Page::Wrong(row ^ 1);
+                } else if key(KeyCode::Enter) && row == 0 {
+                    self.open_password(self.password_from_options);
+                } else if key(KeyCode::Escape) || key(KeyCode::Enter) {
+                    self.page = self.after_password();
                 }
             }
         }
@@ -413,6 +608,22 @@ pub fn show(
         garage: crate::garage::Garage::load(disc)?,
         field_fraction: 0,
         title: screen::background(&disc.read("UASCREEN/SCRNC.TIM")?)?,
+        battle: screen::background(&disc.read("UASCREEN/SCRNE21P.TIM")?)?,
+        cards: [
+            "ICE_CARD", "CAB_CARD", "SEMI_CAR", "COP_CARD", "LOWRIDER", "LAMBO_CA", "DUNEB_CA",
+            "HUMVEE_C", "HARLEY_C", "VETTE_CA", "MONSTERT", "MADMAX_C",
+        ]
+        .iter()
+        .map(|name| screen::vehicle_card(&disc.read(&format!("UATIM/{name}.TIM"))?))
+        .collect::<Result<_>>()?,
+        options: screen::background(&disc.read("UASCREEN/SCRNF.TIM")?)?,
+        controls: crate::pause::Art::load(disc)?,
+        settings: world
+            .get_resource::<crate::driving::Drive>()
+            .map_or_else(Default::default, |d| d.settings),
+        button_sounds: Vec::new(),
+        password_from_options: false,
+        cursor_fields: 0,
         entry: screen::background(&disc.read("UASCREEN/SCRNFD.TIM")?)?,
         theme: default(),
         theme_entity: None,
@@ -429,6 +640,12 @@ pub fn show(
         cursor: 0,
         released: false,
     };
+    let bank = disc.read("SND/UACORE.VAB")?;
+    for program in [57, 58, 36, 41] {
+        let sample = crate::sfx::Sample::load(&bank, program, false)?.wave(0.)?;
+        menu.button_sounds
+            .push(world.resource_mut::<Assets<AudioSource>>().add(sample));
+    }
     campaign::clear_stage(world);
     menu.image = crate::ending::spawn_screen(world, ContestScreen, menu.frame());
     menu.theme = world.resource_mut::<Assets<AudioSource>>().add(theme);
@@ -436,9 +653,13 @@ pub fn show(
     world.insert_resource(menu);
     Ok(())
 }
-pub fn open_garage(world: &mut World) {
+pub fn open_garage(world: &mut World, battle_card: bool) {
     world.resource_scope(|world, mut menu: Mut<Contest>| {
-        menu.page = Page::Contest;
+        menu.page = if battle_card {
+            Page::Battle(0)
+        } else {
+            Page::Contest
+        };
         menu.sync_theme(world);
         world
             .resource_mut::<Assets<Image>>()
@@ -535,6 +756,7 @@ pub fn update(world: &mut World) {
             menu.idle = Duration::ZERO;
         }
         let keys = if scripted { &no_input } else { world.resource::<ButtonInput<KeyCode>>() };
+        let timed_out = menu.tick_setup_timeout(held,menu_delta(world));
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
             remaining.is_zero()
@@ -542,24 +764,38 @@ pub fn update(world: &mut World) {
             false
         };
         if expired {
-            menu.page = Page::Contest;
+            menu.page = menu.after_password();
         }
         let animate = if menu.page == Page::Contest {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
+        } else if menu.page==Page::Password {
+            let before=menu.cursor_fields/20;
+            let fields=menu.presentation_fields(menu_delta(world));
+            menu.cursor_fields=menu.cursor_fields.wrapping_add(fields);
+            before!=menu.cursor_fields/20
         } else {
             false
         };
-        if !animate && !expired && keys.get_just_pressed().next().is_none() {
+        if !timed_out && !animate && !expired && keys.get_just_pressed().next().is_none() {
             return;
         }
-        if !expired && menu.input(keys) {
+        let previous = menu.page;
+        let start_battle = !expired && menu.input(keys);
+        if !expired && let Some(voice) = menu.input_sound(previous, keys) {
+            world.spawn((
+                AudioPlayer::new(voice),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * menu.settings.effects_gain())),
+            ));
+        }
+        if start_battle {
             start = Some((
                 menu.level,
                 Vehicle::CARD_ORDER[menu.vehicle],
                 menu.difficulty,
                 menu.modes,
+                menu.settings.layout,
             ));
         } else if let Some(mut img) = world.resource_mut::<Assets<Image>>().get_mut(&menu.image) {
             img.data = Some(menu.frame());
@@ -574,12 +810,14 @@ pub fn update(world: &mut World) {
                 if window.title != title {
                     window.title = title;
                 }
+            } else if menu.page==Page::Password {
+                window.title="TM1 • Password   |   1 Triangle   2 Square   3 Cross   4 Circle   Space Blank   Enter Accept".into();
             } else if window.title != "TM1" {
                 window.title = "TM1".into();
             }
         }
     });
-    if let Some((level, vehicle, difficulty, modes)) = start {
+    if let Some((level, vehicle, difficulty, modes, layout)) = start {
         match Stage::load(
             &world.resource::<Campaign>().0,
             level,
@@ -590,6 +828,9 @@ pub fn update(world: &mut World) {
                 stage.apply_passwords(modes);
                 world.remove_resource::<Contest>();
                 campaign::replace(world, stage);
+                let mut drive = world.resource_mut::<crate::driving::Drive>();
+                drive.settings.layout = layout;
+                drive.player.set_pad_layout(layout);
             }
             Err(err) => {
                 error!("Loading contest failed: {err:#}");
@@ -643,6 +884,62 @@ mod tests {
         }
         press(world, KeyCode::Enter);
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_setup_applies_keyboard_choices_to_the_encounter() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [
+            Enter, Enter, ArrowDown, Enter, ArrowLeft, ArrowDown, Enter, ArrowRight, Enter,
+            ArrowDown, Enter, Enter,
+        ] {
+            press(&mut world, key);
+        }
+        assert!(world.resource::<Contest>().page == Page::Wrong(0));
+        for key in [ArrowDown, Enter] {
+            press(&mut world, key);
+        }
+        assert!(world.resource::<Contest>().page == Page::Options(2));
+        for key in [
+            Enter, Digit2, Digit1, Digit4, Digit2, Digit2, Enter, ArrowDown, Enter,
+        ] {
+            press(&mut world, key);
+        }
+        assert!(world.resource::<Contest>().page == Page::Battle(0));
+        press(&mut world, Enter);
+        let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.player.level(), Level::Arena5);
+        assert_eq!(drive.player.difficulty(), Difficulty::Easy);
+        assert_eq!(drive.settings.layout, 2);
+        assert_eq!(drive.player.state()[0xc8 + 22], 2);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_setup_idle_deadlines() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        for key in [Enter, Enter, ArrowDown, Enter] {
+            press(&mut world, key);
+        }
+        let mut elapsed = |ms| {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(ms));
+            update(&mut world);
+            match world.resource::<Contest>().page {
+                Page::Battle(_) => 1,
+                Page::Options(_) => 2,
+                Page::Title => 3,
+                _ => 0,
+            }
+        };
+        assert_eq!(elapsed(300_000), 2);
+        assert_eq!(elapsed(17), 1);
+        assert_eq!(elapsed(20_000), 1);
+        assert_eq!(elapsed(17), 3);
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE and FFmpeg"]
     fn history_showcase_and_attract_rotation() {
@@ -816,6 +1113,7 @@ mod tests {
         password(&mut world, &[Digit4, Digit4, Digit1, Digit3, Space]);
         password(&mut world, &[Digit1, Digit3, Digit4, Digit2, Digit1]);
         press(&mut world, Enter);
+        press(&mut world, Enter);
         let drive = world.resource::<crate::driving::Drive>();
         assert_eq!(drive.player.level(), Level::Rooftops);
         assert!(drive.showing_boss_intro());
@@ -861,6 +1159,7 @@ mod tests {
         let mut world = menu_world();
         press(&mut world, KeyCode::Enter);
         press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
         world.resource_mut::<crate::driving::Drive>().lives = 0;
         campaign::advance(&mut world);
         assert!(!world.contains_resource::<Contest>());
@@ -875,6 +1174,7 @@ mod tests {
         press(&mut world, KeyCode::Enter);
         assert!(world.resource::<Contest>().cinema.is_none());
         update(&mut world);
+        press(&mut world, KeyCode::Enter);
         press(&mut world, KeyCode::Enter);
         press(&mut world, KeyCode::Enter);
         assert_eq!(world.resource::<crate::driving::Drive>().lives, 3);
@@ -898,6 +1198,7 @@ mod tests {
             KeyCode::Digit4,
             KeyCode::Digit2,
             KeyCode::Digit2,
+            KeyCode::Enter,
             KeyCode::Enter,
             KeyCode::Enter,
         ] {
