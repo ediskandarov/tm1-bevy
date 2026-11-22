@@ -24,7 +24,8 @@ pub enum Entry<'a> {
 }
 pub struct Stage {
     arena: render::Arena,
-    drive: driving::Drive,
+    pub(crate) drive: driving::Drive,
+    pub(crate) card_angles: Vec<i32>,
     music: music::Music,
     sounds: sfx::Sounds,
     clear: ClearColor,
@@ -75,6 +76,19 @@ impl Stage {
             Entry::New(_) => (1, Default::default()),
         };
         let opponent_kinds = level.opponents(vehicle, &mut deck, &mut seed);
+        // screenDrawCard takes one BIOS random value per settled opponent card,
+        // after shellSelectCards and before the new stage initializes its cars.
+        let card_angles = opponent_kinds
+            .iter()
+            .map(|_| {
+                let random = tm1_core::drive::bios_rand(&mut seed) as i32;
+                if random & 8 == 0 {
+                    random & 6
+                } else {
+                    -(random & 6)
+                }
+            })
+            .collect();
         let player = match entry {
             Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
             Entry::New(difficulty) => {
@@ -138,6 +152,7 @@ impl Stage {
             }
         }
         Ok(Self {
+            card_angles,
             arena,
             drive,
             music: music::Music::level(disc, level)?,
@@ -243,7 +258,11 @@ pub fn advance_to(world: &mut World, level: Level) {
         }
     };
     stage.drive.lives = lives;
-    replace(world, stage);
+    let from_ending = level == Level::Arena5;
+    if let Err(err) = crate::transition::begin(world, stage, !from_ending, from_ending, None) {
+        error!("Loading stage introduction failed: {err:#}");
+        world.write_message(AppExit::error());
+    }
 }
 
 pub fn clear_stage(world: &mut World) {

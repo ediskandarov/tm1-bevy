@@ -271,6 +271,14 @@ pub(crate) fn spawn_screen(
     marker: impl Component,
     pixels: Vec<u8>,
 ) -> Handle<Image> {
+    let handle = screen_image(world, pixels);
+    world.spawn((StageEntity, Camera2d));
+    world.spawn((StageEntity, marker, Sprite::from_image(handle.clone())));
+    world.insert_resource(ClearColor(Color::BLACK));
+    handle
+}
+
+pub(crate) fn screen_image(world: &mut World, pixels: Vec<u8>) -> Handle<Image> {
     let mut image = Image::new(
         Extent3d {
             width: WIDTH as u32,
@@ -283,11 +291,7 @@ pub(crate) fn spawn_screen(
         RenderAssetUsages::default(),
     );
     image.sampler = ImageSampler::nearest();
-    let handle = world.resource_mut::<Assets<Image>>().add(image);
-    world.spawn((StageEntity, Camera2d));
-    world.spawn((StageEntity, marker, Sprite::from_image(handle.clone())));
-    world.insert_resource(ClearColor(Color::BLACK));
-    handle
+    world.resource_mut::<Assets<Image>>().add(image)
 }
 
 pub fn update(
@@ -439,6 +443,7 @@ mod tests {
         ending.field(false, false, false);
         ending.field(true, false, false);
         finish(&mut world);
+        crate::transition::complete(&mut world);
         let drive = world.resource::<crate::driving::Drive>();
         assert_eq!(drive.player.level(), Level::Arena5);
         assert_eq!(drive.player.difficulty(), Difficulty::Hard);

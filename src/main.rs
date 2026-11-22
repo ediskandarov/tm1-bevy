@@ -13,6 +13,7 @@ mod render;
 mod scroll;
 mod sfx;
 mod smoke;
+mod transition;
 
 use anyhow::{Result, ensure};
 use bevy::prelude::*;
@@ -124,7 +125,14 @@ fn main() -> Result<()> {
         !battle_demo || garage,
         "battle card capture requires --garage"
     );
-    let demo = battle_demo
+    let transition_demo =
+        flag.as_deref() == Some(std::ffi::OsStr::new("--demo-transition-screenshot"));
+    ensure!(
+        !transition_demo || garage,
+        "transition capture requires --garage"
+    );
+    let demo = transition_demo
+        || battle_demo
         || boss_demo
         || pause_demo
         || mirror_demo
@@ -210,7 +218,10 @@ fn main() -> Result<()> {
             (!garage).then_some(cinema::Clip::Presents),
         )?;
         if garage {
-            contest::open_garage(app.world_mut(), battle_demo);
+            contest::open_garage(app.world_mut(), battle_demo || transition_demo);
+            if transition_demo {
+                contest::start_battle(app.world_mut())?;
+            }
         }
     }
     app.add_plugins(additive::AdditivePlugin);
@@ -240,7 +251,8 @@ fn main() -> Result<()> {
             )
                 .chain()
                 .run_if(not(resource_exists::<ending::Ending>))
-                .run_if(not(resource_exists::<contest::Contest>)),
+                .run_if(not(resource_exists::<contest::Contest>))
+                .run_if(not(resource_exists::<transition::Transition>)),
         )
         .add_systems(
             Update,
@@ -249,11 +261,13 @@ fn main() -> Result<()> {
                 sfx::update
                     .after(driving::advance)
                     .run_if(not(resource_exists::<ending::Ending>))
-                    .run_if(not(resource_exists::<contest::Contest>)),
+                    .run_if(not(resource_exists::<contest::Contest>))
+                    .run_if(not(resource_exists::<transition::Transition>)),
                 music::control
                     .after(driving::advance)
                     .run_if(not(resource_exists::<ending::Ending>))
-                    .run_if(not(resource_exists::<contest::Contest>)),
+                    .run_if(not(resource_exists::<contest::Contest>))
+                    .run_if(not(resource_exists::<transition::Transition>)),
             ),
         )
         .add_systems(
@@ -261,6 +275,7 @@ fn main() -> Result<()> {
             campaign::advance
                 .run_if(not(resource_exists::<ending::Ending>))
                 .run_if(not(resource_exists::<contest::Contest>))
+                .run_if(not(resource_exists::<transition::Transition>))
                 .after(pause::draw)
                 .after(sfx::update)
                 .after(music::control)
@@ -272,6 +287,14 @@ fn main() -> Result<()> {
                 .chain()
                 .after(campaign::advance)
                 .run_if(resource_exists::<ending::Ending>),
+        )
+        .add_systems(
+            Update,
+            transition::update
+                .after(campaign::advance)
+                .after(ending::finish)
+                .after(contest::update)
+                .run_if(resource_exists::<transition::Transition>),
         )
         .run();
     ensure!(exit.is_success(), "arena exited with {exit:?}");

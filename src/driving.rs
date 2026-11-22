@@ -594,6 +594,7 @@ mod tests {
             drive.opponents.clear();
             drive.advance_victory_delay(181);
             crate::campaign::advance(&mut world);
+            crate::transition::complete(&mut world);
             let drive = world.resource::<Drive>();
             assert_eq!(drive.player.level(), level);
             assert_eq!(drive.lives, 2);

@@ -28,6 +28,13 @@ pub fn background(data: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Indexed 128 × 64 TIM used for each entry in screenCarPictures.
+pub const CARD_FILES: [&str; 12] = [
+    "ICE_CARD", "CAB_CARD", "SEMI_CAR", "COP_CARD", "LOWRIDER", "LAMBO_CA", "DUNEB_CA", "HUMVEE_C",
+    "HARLEY_C", "VETTE_CA", "MONSTERT", "MADMAX_C",
+];
+pub fn load_card(disc: &Disc, index: usize) -> Result<Vec<[u8; 4]>> {
+    vehicle_card(&disc.read(&format!("UATIM/{}.TIM", CARD_FILES[index]))?)
+}
 pub fn vehicle_card(data: &[u8]) -> Result<Vec<[u8; 4]>> {
     ensure!(
         u32le(data, 0)? == 16 && u32le(data, 4)? == 9,
@@ -179,6 +186,10 @@ impl Fonts {
         self.centered_at(frame, face, center, y, text);
     }
     pub fn centered_at(&self, frame: &mut [u8], face: Face, center: i32, y: i32, text: &str) {
+        let width = self.width(face, text);
+        self.at(frame, face, center - (width >> 1), y, text);
+    }
+    pub fn width(&self, face: Face, text: &str) -> i32 {
         let spacing = match face {
             Face::Text
             | Face::Choice
@@ -190,11 +201,9 @@ impl Fonts {
             Face::Sign | Face::Control | Face::ArrowActive => 0,
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        let width: i32 = text
-            .bytes()
+        text.bytes()
             .map(|c| if c == 8 { -1 } else { advance(c) })
-            .sum();
-        self.at(frame, face, center - (width >> 1), y, text);
+            .sum()
     }
     pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
         let (spacing, tint) = match face {

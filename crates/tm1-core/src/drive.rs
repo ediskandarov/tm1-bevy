@@ -244,6 +244,11 @@ pub struct ArenaDeck {
     used: u16,
     draws: u8,
 }
+/// Advance the shared PS1 BIOS rand state and return its 15-bit value.
+pub fn bios_rand(seed: &mut u32) -> u32 {
+    *seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+    (*seed >> 16) & 32767
+}
 impl ArenaDeck {
     pub fn draw(&mut self, player: Vehicle, seed: &mut u32) -> Vehicle {
         let index = Vehicle::CARD_ORDER
@@ -254,8 +259,7 @@ impl ArenaDeck {
             *self = Self::default();
         }
         loop {
-            *seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
-            let card = ((*seed >> 16) & 32767) as usize % 12;
+            let card = bios_rand(seed) as usize % 12;
             if card != index && self.used & (1 << card) == 0 {
                 self.used |= 1 << card;
                 self.draws += 1;
@@ -453,8 +457,7 @@ impl PlayerVehicle {
         self.vehicle
     }
     pub fn random(&mut self) -> u32 {
-        self.seed = self.seed.wrapping_mul(1103515245).wrapping_add(12345);
-        (self.seed >> 16) & 32767
+        bios_rand(&mut self.seed)
     }
     pub fn rng_state(&self) -> u32 {
         self.seed

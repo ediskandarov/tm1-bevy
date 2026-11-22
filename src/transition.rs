@@ -1,0 +1,392 @@
+//! SHELL.c shellDrawCards and SCREEN.c screenTransitionLevel.
+use crate::campaign::{Campaign, Stage, StageEntity};
+use anyhow::{Result, ensure};
+use bevy::prelude::*;
+use tm1_assets::screen::{self, Face, Fonts, HEIGHT, WIDTH};
+use tm1_core::drive::{Level, Vehicle};
+
+struct Card {
+    pixels: Vec<[u8; 4]>,
+    center: [i32; 2],
+    angle: i32,
+}
+#[derive(Component)]
+struct Overlay;
+#[derive(Resource)]
+pub struct Transition {
+    stage: Stage,
+    fonts: Fonts,
+    lines: Vec<&'static str>,
+    cards: Vec<Card>,
+    half_size: [i32; 2],
+    deal: u32,
+    finish: u32,
+    field: u32,
+    fraction: u128,
+    released: bool,
+    letterbox: bool,
+    layout: Option<u8>,
+    image: Handle<Image>,
+    throw: Handle<AudioSource>,
+    gain: f32,
+}
+fn layout(level: Level) -> (&'static [&'static str], &'static [[i32; 2]], [i32; 2]) {
+    match level {
+        Level::Arena => (&["'ARENA DUEL'"], &[[160, 100]], [80, 40]),
+        Level::Warehouse => (
+            &["'WAREHOUSE DISTRICT", "WARFARE'"],
+            &[[83, 74], [236, 74], [160, 164]],
+            [70, 35],
+        ),
+        Level::Freeway => (
+            &["'FREEWAY", "FREE FOR ALL'"],
+            &[[88, 50], [247, 50], [160, 120], [88, 190], [247, 190]],
+            [60, 30],
+        ),
+        Level::CityPark => (
+            &["'RIVER PARK", "RUMBLE'"],
+            &[
+                [86, 50],
+                [249, 50],
+                [90, 120],
+                [245, 120],
+                [86, 190],
+                [249, 190],
+            ],
+            [60, 30],
+        ),
+        Level::Cyburbia => (
+            &["'ASSAULT on", "CYBURBIA'"],
+            &[
+                [59, 60],
+                [159, 60],
+                [259, 60],
+                [104, 120],
+                [214, 120],
+                [59, 180],
+                [159, 180],
+                [259, 180],
+            ],
+            [45, 23],
+        ),
+        Level::Rooftops => (
+            &["'ROOFTOP COMBAT'", "The Final Battle"],
+            &[[83, 74], [236, 74], [160, 164]],
+            [70, 35],
+        ),
+        Level::Arena5 => (
+            &["'THE FIGHT OF", "YOUR LIFE!'"],
+            &[[88, 50], [247, 50], [160, 120], [88, 190], [247, 190]],
+            [60, 30],
+        ),
+    }
+}
+impl Transition {
+    fn intro_fields(fonts: &Fonts, line: &str) -> u32 {
+        ((320 + fonts.width(Face::Text, line) / 2 - 151) / 20 + 1) as u32
+    }
+    fn meet(&self) -> &'static str {
+        if self.cards.len() == 1 {
+            "Meet Your Opponent"
+        } else {
+            "Meet Your Opponents"
+        }
+    }
+    fn frame(&self) -> Vec<u8> {
+        let mut pixels = [0, 0, 0, 128].repeat(WIDTH * HEIGHT);
+        if self.field < self.deal {
+            let mut elapsed = self.field;
+            for (i, &line) in self.lines.iter().enumerate() {
+                let duration = Self::intro_fields(&self.fonts, line);
+                let x = if elapsed >= duration {
+                    159
+                } else {
+                    (320 + self.fonts.width(Face::Text, line) / 2 - 20 * elapsed as i32).max(159)
+                };
+                self.fonts.centered_at(
+                    &mut pixels,
+                    if i == 4 { Face::Password } else { Face::Text },
+                    x,
+                    75 + i as i32 * 30,
+                    line,
+                );
+                if elapsed < duration {
+                    break;
+                }
+                elapsed -= duration;
+            }
+            return pixels;
+        }
+        let elapsed = self.field - self.deal;
+        // AddPrim prepends the settled cards, then the OT draws the moving card last.
+        let index = (elapsed / 11) as usize;
+        for card in self.cards[..index.min(self.cards.len())].iter().rev() {
+            card.draw(&mut pixels, card.center, self.half_size, 360 + card.angle);
+        }
+        if let Some(card) = self.cards.get(index) {
+            let tick = elapsed % 11;
+            let (center, angle) = if tick == 10 {
+                (card.center, 360 + card.angle)
+            } else {
+                let mut center = [160, 320];
+                let mut angle = 0;
+                for _ in 0..=tick {
+                    for (position, target) in center.iter_mut().zip(card.center) {
+                        *position = (85 * *position + 15 * target) / 100;
+                    }
+                    angle = (85 * angle + 15 * 1080) / 100;
+                }
+                (center, angle)
+            };
+            card.draw(&mut pixels, center, self.half_size, angle);
+        }
+        if let Some(t) = elapsed.checked_sub(self.cards.len() as u32 * 11 + 2) {
+            let x = -(self.fonts.width(Face::Text, self.meet()) / 2) + 20 * t as i32;
+            self.fonts
+                .centered_at(&mut pixels, Face::Text, x, 220, self.meet());
+        }
+        pixels
+    }
+}
+impl Card {
+    fn draw(&self, out: &mut [u8], [cx, cy]: [i32; 2], [w, h]: [i32; 2], degrees: i32) {
+        let (sin, cos) = ((degrees * 4096 / 360) as f32 * std::f32::consts::TAU / 4096.).sin_cos();
+        let radius = ((w * w + h * h) as f32).sqrt().ceil() as i32;
+        for y in (cy - radius).max(0)..=(cy + radius).min(HEIGHT as i32 - 1) {
+            for x in (cx - radius).max(0)..=(cx + radius).min(WIDTH as i32 - 1) {
+                let dx = (x - cx) as f32 + 0.5;
+                let dy = (y - cy) as f32 + 0.5;
+                let u = (dx * cos + dy * sin) / w as f32;
+                let v = (-dx * sin + dy * cos) / h as f32;
+                if (-1.0..1.0).contains(&u) && (-1.0..1.0).contains(&v) {
+                    let color =
+                        self.pixels[((v + 1.) * 32.) as usize * 128 + ((u + 1.) * 64.) as usize];
+                    if color[3] != 0 {
+                        let at = (y as usize * WIDTH + x as usize) * 4;
+                        out[at..at + 4].copy_from_slice(&color);
+                    }
+                }
+            }
+        }
+    }
+}
+pub fn begin(
+    world: &mut World,
+    stage: Stage,
+    advanced: bool,
+    letterbox: bool,
+    layout_override: Option<u8>,
+) -> Result<()> {
+    let disc = &world.resource::<Campaign>().0;
+    let level = stage.drive.player.level();
+    let (labels, centers, half_size) = layout(level);
+    let fonts = Fonts::load(disc)?;
+    let mut lines = vec![
+        if advanced {
+            "CONGRATULATIONS!"
+        } else {
+            "WELCOME!"
+        },
+        "Prepare for...",
+    ];
+    lines.extend_from_slice(labels);
+    lines.extend(level.password());
+    let mut cards = Vec::new();
+    ensure!(
+        stage.drive.opponents.len() == centers.len() && centers.len() == stage.card_angles.len(),
+        "unexpected opponent card count"
+    );
+    for ((opponent, &angle), &center) in stage
+        .drive
+        .opponents
+        .iter()
+        .zip(&stage.card_angles)
+        .zip(centers)
+    {
+        let index = Vehicle::CARD_ORDER
+            .iter()
+            .position(|&v| v == opponent.vehicle())
+            .ok_or_else(|| anyhow::anyhow!("opponent has no card"))?;
+        cards.push(Card {
+            pixels: screen::load_card(disc, index)?,
+            center,
+            angle,
+        });
+    }
+    let deal = lines
+        .iter()
+        .map(|s| Transition::intro_fields(&fonts, s))
+        .sum::<u32>()
+        + 1;
+    let sound = crate::sfx::Sample::load(&disc.read("SND/UACORE.VAB")?, 57, false)?.wave(0.)?;
+    let throw = world.resource_mut::<Assets<AudioSource>>().add(sound);
+    let gain = world
+        .get_resource::<crate::driving::Drive>()
+        .map_or(1., |d| d.settings.effects_gain());
+    let mut transition = Transition {
+        stage,
+        fonts,
+        lines,
+        cards,
+        half_size,
+        deal,
+        finish: 0,
+        field: 0,
+        fraction: 0,
+        released: false,
+        letterbox,
+        layout: layout_override,
+        image: default(),
+        throw,
+        gain,
+    };
+    let width = transition.fonts.width(Face::Text, transition.meet());
+    transition.finish = deal + centers.len() as u32 * 11 + 2 + ((335 + width + 19) / 20) as u32;
+    transition.image = crate::ending::screen_image(world, transition.frame());
+    let mut sprite = Sprite::from_image(transition.image.clone());
+    if let Ok(window) = world.query::<&Window>().single(world) {
+        sprite.custom_size = Some(size(window, letterbox));
+    }
+    world.spawn((
+        StageEntity,
+        Overlay,
+        sprite,
+        Transform::from_xyz(0., 0., 10.),
+    ));
+    let audio: Vec<_> = world
+        .query_filtered::<Entity, (With<StageEntity>, With<AudioPlayer>)>()
+        .iter(world)
+        .collect();
+    for e in audio {
+        world.despawn(e);
+    }
+    world.insert_resource(transition);
+    Ok(())
+}
+fn size(window: &Window, letterbox: bool) -> Vec2 {
+    let h = window.height();
+    if letterbox {
+        let h = h.min(window.width() * 0.75);
+        Vec2::new(h * 4. / 3., h)
+    } else {
+        Vec2::new(window.width(), h)
+    }
+}
+pub fn update(world: &mut World) {
+    let scripted = world
+        .get_resource::<crate::smoke::Capture>()
+        .is_some_and(|c| c.demo && !c.realtime);
+    let (focused, dim) = if let Ok(window) = world.query::<&Window>().single(world) {
+        (
+            window.focused,
+            size(window, world.resource::<Transition>().letterbox),
+        )
+    } else {
+        return;
+    };
+    let letterbox = world.resource::<Transition>().letterbox;
+    for (mut sprite, overlay) in world
+        .query_filtered::<(&mut Sprite, Has<Overlay>), With<StageEntity>>()
+        .iter_mut(world)
+    {
+        if overlay || letterbox {
+            sprite.custom_size = Some(dim);
+        }
+    }
+    if !scripted && !focused {
+        return;
+    }
+    let dt = if scripted {
+        std::time::Duration::from_millis(50)
+    } else {
+        world.resource::<Time<Real>>().delta()
+    };
+    let held = !scripted
+        && (world
+            .resource::<ButtonInput<KeyCode>>()
+            .get_pressed()
+            .next()
+            .is_some()
+            || world
+                .query::<&Gamepad>()
+                .iter(world)
+                .any(|p| p.get_pressed().next().is_some()));
+    let mut t = world.resource_mut::<Transition>();
+    if !t.released {
+        t.released = !held;
+        return;
+    }
+    let prev = t.field;
+    t.fraction += dt.as_nanos() * 60;
+    t.field = t.field.saturating_add((t.fraction / 1_000_000_000) as u32);
+    t.fraction %= 1_000_000_000;
+    if t.field == prev {
+        return;
+    }
+    if t.field >= t.finish {
+        finish(world);
+        return;
+    }
+    let changed = t.frame();
+    let image = t.image.clone();
+    let field = t.field;
+    let gain = t.gain;
+    let throw = t.throw.clone();
+    let count = t.cards.len();
+    let deal = t.deal;
+    world
+        .resource_mut::<Assets<Image>>()
+        .get_mut(&image)
+        .unwrap()
+        .data = Some(changed);
+    for i in 0..=count {
+        let cue = deal + i as u32 * 11;
+        if prev < cue && cue <= field {
+            world.spawn((
+                StageEntity,
+                AudioPlayer::new(throw.clone()),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
+            ));
+        }
+    }
+}
+fn finish(world: &mut World) {
+    let t = world.remove_resource::<Transition>().unwrap();
+    crate::campaign::replace(world, t.stage);
+    if let Some(layout) = t.layout {
+        let mut d = world.resource_mut::<crate::driving::Drive>();
+        d.settings.layout = layout;
+        d.player.set_pad_layout(layout);
+    }
+}
+#[cfg(test)]
+pub fn complete(world: &mut World) {
+    let window = if world.query::<&Window>().iter(world).next().is_none() {
+        Some(
+            world
+                .spawn(Window {
+                    focused: true,
+                    ..default()
+                })
+                .id(),
+        )
+    } else {
+        None
+    };
+    world.init_resource::<ButtonInput<KeyCode>>();
+    world.init_resource::<Time<Real>>();
+    update(world);
+    for _ in 0..400 {
+        if !world.contains_resource::<Transition>() {
+            break;
+        }
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(17));
+        update(world);
+    }
+    assert!(!world.contains_resource::<Transition>());
+    if let Some(e) = window {
+        world.despawn(e);
+    }
+}

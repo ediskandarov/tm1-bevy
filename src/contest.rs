@@ -609,13 +609,9 @@ pub fn show(
         field_fraction: 0,
         title: screen::background(&disc.read("UASCREEN/SCRNC.TIM")?)?,
         battle: screen::background(&disc.read("UASCREEN/SCRNE21P.TIM")?)?,
-        cards: [
-            "ICE_CARD", "CAB_CARD", "SEMI_CAR", "COP_CARD", "LOWRIDER", "LAMBO_CA", "DUNEB_CA",
-            "HUMVEE_C", "HARLEY_C", "VETTE_CA", "MONSTERT", "MADMAX_C",
-        ]
-        .iter()
-        .map(|name| screen::vehicle_card(&disc.read(&format!("UATIM/{name}.TIM"))?))
-        .collect::<Result<_>>()?,
+        cards: (0..screen::CARD_FILES.len())
+            .map(|i| screen::load_card(disc, i))
+            .collect::<Result<_>>()?,
         options: screen::background(&disc.read("UASCREEN/SCRNF.TIM")?)?,
         controls: crate::pause::Art::load(disc)?,
         settings: world
@@ -712,7 +708,7 @@ pub fn update(world: &mut World) {
     if !focused {
         return;
     }
-    let mut start = None;
+    let mut start = false;
     world.resource_scope(|world, mut menu: Mut<Contest>| {
         let no_input = ButtonInput::default();
         let keys = if scripted {
@@ -790,13 +786,7 @@ pub fn update(world: &mut World) {
             ));
         }
         if start_battle {
-            start = Some((
-                menu.level,
-                Vehicle::CARD_ORDER[menu.vehicle],
-                menu.difficulty,
-                menu.modes,
-                menu.settings.layout,
-            ));
+            start = true;
         } else if let Some(mut img) = world.resource_mut::<Assets<Image>>().get_mut(&menu.image) {
             img.data = Some(menu.frame());
         }
@@ -817,27 +807,26 @@ pub fn update(world: &mut World) {
             }
         }
     });
-    if let Some((level, vehicle, difficulty, modes, layout)) = start {
-        match Stage::load(
-            &world.resource::<Campaign>().0,
-            level,
-            vehicle,
-            campaign::Entry::New(difficulty),
-        ) {
-            Ok(mut stage) => {
-                stage.apply_passwords(modes);
-                world.remove_resource::<Contest>();
-                campaign::replace(world, stage);
-                let mut drive = world.resource_mut::<crate::driving::Drive>();
-                drive.settings.layout = layout;
-                drive.player.set_pad_layout(layout);
-            }
-            Err(err) => {
-                error!("Loading contest failed: {err:#}");
-                world.write_message(AppExit::error());
-            }
+    if start {
+        if let Err(err) = start_battle(world) {
+            error!("Loading encounter introduction failed: {err:#}");
+            world.write_message(AppExit::error());
         }
     }
+}
+pub fn start_battle(world: &mut World) -> Result<()> {
+    let menu = world.resource::<Contest>();
+    let layout = menu.settings.layout;
+    let mut stage = Stage::load(
+        &world.resource::<Campaign>().0,
+        menu.level,
+        Vehicle::CARD_ORDER[menu.vehicle],
+        campaign::Entry::New(menu.difficulty),
+    )?;
+    stage.apply_passwords(menu.modes);
+    crate::transition::begin(world, stage, false, true, Some(layout))?;
+    world.remove_resource::<Contest>();
+    Ok(())
 }
 
 #[cfg(test)]
@@ -876,6 +865,9 @@ mod tests {
         world.insert_resource(keys);
         update(world);
         world.insert_resource(ButtonInput::<KeyCode>::default());
+        if world.contains_resource::<crate::transition::Transition>() {
+            crate::transition::complete(world);
+        }
     }
     fn password(world: &mut World, keys: &[KeyCode]) {
         press(world, KeyCode::KeyP);
