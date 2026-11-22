@@ -26,7 +26,7 @@ u8 uaIsCarCS(Cs*,u8*,s16*);
 s16 uaGetCarMatID(s16,u8);
 void carTakeHit(s16,s32,VECTOR3*,u8);
 void tm1_move_rooftop_targets(void);
-void bulDispatchDamage(s32,s32,s32,s32,VECTOR3*,s32);
+s32 bulDispatchDamage(s32,s32,s32,s32,VECTOR3*,s32);
 void carGetPickup(Car*,u8,s32,s32);
 void UAeffectBarricade(s32,s32,s32);
 PotHole *GetPotHoleDat(s16);

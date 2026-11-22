@@ -106,7 +106,7 @@ impl Sounds {
             .chain(opponents.iter().map(|&car| car.sound_programs().1))
             .chain([52, 53, 27, 38, 36])
             .chain(tm1_core::drive::ContactVoice::PROGRAMS)
-            .chain([SweetTooth.sound_programs().1, 57, 58])
+            .chain([28, SweetTooth.sound_programs().1, 57, 58])
             .enumerate()
         {
             let sample = Sample::load(&bank, prog, id == 0)?;
@@ -302,9 +302,7 @@ pub fn update(
         let (pan, attenuation) = mix_position(sound.position);
         let bin = (pan * 2.).round() as i32 + 2;
         let attenuation = if sound.full_range { 1. } else { attenuation };
-        let volume =
-            attenuation * if id == 2 { 0.16 } else { 0.44 } * sound.volume_percent.max(0) as f32
-                / 99.;
+        let volume = attenuation * 0.44 * sound.volume_percent.max(0) as f32 / 99.;
         let level = Volume::Linear(volume * gain);
         let playback = || {
             (
@@ -315,7 +313,11 @@ pub fn update(
         if let Some(key) = sound.exclusive
             && let Some(&(_, entity)) = active.iter().find(|(active_key, _)| *active_key == key)
         {
-            if matches!(key, crate::driving::ExclusiveVoice::Contact(_)) {
+            if matches!(
+                key,
+                crate::driving::ExclusiveVoice::Contact(_)
+                    | crate::driving::ExclusiveVoice::ScaledEffect(_)
+            ) {
                 if let Ok((_, Some(mut sink), _)) = shots.get_mut(entity) {
                     sink.set_volume(level);
                 } else {

@@ -212,6 +212,9 @@ impl<'a> Dmd<'a> {
         let p = self.sprite_node(0, 656)?;
         self.read_sprite_frames(p, false, u32le(self.data, p + 16)? as usize)
     }
+    pub fn spark_frames(&self) -> Result<[SpriteFrame; 4]> {
+        self.sprite_frames(653, true)
+    }
     pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
         self.sprite_frames(650, true)
     }

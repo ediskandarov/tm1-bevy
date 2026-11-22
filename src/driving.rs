@@ -10,6 +10,7 @@ pub enum ExclusiveVoice {
     Hover,
     Pickup(i32),
     Contact(tm1_core::drive::ContactVoice),
+    ScaledEffect(u8),
 }
 
 pub struct BattleSound {
@@ -550,7 +551,9 @@ pub fn advance(
                 (11, 2) => 6,
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
-                (1, 2) => 2,
+                (54, 2) => 2,
+                (1, 4) => state.recharge_sound() + 2,
+                (55, 32) => state.recharge_sound() + 9,
                 (28, 32) => state.recharge_sound() + 2,
                 (33, 2) | (2, 7) | (37, 32) | (29 | 30, 16) => 3,
                 (12, 2) => 4,
@@ -558,8 +561,17 @@ pub fn advance(
                 _ => continue,
             };
             state.sounds.push(BattleSound {
-                volume_percent: 99,
+                volume_percent: match kind {
+                    1 => 84,
+                    37 => 86,
+                    54 => 25,
+                    _ => 99,
+                },
                 exclusive: match kind {
+                    1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
+                    54 => Some(ExclusiveVoice::ScaledEffect(4)),
+                    55 => Some(ExclusiveVoice::ScaledEffect(104)),
+                    37 => Some(ExclusiveVoice::ScaledEffect(105)),
                     26 => Some(ExclusiveVoice::Recharge),
                     401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
                     _ => None,

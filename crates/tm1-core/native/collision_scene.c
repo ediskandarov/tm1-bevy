@@ -950,9 +950,16 @@ int tm1_damage_branch(const CollisionScene* s, u32 addr)
     return n->h.op == DB_OP_SWITCH ? n->sw.sel : 0;
 }
 
-void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
+s32 bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
-    if ((id >= 150 && id < 150 + current->peds_ready) || ((id == 8 || id <= 0) && pedestrian_kind(tag))) {
+    if (id >= 500 && id < 500 + current->num_targets) {
+        ArenaTarget* t = &current->targets[id - 500];
+        tag = t->type;
+        sub = t->instance;
+        id = 8;
+    }
+    if ((id >= 150 && id < 150 + current->peds_ready) || ((id == 8 || id <= 0)
+        && (tag == 760 || tag == 777 || tag == 778 || tag == 781 || tag == 782))) {
         int kind = id >= 150 ? current->peds[id - 150].id : tag;
         for (int i = current->peds_ready - 1; i >= 0; i--) {
             if (current->peds[i].id == kind) {
@@ -960,7 +967,7 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
                 break;
             }
         }
-        return;
+        return 1;
     }
     if (id == 100 || id == 101 || ((id <= 0 || id == 8) && (tag == UA_BAZ_COP || tag == UA_HOVER_COP))) {
         int slot = id == 101 || ((id <= 0 || id == 8) && tag == UA_HOVER_COP);
@@ -980,7 +987,7 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
             pos->vz = 1000;
             merc->site = -1;
         }
-        return;
+        return 1;
     }
     if ((id <= 0 || id == 8) && tag >= 753 && tag <= 755 && sub >= 1 && sub <= 25) {
         StaticCop* cop = &current->cops[sub - 1];
@@ -989,27 +996,27 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
             cop->phase = 4;
             cop->node->sel = 4;
         }
-        return;
+        return 1;
     }
     if ((id <= 0 || id == 8) && tag == UA_DROP_BOX) {
         DbSwitch* release = current->arena_switches[4];
         if (release && release->nChild > 1)
             release->sel = 1;
         current->drop_box_tick = 1;
-        return;
-    }
-    if (id >= 500 && id < 500 + current->num_targets) {
-        ArenaTarget* t = &current->targets[id - 500];
-        damage_target(t->type, t->instance, dmg);
-        return;
+        return 1;
     }
     if (id <= 0 || id == 8) {
-        damage_target(tag, sub, dmg);
-        return;
+        if (damage_node_class(tag) >= 0 && tag != 930 && tag != 931) {
+            damage_target(tag, sub, dmg);
+            return 1;
+        }
+        return tag == 603 || tag == 702 || tag == 703 || tag == 705 || tag == 707
+            || tag == 708 || tag == 713;
     }
     (void)owner;
     if (id == 1 || (id >= 50 && id < 50 + current->opponent_count))
         carTakeHit(id, dmg, dir, 0);
+    return 1;
 }
 void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unused_mode)
 {
@@ -1399,6 +1406,8 @@ void arena_effect(VECTOR3* pos, s32 kind)
     e[2] = pos->vz;
     e[3] = kind;
     switch (kind) {
+    case 1: e[4] = 4; break;
+    case 55: e[4] = 32; break;
     case 2: e[4] = 7; break;
     case 8:
     case 34: e[4] = 88; break;

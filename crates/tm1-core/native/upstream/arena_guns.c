@@ -134,12 +134,21 @@ void arena_move_bullets(void)
                     if (b->unk30 != 8) {
                         arena_flash(&q);
                     }
-                    if (b->kind >= 15)
-                        arena_effect(&q, 2);
+                    if (b->kind >= 15) {
+                        arena_effect(&q, 28);
+                        q.vz = 0;
+                        arena_effect(&q, 35);
+                    }
                     b->life = 0;
-                    bulDispatchDamage(b->unk30, hit->tag0, hit->tag1, b->damage, &b->vel, b->owner);
+                    arena_effect(&p, 54); /* Machine gun impact sound at the hit test point. */
+                    if (bulDispatchDamage(b->unk30, hit->tag0, hit->tag1, b->damage, &b->vel, b->owner) && b->kind == 3)
+                        arena_effect(&p, 55);
                     k = -1;
                 }
+            }
+            if (b->life <= 0 && b->kind == 7) {
+                arena_effect(&b->pos, 37);
+                do_smoke(&b->pos);
             }
         }
     }

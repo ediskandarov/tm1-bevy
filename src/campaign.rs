@@ -143,6 +143,7 @@ impl Stage {
             [dmd.merc_frames(750)?, dmd.merc_frames(752)?],
             pedestrians,
             dmd.explosion_frames()?,
+            dmd.spark_frames()?,
             dmd.flame_frames()?,
             dmd.burn_frames()?,
             [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],

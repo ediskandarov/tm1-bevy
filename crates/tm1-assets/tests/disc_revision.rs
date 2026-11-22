@@ -23,6 +23,13 @@ fn supported_disc_arena_and_audio() {
         let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
         let level = Dmd::parse(&data).unwrap();
         assert!(level.flame_frames().unwrap().iter().all(|f| f.width > 0));
+        assert!(
+            level
+                .spark_frames()
+                .unwrap()
+                .iter()
+                .all(|f| f.width > 0 && (f.texture.page >> 5) & 3 == 1)
+        );
         if name.starts_with("ROOF") {
             let boss = level.vehicle_bodies_with_lights(130, false).unwrap();
             assert!(boss.iter().all(|stage| !stage.polygons.is_empty()));

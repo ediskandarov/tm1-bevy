@@ -824,6 +824,104 @@ fn bullet_impact_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn special_bullet_effects_original() {
+    let car = [2700, 2250, 400];
+    let forward = [0, 4096, 0];
+    for (kind, pos, dir, life, expected) in [
+        (3, car, forward, 12, &[1, 54, 55][..]),
+        (3, [2700, 2250, 20], [0, 4096, -4096], 12, &[1, 54]),
+        (7, car, forward, 12, &[1, 54, 37, 8]),
+        (7, [2700, 2250, 1500], forward, 1, &[37, 8]),
+        (19, car, forward, 12, &[1, 28, 35, 54]),
+    ] {
+        let mut r = Reference::new();
+        vec3(&mut r.player.state, 0x388, [2700, 2000, 400]);
+        vec3(&mut r.police.state, 0x444, [2700, 3050, 400]);
+        r.sync();
+        for (at, values) in [(0x800be000, dir), (0x800be020, pos)] {
+            for (i, x) in values.into_iter().enumerate() {
+                put(&mut r.cpu, at + 4 * i as u32, x as u32);
+            }
+        }
+        r.cpu
+            .call(0x8010cd08, &[1, 0x800be000, 0x800be020, kind, 1, life, 0]);
+        {
+            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe extern "C" {
+                fn s_create_bullet(
+                    owner: i32,
+                    dir: *const i32,
+                    pos: *const i32,
+                    kind: i32,
+                    damage: i32,
+                    life: i32,
+                    arg6: i32,
+                );
+            }
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                s_create_bullet(
+                    1,
+                    dir.as_ptr(),
+                    pos.as_ptr(),
+                    kind as i32,
+                    1,
+                    life as i32,
+                    0,
+                );
+                tm1_use_scene(std::ptr::null_mut());
+            }
+        }
+        let mut seen = Vec::new();
+        for tick in 0..life {
+            let mut original = Vec::new();
+            let mut sound_pos = [0; 3];
+            r.cpu.call_observed(0x8010d03c, &[], 0x80000080, |cpu| {
+                let effect = match cpu.pc() {
+                    0x8010461c => {
+                        sound_pos = [0, 4, 8].map(|d| cpu.word(cpu.r[4] + d) as i32);
+                        return;
+                    }
+                    0x8010767c => {
+                        assert_eq!(cpu.r[6], 25);
+                        original.push((54, sound_pos));
+                        return;
+                    }
+                    0x801369b0 => 1,
+                    0x80136a28 => 28,
+                    0x80136aa0 => 55,
+                    0x80136c78 => 37,
+                    0x80136e18 => 35,
+                    0x80137140 => 8,
+                    _ => return,
+                };
+                original.push((effect, [0, 4, 8].map(|d| cpu.word(cpu.r[4] + d) as i32)));
+            });
+            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            let mut effects = [[0; 5]; 122];
+            let count = r.scene.effects(&mut effects);
+            let native: Vec<_> = effects[..count]
+                .iter()
+                .filter(|e| {
+                    matches!(
+                        (e[3], e[4]),
+                        (1, 4) | (54, 2) | (28 | 37 | 55, 32) | (35, 104) | (8, 88)
+                    )
+                })
+                .map(|e| (e[3], [e[0], e[1], e[2]]))
+                .collect();
+            assert_eq!(native, original, "kind {kind}, tick {tick}");
+            seen.extend(original.iter().map(|e| e.0));
+            if !seen.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(seen, expected, "kind {kind}, pos {pos:?}");
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn password_weapon_and_damage_modes_original() {
     for god_mode in [false, true] {
         let mut r = Reference::new();

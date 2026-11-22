@@ -54,6 +54,7 @@ pub struct Arena {
     pedestrians: Vec<Vec<Scene>>,
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
+    spark_frames: [SpriteFrame; 4],
     flame_frames: [SpriteFrame; 10],
     burn_frames: [SpriteFrame; 8],
     smoke_frames: [[SpriteFrame; 16]; 2],
@@ -89,6 +90,7 @@ impl Arena {
         merc_models: [Vec<Scene>; 2],
         pedestrians: Vec<Vec<Scene>>,
         explosion_frames: [SpriteFrame; 16],
+        spark_frames: [SpriteFrame; 4],
         flame_frames: [SpriteFrame; 10],
         burn_frames: [SpriteFrame; 8],
         smoke_frames: [[SpriteFrame; 16]; 2],
@@ -128,6 +130,7 @@ impl Arena {
         }
         for (frame, semi) in explosion_frames
             .iter()
+            .chain(&spark_frames)
             .chain(&flame_frames)
             .chain(&burn_frames)
             .chain(smoke_frames.iter().flatten())
@@ -183,6 +186,7 @@ impl Arena {
             vehicle_start,
             body_ranges,
             explosion_frames,
+            spark_frames,
             flame_frames,
             burn_frames,
             smoke_frames,
@@ -1145,9 +1149,14 @@ fn draw_view(
     let count = drive.contacts.flame_particles(&mut flames);
     let mut effects = [[0; 5]; 122];
     let effect_count = drive.contacts.effects(&mut effects);
-    let particles = flames[..count]
-        .iter()
-        .map(|&[x, y, z, index]| ([x, y, z], &arena.explosion_frames[index as usize], 6));
+    let particles = flames[..count].iter().map(|&[x, y, z, index]| {
+        (
+            [x, y, z],
+            &arena.explosion_frames[index as usize],
+            6,
+            [1.; 4],
+        )
+    });
     let wreck_effects = effects[..effect_count]
         .iter()
         .filter_map(|&[x, y, z, kind, ttl]| {
@@ -1160,6 +1169,7 @@ fn draw_view(
                         if kind == 8 { 16 } else { 32 },
                     )
                 }
+                1 => (&arena.spark_frames[(4 - ttl) as usize], 5),
                 31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
                 32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
                 53 => (&arena.explosion_frames[(2 - ttl) as usize], 8),
@@ -1167,14 +1177,23 @@ fn draw_view(
                 38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
                 35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
-                28 | 37 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
+                28 | 37 | 55 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
                 29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
                 30 => (&arena.explosion_frames[(16 - ttl) as usize], 96),
                 _ => return None,
             };
-            Some(([x, y, z], frame, size))
+            Some((
+                [x, y, z],
+                frame,
+                size,
+                if kind == 55 {
+                    [0.5, 0.5, 255. / 128., 1.]
+                } else {
+                    [1.; 4]
+                },
+            ))
         });
-    for (position, frame, size) in particles.chain(wreck_effects) {
+    for (position, frame, size, tint) in particles.chain(wreck_effects) {
         let center = world(position.map(|v| v as f32));
         let radius = f32::from(frame.width) * size as f32 / 8.;
         let slot = arena.tiles[&(Some(frame.texture), true)];
@@ -1190,7 +1209,7 @@ fn draw_view(
             batch.push(
                 center + offset,
                 arena.uv(slot, Vec2::new(u.into(), v.into())),
-                [1.; 4],
+                tint,
             );
         }
     }
@@ -1255,8 +1274,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 8 | 26..=53 | 401..=406 | 410..=414 | 430 => continue,
-            1 => (5., [1., 0.87, 0.39, 1.]),
+            1 | 3 | 8 | 26..=55 | 401..=406 | 410..=414 | 430 => continue,
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };
         let radius = (size * focal / depth).clamp(1., 80.);
