@@ -559,6 +559,63 @@ unsafe extern "C" {
     );
 }
 pub type PoliceCar = Opponent;
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(i32)]
+pub enum CarView {
+    Cockpit = 1,
+    Chase,
+    Far,
+}
+
+pub struct VehicleCamera {
+    pub mode: CarView,
+    pub offset: [i32; 3],
+    pub pitch: i32,
+    pub show_body: bool,
+}
+
+impl VehicleCamera {
+    pub fn new(player: &PlayerVehicle, mode: CarView) -> Self {
+        let mut view = Self {
+            mode,
+            offset: [0; 3],
+            pitch: 0,
+            show_body: true,
+        };
+        view.update(player, true);
+        view
+    }
+
+    pub fn cycle(&mut self) {
+        self.mode = match self.mode {
+            CarView::Cockpit => CarView::Chase,
+            CarView::Chase => CarView::Far,
+            CarView::Far => CarView::Cockpit,
+        };
+    }
+
+    pub fn update(&mut self, player: &PlayerVehicle, snap: bool) {
+        unsafe extern "C" {
+            fn tm1_update_car_view(
+                state: *const u8,
+                mode: i32,
+                snap: i32,
+                offset: *mut i32,
+                pitch: *mut i32,
+            ) -> i32;
+        }
+        self.show_body = unsafe {
+            tm1_update_car_view(
+                player.state.as_ptr(),
+                self.mode as i32,
+                snap.into(),
+                self.offset.as_mut_ptr(),
+                &mut self.pitch,
+            ) != 0
+        };
+    }
+}
+
 pub struct Helicopter {
     state: [u8; 0x560],
     /// World XYZ followed by JP pitch and yaw in 4096 units per turn.

@@ -47,3 +47,5 @@ Warthog, Spectre and Road Kill use the Humvee, Corvette and Mad Max profiles fro
 Minion uses UA.c uaInitBossCar, CAR_INIT.c CarInit and InitBossCar, the boss branches in INTERACT.c and WEAPON.c swarm guidance. Wreck motion follows CAR.c UpdateCarDeath and UA.c StartDeathSequence. The damage effects use the disc Flame and Aburst frame sets.
 
 Helicopter View uses AI_CAR.c AICarHeliUpdate and CAR_INIT.c InitHeliCar from fb8f9dd. The host performs UA.c InitHelicoptorPosition and UpdateCamera and the helicopter aiming branch in CAR.c CarViewUpdate. The native arena square-root routine supplies SquareRoot0.
+
+The ordinary cockpit and chase cameras use the one-player presets from CAR_INIT.c CarInitVRModes and the transition and body visibility rules from CAR.c CarViewUpdate at fb8f9dd. The JP executable comparison covers local translation, pitch and body visibility across all twelve selectable vehicles.

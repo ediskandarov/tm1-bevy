@@ -538,6 +538,8 @@ pub fn update(
             world(p)
         }
     };
+    let hide_player =
+        !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
     let (eye, target, camera_up) = if arena.overview {
         (
             arena.center + direction * arena.radius * arena.zoom,
@@ -555,10 +557,23 @@ pub fn update(
             Vec3::new(sy * sp, cp, -cy * sp),
         )
     } else {
+        let rotate = |local: Vec3| {
+            if drive.camera.mode == tm1_core::drive::CarView::Cockpit {
+                let p = [local.x, -local.z, local.y];
+                world(std::array::from_fn(|i| {
+                    (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
+                }))
+            } else {
+                vehicle_rotation * local
+            }
+        };
+        let eye = origin + rotate(world(drive.camera.offset.map(|v| v as f32)));
+        let pitch = drive.camera.pitch as f32 * std::f32::consts::TAU / 4096.;
+        let (sin, cos) = pitch.sin_cos();
         (
-            origin + vehicle_rotation * Vec3::new(0., 155., 215.),
-            origin + Vec3::Y * 40.,
-            Vec3::Y,
+            eye,
+            eye + rotate(Vec3::new(0., -sin, -cos)) * 100.,
+            rotate(Vec3::new(0., cos, -sin)),
         )
     };
     for (mut camera, sky) in &mut cameras {
@@ -572,7 +587,7 @@ pub fn update(
             *visibility = Visibility::Hidden;
             continue;
         };
-        if stage.0 != selected {
+        if stage.0 != selected || (vehicle.0 == 0 && hide_player) {
             *visibility = Visibility::Hidden;
             continue;
         }
@@ -606,6 +621,7 @@ pub fn update(
             .body_ranges
             .iter()
             .zip(&poses)
+            .skip(usize::from(hide_player))
             .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
     );
     let hidden_ranges: Vec<_> = arena

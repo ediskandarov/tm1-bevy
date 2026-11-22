@@ -116,7 +116,7 @@ cargo run -- /absolute/path/to/disc.cue
 ```
 
 Drive with W/S, steer with A/D, hold Shift for a hard turn and press T for turbo.
-P pauses, R restarts the encounter, V toggles the opponent radar, Tab toggles the overview, and Escape exits.
+C cycles the chase, far chase and cockpit views. The cockpit hides the player vehicle once the transition settles. P pauses, R restarts the encounter, V toggles the opponent radar, Tab toggles the overview, and Escape exits.
 Space fires the machine gun, E cycles inventory and F fires the selected weapon.
 The arena and both cars use a shared perspective depth buffer.
 On a gamepad the face buttons west/east control acceleration/reverse, north

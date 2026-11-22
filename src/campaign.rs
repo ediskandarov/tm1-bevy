@@ -99,6 +99,7 @@ impl Stage {
         let mut drive = driving::Drive::new(player, contacts, &opponent_kinds);
         drive.deck = deck;
         if let Entry::Continue(previous) = entry {
+            drive.camera = tm1_core::drive::VehicleCamera::new(&drive.player, previous.camera.mode);
             drive.helicopter_unlocked = previous.helicopter_unlocked;
             if previous.helicopter_pose().is_some() {
                 drive.toggle_helicopter();

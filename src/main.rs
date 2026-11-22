@@ -85,7 +85,13 @@ fn main() -> Result<()> {
             || (!menu && matches!(level, Level::Arena | Level::Arena5 | Level::Rooftops)),
         "helicopter capture requires Arena, Rooftops or Arena 5"
     );
-    let demo = helicopter_demo
+    let cockpit_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-cockpit-screenshot"));
+    ensure!(
+        !cockpit_demo || !menu,
+        "cockpit capture requires a running encounter"
+    );
+    let demo = cockpit_demo
+        || helicopter_demo
         || realtime
         || special_demo
         || flag.as_deref() == Some(std::ffi::OsStr::new("--demo-screenshot"));
@@ -121,7 +127,7 @@ fn main() -> Result<()> {
         )?)
     };
     eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview, V radar."
+        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, Tab overview, V radar."
     );
     let mut app = App::new();
     app.insert_resource(capture)
@@ -136,6 +142,10 @@ fn main() -> Result<()> {
         }));
     if let Some(stage) = stage {
         stage.install(app.world_mut());
+        if cockpit_demo {
+            let mut drive = app.world_mut().resource_mut::<driving::Drive>();
+            drive.camera.mode = tm1_core::drive::CarView::Cockpit;
+        }
         if helicopter_demo {
             let mut drive = app.world_mut().resource_mut::<driving::Drive>();
             drive.helicopter_unlocked = true;

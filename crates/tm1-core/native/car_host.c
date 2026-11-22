@@ -630,6 +630,29 @@ static void init_camera_modes(PlayerCar* car, int fov)
     car->vrRot[3].vz = 0;
 }
 
+// CAR_INIT.c CarInitVRModes and CAR.c CarViewUpdate (one-player views).
+int tm1_update_car_view(const u8* state, int mode, int snap, s32* offset, s32* pitch)
+{
+    PlayerCar car;
+    memcpy(&car, state, sizeof(car));
+    init_camera_modes(&car, 60);
+    const VECTOR3* target = &car.vrPos[mode - 1];
+    int settled = abs(offset[1] - target->vy) < 17 || snap;
+    int side = target->vx;
+    if (mode != 1) {
+        int limit = mode == 2 ? 112 : 160;
+        int turn = car.motion.rotDelta.vz;
+        int max_turn = car.stats.unkD4;
+        side = turn > max_turn ? limit : turn < -max_turn ? -limit : turn * limit / max_turn;
+    }
+    offset[0] = snap || (mode == 1 && settled) ? side : SmoothValue(offset[0], side, 90);
+    offset[1] = settled ? target->vy : SmoothValue(offset[1], target->vy, 90);
+    offset[2] = settled ? target->vz : SmoothValue(offset[2], target->vz, 90);
+    int target_pitch = car.vrRot[mode - 1].vx;
+    *pitch = settled ? target_pitch : SmoothValue(*pitch, target_pitch, 90);
+    return car.stats.unk3C && !(mode == 1 && settled);
+}
+
 static void init_motion_flags(u8* flags)
 {
     flags[0] = 0;

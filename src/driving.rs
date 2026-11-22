@@ -5,6 +5,7 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
+    pub camera: tm1_core::drive::VehicleCamera,
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
     helicopter: Option<tm1_core::drive::Helicopter>,
@@ -110,6 +111,7 @@ impl Drive {
             {
                 heli.update(&self.player, 3, true);
             }
+            self.camera.update(&self.player, true);
             self.lost_life = None;
             self.restart_count = self.restart_count.wrapping_add(1);
         } else {
@@ -141,6 +143,7 @@ impl Drive {
             opponents,
             contacts,
             deck: Default::default(),
+            camera: tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase),
             player,
             sounds: Vec::new(),
             remainder: Duration::ZERO,
@@ -181,7 +184,9 @@ pub fn advance(
     if window.focused && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select)) {
         drive.contacts.reset_projectiles();
         drive.paused = false;
-        drive.player.reset();
+        let state = &mut *drive;
+        state.player.reset();
+        state.camera.update(&state.player, true);
         drive.helicopter = None;
         drive.helicopter_active = false;
         drive.victory_fields = 0;
@@ -253,6 +258,10 @@ pub fn advance(
     if keys.just_pressed(KeyCode::KeyH) {
         drive.toggle_helicopter();
     }
+    if keys.just_pressed(KeyCode::KeyC) {
+        drive.helicopter_active = false;
+        drive.camera.cycle();
+    }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE) || pressed(GamepadButton::LeftTrigger2),
         missile: keys.pressed(KeyCode::KeyF) || pressed(GamepadButton::LeftTrigger),
@@ -319,6 +328,8 @@ pub fn advance(
             && let Some(heli) = &mut state.helicopter
         {
             heli.update(&state.player, 3, false);
+        } else {
+            state.camera.update(&state.player, false);
         }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);

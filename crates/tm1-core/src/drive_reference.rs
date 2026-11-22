@@ -543,6 +543,63 @@ fn password_weapon_and_damage_modes_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn ordinary_camera_original() {
+    for vehicle in Vehicle::ROSTER {
+        let mut r = Reference::on_level(vehicle, false, Level::Arena);
+        // Supply the one-player FOV and observe the last body draw request.
+        r.cpu.put(0x8010a690, &[8, 0, 224, 3, 60, 0, 2, 36]);
+        let flag = 0x800d8000;
+        for (entry, visible) in [(0x8015060c, 1), (0x801505c4, 0)] {
+            let code = [
+                0x3c08800eu32,
+                0x34090000 | visible,
+                0x03e00008,
+                0xad098000u32,
+            ];
+            // Use 0x800e as the upper half since the store offset sign-extends.
+            r.cpu.put(
+                entry,
+                &code
+                    .into_iter()
+                    .flat_map(u32::to_le_bytes)
+                    .collect::<Vec<_>>(),
+            );
+        }
+        for entry in [0x8010ad84, 0x8010add4, 0x80144be8] {
+            r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        r.cpu.put(PLAYER, &r.player.state);
+        r.cpu.call(0x80124474, &[PLAYER]);
+        let mut cam = VehicleCamera::new(&r.player, CarView::Chase);
+        vec3_cpu(&mut r.cpu, PLAYER + 0xc, cam.offset);
+        put(&mut r.cpu, PLAYER + 4, cam.pitch as u32);
+        for tick in 0..180 {
+            if matches!(tick, 12 | 48 | 110 | 143) {
+                cam.cycle();
+            }
+            r.player.step(
+                Input {
+                    accelerate: true,
+                    left: tick < 75,
+                    right: tick > 90,
+                    ..Default::default()
+                },
+                3,
+            );
+            r.cpu.put(PLAYER + 0x138, &r.player.state[0x138..]);
+            put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
+            r.cpu.call(0x80116bcc, &[PLAYER]);
+            cam.update(&r.player, false);
+            let offset = std::array::from_fn(|i| r.cpu.word(PLAYER + 0xc + 4 * i as u32) as i32);
+            assert_eq!(cam.offset, offset, "{vehicle:?} tick {tick}");
+            assert_eq!(cam.pitch, r.cpu.word(PLAYER + 4) as i16 as i32);
+            assert_eq!(cam.show_body, r.cpu.word(flag) != 0);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn helicopter_camera_original() {
     const HELI: u32 = 0x801a22b8;
     for (level, points) in [
