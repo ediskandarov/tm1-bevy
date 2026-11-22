@@ -11,6 +11,7 @@ use tm1_assets::{disc::Disc, sound::program};
 pub struct Sounds {
     sources: Vec<AudioSource>,
     turbo: Vec<PreparedTone>,
+    guns: Vec<Vec<PreparedTone>>,
     rival_engines: Vec<(AudioSource, f32, std::time::Duration)>,
     voices: Vec<Handle<AudioSource>>,
     engine_range: f32,
@@ -92,13 +93,27 @@ struct Layer {
 
 impl PreparedTone {
     fn new(tone: tm1_assets::sound::Tone, engine: bool, looping: bool) -> Result<Self> {
+        Self::panned(tone, engine, looping, 0.)
+    }
+    fn panned(
+        tone: tm1_assets::sound::Tone,
+        engine: bool,
+        looping: bool,
+        pan: f32,
+    ) -> Result<Self> {
         let priority = tone.priority;
         let first_loop_frame = tone.loop_start.filter(|_| looping).map(|frame| {
             let note = if engine { tone.low } else { 60 };
             let rate = 2.0_f32.powf((f32::from(note) - f32::from(tone.center)) / 12.);
             (frame as f64 / f64::from(rate)).ceil() as usize
         });
-        let sample = Sample::from_tones(vec![tone], engine);
+        let mut sample = Sample::from_tones(vec![tone], engine);
+        if pan != 0. {
+            for [l, r] in &mut sample.mix {
+                *l *= 1. - pan.max(0.);
+                *r *= 1. + pan.min(0.);
+            }
+        }
         Ok(Self {
             wave: sample.wave(0.)?,
             looping_clip: first_loop_frame
@@ -132,7 +147,10 @@ impl Layer {
     }
 }
 #[derive(Resource)]
-pub struct TurboSounds(Vec<Layer>);
+pub struct VehicleSounds {
+    turbo: Vec<Layer>,
+    guns: Vec<Vec<Layer>>,
+}
 
 pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
     let pitch_steps = (range as i32 * 128 * rev.clamp(0, 99)) / 99;
@@ -154,15 +172,20 @@ fn battle_programs(
 }
 
 impl Sounds {
-    pub fn install_turbo(&mut self, world: &mut World) {
+    pub fn install_vehicle_sounds(&mut self, world: &mut World) {
         world.init_resource::<Assets<AudioSource>>();
         world.init_resource::<Assets<looping::LoopingPcm>>();
-        let layers = self
+        let turbo = self
             .turbo
             .drain(..)
             .map(|tone| tone.register(world))
             .collect();
-        world.insert_resource(TurboSounds(layers));
+        let guns = self
+            .guns
+            .drain(..)
+            .map(|tones| tones.into_iter().map(|tone| tone.register(world)).collect())
+            .collect();
+        world.insert_resource(VehicleSounds { turbo, guns });
     }
 
     fn register(&mut self, assets: &mut Assets<AudioSource>) {
@@ -222,6 +245,15 @@ impl Sounds {
         }
         Ok(Self {
             sources,
+            guns: [-1., -0.5, 0., 0.5, 1.]
+                .into_iter()
+                .map(|pan| {
+                    program(&bank, 12)?
+                        .into_iter()
+                        .map(|tone| PreparedTone::panned(tone, false, true, pan))
+                        .collect::<Result<_>>()
+                })
+                .collect::<Result<_>>()?,
             turbo: program(&bank, TURBO_PROGRAM)?
                 .into_iter()
                 .map(|tone| PreparedTone::new(tone, false, true))
@@ -276,7 +308,7 @@ pub fn start(
 pub fn update(
     mut commands: Commands,
     sounds: Res<Sounds>,
-    turbo: Res<TurboSounds>,
+    vehicle_sounds: Res<VehicleSounds>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
     mut engine: Query<&mut AudioSink, With<Engine>>,
@@ -387,7 +419,7 @@ pub fn update(
         ));
     }
 
-    if drive.turbo_requests.is_empty() && drive.sounds.is_empty() {
+    if drive.vehicle_sounds.is_empty() && drive.sounds.is_empty() {
         return;
     }
     let mut remaining = 22usize.saturating_sub(shots.iter().count() + active_engines);
@@ -395,29 +427,50 @@ pub fn update(
         .iter()
         .filter_map(|(entity, _, shot)| shot.0.filter(|_| !reset).map(|key| (key, entity)))
         .collect();
-    let turbo_key = crate::driving::ExclusiveVoice::Turbo;
-    for &boosting in &drive.turbo_requests {
-        if boosting {
-            if active.iter().any(|&(key, _)| key == turbo_key) {
+    use crate::driving::{ExclusiveVoice, VehicleSound};
+    for request in &drive.vehicle_sounds {
+        let (key, playing, layers, attenuation) = match *request {
+            VehicleSound::Turbo(play) => (ExclusiveVoice::Turbo, play, &vehicle_sounds.turbo, 1.),
+            VehicleSound::Guns {
+                car,
+                position,
+                firing,
+            } => {
+                let (pan, attenuation) = mix_position(position);
+                let bin = ((pan * 2.).round() as i32 + 2) as usize;
+                (
+                    ExclusiveVoice::MachineGuns(car),
+                    firing,
+                    &vehicle_sounds.guns[bin],
+                    attenuation,
+                )
+            }
+        };
+        if playing {
+            if attenuation <= 0. {
                 continue;
             }
-            for tone in turbo.0.iter().take(remaining) {
+            if active.iter().any(|&(group, _)| group == key) {
+                continue;
+            }
+            for tone in layers.iter().take(remaining) {
                 let mut voice = commands.spawn((
                     crate::campaign::StageEntity,
-                    OneShot(Some(turbo_key)),
-                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+                    OneShot(Some(key)),
+                    PlaybackSettings::DESPAWN
+                        .with_volume(Volume::Linear(0.44 * attenuation * gain)),
                 ));
                 tone.play(&mut voice);
-                active.push((turbo_key, voice.id()));
+                active.push((key, voice.id()));
                 remaining -= 1;
             }
         } else {
-            active.retain(|&(key, entity)| {
-                if key == turbo_key {
+            active.retain(|&(group, entity)| {
+                if group == key {
                     commands.entity(entity).despawn();
                     remaining += 1;
                 }
-                key != turbo_key
+                group != key
             });
         }
     }
@@ -467,10 +520,72 @@ pub fn update(
 }
 
 #[cfg(test)]
-mod boost_tests {
+mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn campaign_machine_guns_release_after_cooldown_and_overheat() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        let mut world = crate::contest::menu_world();
+        let car = Vehicle::RoadKill;
+        let stage = Stage::load(
+            &world.resource::<Campaign>().0,
+            Level::Warehouse,
+            car,
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(50));
+        let step = |world: &mut World, held| {
+            let mut keys = ButtonInput::default();
+            if held {
+                keys.press(KeyCode::Space);
+            }
+            world.insert_resource(keys);
+            world.run_system_once(crate::driving::advance).unwrap();
+            world.run_system_once(update).unwrap();
+            let mut voices = world
+                .query::<(Entity, &OneShot)>()
+                .iter(world)
+                .filter(|(_, shot)| {
+                    shot.0 == Some(crate::driving::ExclusiveVoice::MachineGuns(car))
+                })
+                .map(|(entity, _)| entity)
+                .collect::<Vec<_>>();
+            voices.sort();
+            voices
+        };
+        step(&mut world, false);
+        let first = step(&mut world, true);
+        assert_eq!(first.len(), 2);
+        for _ in 0..3 {
+            assert_eq!(step(&mut world, false), first);
+        }
+        assert!(step(&mut world, false).is_empty());
+        let second = step(&mut world, true);
+        assert_eq!(second.len(), 2);
+        for _ in 0..10 {
+            assert_eq!(step(&mut world, true), second);
+        }
+        for _ in 0..200 {
+            if step(&mut world, true).is_empty()
+                && world
+                    .resource::<crate::driving::Drive>()
+                    .player
+                    .gun_overheated()
+            {
+                return;
+            }
+        }
+        panic!("expected the machine gun voices to stop during overheat");
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

@@ -826,6 +826,7 @@ void AICarOutOfBattle(AICar* car)
     }
     car->unk41 = 0;
     UpdateAICarsInBattleLaneDist();
+    arena_gun_sound(1 + car->playerIdx, 0);
 
     car->unk42 = 0;
     car->unk43 = 0;

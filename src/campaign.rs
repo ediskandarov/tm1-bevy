@@ -220,7 +220,7 @@ impl Stage {
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);
         world.insert_resource(self.music);
-        self.sounds.install_turbo(world);
+        self.sounds.install_vehicle_sounds(world);
         world.insert_resource(self.sounds);
         world.insert_resource(self.clear);
     }

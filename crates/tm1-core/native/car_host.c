@@ -1055,11 +1055,21 @@ static void move_arena_targets(VECTOR3* position)
     }
 }
 
+// One result per actor in update order. A gun cooldown tick leaves the slot empty.
+static u8* gun_requests;
+void arena_gun_sound(s32 slot, int firing)
+{
+    if (gun_requests && (unsigned)slot < 9)
+        gun_requests[slot] = firing ? 1 : 2;
+}
+
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9])
 {
+    memset(requests, 0, 9);
+    gun_requests = requests;
     *turbo = 0;
     PlayerCar player;
     AICar cars[8];
@@ -1112,6 +1122,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
     tm1_store_battle(battle);
+    gun_requests = NULL;
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));
     for (int i = 0; i < count; i++)
@@ -1125,21 +1136,12 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
-// Valid during one serialized split-screen update. Cooldown ticks issue no request.
-static u8* duel_gun_requests;
-
-void arena_player_gun_sound(s32 slot, int firing)
-{
-    if (duel_gun_requests && (unsigned)slot < 2)
-        duel_gun_requests[slot] = firing ? 1 : 2;
-}
-
 void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[2], u8 turbo[2])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2])
 {
-    memset(requests, 0, 2);
+    memset(requests, 0, 9);
     memset(turbo, 0, 2);
-    duel_gun_requests = requests;
+    gun_requests = requests;
     PlayerCar cars[2];
     memcpy(&cars[0], first, sizeof(PlayerCar));
     memcpy(&cars[1], second, sizeof(PlayerCar));
@@ -1173,7 +1175,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
     memcpy(second, &cars[1], sizeof(PlayerCar));
-    duel_gun_requests = NULL;
+    gun_requests = NULL;
     tm1_use_scene(NULL);
     arena_player = NULL;
     trig = NULL;

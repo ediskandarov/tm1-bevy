@@ -15,6 +15,15 @@ pub enum ExclusiveVoice {
     ScaledEffect(u8),
 }
 
+pub enum VehicleSound {
+    Turbo(bool),
+    Guns {
+        car: Vehicle,
+        position: [i32; 3],
+        firing: bool,
+    },
+}
+
 pub struct BattleSound {
     pub volume_percent: i32,
     pub exclusive: Option<ExclusiveVoice>,
@@ -46,7 +55,7 @@ pub(crate) fn effect_sample(kind: i32, life: i32, recharge: usize) -> Option<usi
     Some(match (kind, life) {
         (26, 2) => recharge,
         (36, 2) => recharge + 1,
-        (0 | 51, 2) => 1,
+        (51, 2) => 1,
         (52, 2) => 4,
         (401..=406 | 410..=414 | 430, 2) => recharge + 4,
         (11, 2) => 6,
@@ -76,7 +85,7 @@ pub struct Drive {
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
     pub sounds: Vec<BattleSound>,
-    pub turbo_requests: Vec<bool>,
+    pub vehicle_sounds: Vec<VehicleSound>,
     remainder: Duration,
     pub pause: Option<crate::pause::Page>,
     pub settings: crate::pause::Settings,
@@ -260,7 +269,7 @@ impl Drive {
             camera: tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase),
             player,
             sounds: Vec::new(),
-            turbo_requests: Vec::new(),
+            vehicle_sounds: Vec::new(),
             remainder: Duration::ZERO,
             pause: None,
             pause_sound: None,
@@ -294,7 +303,7 @@ pub fn advance(
     mut timings: Local<Vec<f64>>,
 ) {
     drive.sounds.clear();
-    drive.turbo_requests.clear();
+    drive.vehicle_sounds.clear();
     drive.pause_sound = None;
     if capture.holding_battle_frame() {
         return;
@@ -561,9 +570,24 @@ pub fn advance(
         state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
-        state
-            .turbo_requests
-            .extend(state.contacts.turbo_sound_requests()[0]);
+        if let Some(boosting) = state.contacts.turbo_sound_requests()[0] {
+            state.vehicle_sounds.push(VehicleSound::Turbo(boosting));
+        }
+        let shooters = std::iter::once((state.player.vehicle(), state.player.position())).chain(
+            state
+                .opponents
+                .iter()
+                .map(|ai| (ai.vehicle(), ai.position())),
+        );
+        for ((car, position), request) in shooters.zip(state.contacts.gun_sound_requests()) {
+            if let Some(firing) = request {
+                state.vehicle_sounds.push(VehicleSound::Guns {
+                    car,
+                    position,
+                    firing,
+                });
+            }
+        }
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter
         {

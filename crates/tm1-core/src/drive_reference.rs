@@ -2899,6 +2899,19 @@ fn compare_battle_controls(
         }
         r.cpu.call(0x801417d0, &[kind as u32, u32::from(on)]);
     }
+    let observe_guns = |cpu: &mut Cpu, entry, args: &[u32], car: Vehicle| {
+        let mut request = None;
+        cpu.call_observed(entry, args, 0x80000080, |cpu| {
+            let firing = match cpu.pc() {
+                0x801073cc => true,
+                0x80107524 | 0x80107a1c => false,
+                _ => return,
+            };
+            assert_eq!(cpu.r[4], car as u32);
+            request = Some(firing);
+        });
+        request
+    };
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -2934,15 +2947,22 @@ fn compare_battle_controls(
         r.cpu.call(0x8010e3d8, &[]);
         // animate_explosions advances active fragments once.
         r.cpu.call(0x801360bc, &[]);
+        let mut gun_requests = [None; 9];
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
-            r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
+            gun_requests[0] = observe_guns(&mut r.cpu, 0x8014ecd4, &[TAXI_CS, PLAYER], vehicle);
+        }
+        if r.cpu.word(PLAYER + 0x178) as i32 <= 0
+            && r.cpu.ram[((PLAYER + 0xa0) & 0x1fffff) as usize] == 0
+        {
+            gun_requests[0] = Some(false);
         }
         start_retail_death(&mut r.cpu, PLAYER, true);
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
         for (i, &cs) in slots.iter().enumerate() {
             let address = POLICE + 0x560 * i as u32;
-            r.cpu.call(0x8014ee14, &[cs, address]);
+            let car = lineup.get(i).unwrap_or(&r.police).vehicle();
+            gun_requests[1 + i] = observe_guns(&mut r.cpu, 0x8014ee14, &[cs, address], car);
             start_retail_death(&mut r.cpu, address, false);
         }
         r.cpu.call_until(0x8014e0b4, &[], 0x8014e10c);
@@ -3015,6 +3035,11 @@ fn compare_battle_controls(
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
         }
+        assert_eq!(
+            r.scene.gun_sound_requests(),
+            gun_requests,
+            "{level:?} tick {tick}"
+        );
         let rivals = if lineup.is_empty() {
             std::slice::from_ref(&r.police)
         } else {

@@ -1062,6 +1062,7 @@ unsafe extern "C" {
         tables: *const i16,
         seed: *mut u32,
         turbo: *mut u8,
+        guns: *mut u8,
     );
     #[cfg(test)]
     fn tm1_contacts(
@@ -1082,7 +1083,7 @@ pub struct CollisionScene {
     duel_returns: Vec<(usize, i16)>,
     duel_winner: Option<usize>,
     turbo_requests: [u8; 2],
-    duel_gun_requests: [u8; 2],
+    gun_requests: [u8; 9],
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
@@ -1124,7 +1125,7 @@ impl CollisionScene {
             battle: [0; 3],
             duel_returns: Vec::new(),
             duel_winner: None,
-            duel_gun_requests: [0; 2],
+            gun_requests: [0; 9],
             turbo_requests: [0; 2],
         })
     }
@@ -1300,7 +1301,12 @@ impl CollisionScene {
     }
 
     pub fn duel_gun_requests(&self) -> [Option<bool>; 2] {
-        self.duel_gun_requests.map(|request| match request {
+        let [first, second, ..] = self.gun_sound_requests();
+        [first, second]
+    }
+    /// Slot zero is the player, followed by opponents in simulation order during a contest.
+    pub fn gun_sound_requests(&self) -> [Option<bool>; 9] {
+        self.gun_requests.map(|request| match request {
             1 => Some(true),
             2 => Some(false),
             _ => None,
@@ -1353,7 +1359,7 @@ impl CollisionScene {
                 first.frame,
                 first.trig.as_ptr(),
                 &mut first.seed,
-                self.duel_gun_requests.as_mut_ptr(),
+                self.gun_requests.as_mut_ptr(),
                 self.turbo_requests.as_mut_ptr(),
             );
         }
@@ -1412,6 +1418,7 @@ impl CollisionScene {
                 player.trig.as_ptr(),
                 &mut player.seed,
                 self.turbo_requests.as_mut_ptr(),
+                self.gun_requests.as_mut_ptr(),
             );
         }
         player.cap_turbo_reserve();
