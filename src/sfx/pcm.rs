@@ -40,19 +40,19 @@ impl PitchRegister {
 }
 
 #[derive(Clone)]
-pub(super) struct Motor {
+pub(super) struct LoopingTone {
     pcm: Arc<[i16]>,
     loop_at: usize,
     adsr: [u16; 2],
     volume: f32,
     pan: [f32; 2],
 }
-impl Motor {
+impl LoopingTone {
     pub fn new(mut tone: tm1_assets::sound::Tone) -> anyhow::Result<Self> {
         tone.prepare_loop();
         let loop_at = tone
             .loop_start
-            .ok_or_else(|| anyhow::anyhow!("missing VAB engine loop"))?;
+            .ok_or_else(|| anyhow::anyhow!("missing VAB loop"))?;
         let pan = f32::from(tone.pan) / 64.;
         Ok(Self {
             pcm: tone.pcm.into(),
@@ -66,7 +66,7 @@ impl Motor {
         let register = PitchRegister(Arc::new(AtomicU16::new(pitch.min(0x4000))));
         (
             StereoPcm {
-                data: PcmData::Engine(self.clone(), register.clone()),
+                data: PcmData::Looping(self.clone(), register.clone()),
                 levels: None,
             },
             register,
@@ -75,11 +75,8 @@ impl Motor {
 }
 #[derive(Clone)]
 enum PcmData {
-    Stereo {
-        samples: Arc<[f32]>,
-        loop_sample: Option<usize>,
-    },
-    Engine(Motor, PitchRegister),
+    Stereo { samples: Arc<[f32]> },
+    Looping(LoopingTone, PitchRegister),
 }
 #[derive(Asset, TypePath, Clone)]
 pub struct StereoPcm {
@@ -88,8 +85,7 @@ pub struct StereoPcm {
 }
 
 impl StereoPcm {
-    pub(super) fn new(stereo: &[[f32; 2]], first_loop_frame: Option<usize>) -> Self {
-        assert!(first_loop_frame.is_none_or(|frame| frame < stereo.len()));
+    pub(super) fn new(stereo: &[[f32; 2]]) -> Self {
         Self {
             data: PcmData::Stereo {
                 samples: stereo
@@ -97,7 +93,6 @@ impl StereoPcm {
                     .flatten()
                     .map(|s| s.clamp(-32768., 32767.) / 32768.)
                     .collect(),
-                loop_sample: first_loop_frame.map(|frame| 2 * frame),
             },
             levels: None,
         }
@@ -130,7 +125,7 @@ impl Decodable for StereoPcm {
             right: 0.,
             frame_levels: 0,
             envelope: match &self.data {
-                PcmData::Engine(motor, _) => Some(super::envelope::Envelope::new(motor.adsr)),
+                PcmData::Looping(motor, _) => Some(super::envelope::Envelope::new(motor.adsr)),
                 PcmData::Stereo { .. } => None,
             },
         }
@@ -140,16 +135,8 @@ impl Iterator for Playback {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
         let mut sample = match &self.clip.data {
-            PcmData::Stereo {
-                samples,
-                loop_sample,
-            } => {
-                if self.cursor == samples.len() {
-                    self.cursor = (*loop_sample)?;
-                }
-                samples[self.cursor]
-            }
-            PcmData::Engine(motor, register) => {
+            PcmData::Stereo { samples } => *samples.get(self.cursor)?,
+            PcmData::Looping(motor, register) => {
                 if self.cursor & 1 == 0 {
                     let mono = super::interpolation::interpolate(&motor.pcm, self.phase);
                     let v = self.envelope.as_mut().unwrap().apply(mono) as f32 * motor.volume;
@@ -185,10 +172,9 @@ impl Source for Playback {
     }
     fn total_duration(&self) -> Option<Duration> {
         match &self.clip.data {
-            PcmData::Stereo {
-                samples,
-                loop_sample: None,
-            } => Some(Duration::from_secs_f64(samples.len() as f64 / 88200.)),
+            PcmData::Stereo { samples } => {
+                Some(Duration::from_secs_f64(samples.len() as f64 / 88200.))
+            }
             _ => None,
         }
     }
@@ -205,7 +191,7 @@ mod tests {
     use super::*;
     #[test]
     fn independent_voices_latch_channel_updates_at_frame_boundaries() {
-        let clip = StereoPcm::new(&[[8192., 4096.]; 3], None);
+        let clip = StereoPcm::new(&[[8192., 4096.]; 3]);
         let levels = Levels::new([16, 47], 99);
         let mut a = clip.with_levels(levels.clone()).decoder();
         let mut b = clip.with_levels(Levels::new([47, 16], 50)).decoder();
@@ -218,16 +204,5 @@ mod tests {
         assert_eq!(b.next(), Some(0.125 * (16. * 50. / (33. * 99.))));
         assert_eq!(a.count(), 2);
         assert_eq!(b.count(), 4);
-    }
-
-    #[test]
-    fn attack_is_played_once_and_loop_is_stereo_aligned() {
-        let clip = StereoPcm::new(&[[0., 1.], [2., 3.], [4., 5.]], Some(1));
-        let samples: Vec<_> = clip
-            .decoder()
-            .take(12)
-            .map(|v| (v * 32768.) as i16)
-            .collect();
-        assert_eq!(samples, [0, 1, 2, 3, 4, 5, 2, 3, 4, 5, 2, 3]);
     }
 }

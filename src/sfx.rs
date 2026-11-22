@@ -12,7 +12,7 @@ use tm1_assets::{disc::Disc, sound::program};
 #[derive(Resource)]
 pub struct Sounds {
     sources: Vec<AudioSource>,
-    turbo: Vec<PreparedTone>,
+    turbo: Vec<EffectTone>,
     effects: Vec<Vec<EffectTone>>,
     rival_engines: Vec<Vec<EngineSample>>,
     voices: Vec<Handle<AudioSource>>,
@@ -27,23 +27,25 @@ struct EffectTone {
 
 impl EffectTone {
     fn load(bank: &[u8], prog: usize, looping: bool) -> Result<Vec<Self>> {
-        Ok(program(bank, prog)?
+        program(bank, prog)?
             .into_iter()
             .map(|tone| {
                 let priority = tone.priority;
-                let (sample, marker) = Sample::single(tone, false, looping);
-                Self {
-                    clip: pcm::StereoPcm::new(&sample.mix, marker.filter(|_| looping)),
-                    priority,
-                }
+                let clip = if looping && tone.loop_start.is_some() {
+                    let pitch = sample_pitch(&tone, false) as u16;
+                    pcm::LoopingTone::new(tone)?.voice(pitch).0
+                } else {
+                    pcm::StereoPcm::new(&Sample::from_tones(vec![tone], false).mix)
+                };
+                Ok(Self { clip, priority })
             })
-            .collect())
+            .collect()
     }
 }
 
 pub struct EngineSample {
     priority: u8,
-    motor: pcm::Motor,
+    motor: pcm::LoopingTone,
     pitch: EnginePitch,
 }
 impl EngineSample {
@@ -59,7 +61,7 @@ impl EngineSample {
                 Ok(Self {
                     priority,
                     pitch,
-                    motor: pcm::Motor::new(tone)?,
+                    motor: pcm::LoopingTone::new(tone)?,
                 })
             })
             .collect()
@@ -116,19 +118,6 @@ impl Sample {
         }
         Self { mix }
     }
-    fn single(
-        mut tone: tm1_assets::sound::Tone,
-        engine: bool,
-        looping: bool,
-    ) -> (Self, Option<usize>) {
-        if looping {
-            tone.prepare_loop();
-        }
-        let first_loop_frame = tone
-            .loop_start
-            .map(|frame| (frame * 4096).div_ceil(sample_pitch(&tone, engine)));
-        (Sample::from_tones(vec![tone], engine), first_loop_frame)
-    }
     pub fn wave(&self) -> Result<AudioSource> {
         let pcm: Vec<_> = self
             .mix
@@ -143,46 +132,9 @@ impl Sample {
 // Program 26 is the four-tone sound at ID 0x82 in the JP sound table.
 const TURBO_PROGRAM: usize = 26;
 
-struct PreparedTone {
-    wave: AudioSource,
-    looping_clip: Option<pcm::StereoPcm>,
-    priority: u8,
-}
-
 struct Layer {
-    source: Handle<AudioSource>,
-    looping_clip: Option<Handle<pcm::StereoPcm>>,
+    source: Handle<pcm::StereoPcm>,
     priority: u8,
-}
-
-impl PreparedTone {
-    fn new(tone: tm1_assets::sound::Tone) -> Result<Self> {
-        let priority = tone.priority;
-        let (sample, marker) = Sample::single(tone, false, true);
-        Ok(Self {
-            wave: sample.wave()?,
-            looping_clip: marker.map(|frame| pcm::StereoPcm::new(&sample.mix, Some(frame))),
-            priority,
-        })
-    }
-    fn register(self, world: &mut World) -> Layer {
-        Layer {
-            source: world.resource_mut::<Assets<AudioSource>>().add(self.wave),
-            looping_clip: self
-                .looping_clip
-                .map(|clip| world.resource_mut::<Assets<pcm::StereoPcm>>().add(clip)),
-            priority: self.priority,
-        }
-    }
-}
-impl Layer {
-    fn play(&self, entity: &mut bevy::ecs::system::EntityCommands) {
-        if let Some(clip) = &self.looping_clip {
-            entity.insert(AudioPlayer(clip.clone()));
-        } else {
-            entity.insert(AudioPlayer::new(self.source.clone()));
-        }
-    }
 }
 #[derive(Resource)]
 pub struct VehicleSounds {
@@ -220,7 +172,12 @@ impl Sounds {
         let turbo = self
             .turbo
             .drain(..)
-            .map(|tone| tone.register(world))
+            .map(|tone| Layer {
+                source: world
+                    .resource_mut::<Assets<pcm::StereoPcm>>()
+                    .add(tone.clip),
+                priority: tone.priority,
+            })
             .collect();
         world.insert_resource(VehicleSounds { turbo });
     }
@@ -280,10 +237,7 @@ impl Sounds {
         Ok(Self {
             sources,
             effects,
-            turbo: program(&bank, TURBO_PROGRAM)?
-                .into_iter()
-                .map(PreparedTone::new)
-                .collect::<Result<_>>()?,
+            turbo: EffectTone::load(&bank, TURBO_PROGRAM, true)?,
             rival_engines,
             voices: Vec::new(),
             player_engine,
@@ -568,7 +522,8 @@ pub fn update(
                     continue;
                 }
                 for tone in &vehicle_sounds.turbo {
-                    let mut voice = commands.spawn((
+                    let voice = commands.spawn((
+                        AudioPlayer(tone.source.clone()),
                         crate::campaign::StageEntity,
                         OneShot {
                             key: Some(key),
@@ -578,7 +533,6 @@ pub fn update(
                         },
                         PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
                     ));
-                    tone.play(&mut voice);
                     active.push((key, voice.id(), None));
                     ranked.push(Candidate {
                         entity: voice.id(),
@@ -675,15 +629,26 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn baked_effect_loops_start_with_stationary_envelopes() {
+    fn effect_loops_preserve_fractional_pitch_across_repeats() {
+        use bevy::audio::Decodable;
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let bank = disc.read("SND/UACORE.VAB").unwrap();
         for prog in [12, TURBO_PROGRAM, 38] {
-            for mut tone in program(&bank, prog).unwrap() {
+            let clips = EffectTone::load(&bank, prog, true).unwrap();
+            for (mut tone, effect) in program(&bank, prog).unwrap().into_iter().zip(clips) {
                 tone.prepare_loop();
-                if let Some(marker) = tone.loop_start {
-                    assert_eq!(tone.adsr, [0x80ff, 0x1fc0]);
-                    assert!((marker * 4096).div_ceil(sample_pitch(&tone, false)) >= 20);
+                let Some(marker) = tone.loop_start else {
+                    continue;
+                };
+                let pitch = sample_pitch(&tone, false);
+                let end = tone.pcm.len();
+                let frames = ((end + 3 * (end - marker)) * 4096).div_ceil(pitch);
+                let mut voice = effect.clip.decoder();
+                for frame in 0..frames {
+                    let expected = reference_loop_frame(&tone, frame * pitch, frame);
+                    for channel in expected {
+                        assert_eq!(voice.next(), Some(channel), "program {prog}, frame {frame}");
+                    }
                 }
             }
         }
@@ -691,7 +656,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn effect_fine_tune_reaches_the_pcm_and_loop_length() {
+    fn effect_fine_tune_reaches_the_pcm_and_sample_length() {
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let bank = disc.read("SND/UACORE.VAB").unwrap();
         let tone = program(&bank, 44).unwrap().remove(0);
@@ -699,7 +664,6 @@ mod tests {
         // SOUND.c sets note 51, fine 18 on this voice (pitch register 2453).
         let increment = 2453;
         let frames = (tone.pcm.len() * 4096).div_ceil(increment);
-        let marker = tone.loop_start.map(|i| (i * 4096).div_ceil(increment));
         let gain = f32::from(tone.volume) / 127.;
         let pan = (f32::from(tone.pan) / 64.).min(1.);
         // Independent decoder and four-tap interpolation at pitch register 2453.
@@ -719,9 +683,8 @@ mod tests {
             (1000, 235),
             (1023, -255),
         ];
-        let (sample, loop_start) = Sample::single(tone, false, false);
+        let sample = Sample::from_tones(vec![tone], false);
         assert_eq!(sample.mix.len(), frames);
-        assert_eq!(loop_start, marker);
         for (frame, value) in samples {
             assert_eq!(
                 sample.mix[frame][1],
@@ -897,7 +860,7 @@ mod tests {
         assert_eq!(engines(&mut world), 2);
     }
 
-    fn reference_engine_frame(
+    fn reference_loop_frame(
         tone: &tm1_assets::sound::Tone,
         phase: usize,
         frame: usize,
@@ -943,7 +906,7 @@ mod tests {
                     let rev = (frame / 131) % 100;
                     let pitch = motor.pitch.register(rev);
                     register.set(pitch);
-                    let [left, right] = reference_engine_frame(&tone, phase, frame as usize);
+                    let [left, right] = reference_loop_frame(&tone, phase, frame as usize);
                     assert_eq!(playback.next(), Some(left));
                     register.set(0);
                     assert_eq!(playback.next(), Some(right));
@@ -1004,15 +967,14 @@ mod tests {
             tone.prepare_loop();
             let step = usize::from(pitch.register(0));
             for i in 0..tone.pcm.len() * 4096 / step + 1024 {
-                let dry = reference_engine_frame(&tone, i * step, i);
+                let dry = reference_loop_frame(&tone, i * step, i);
                 for (sample, level) in dry.into_iter().zip(channels) {
                     assert_eq!(
                         drive.next(),
                         Some(sample * ((level * 99) as f32 / (33. * 99.)))
                     );
                 }
-                for sample in reference_engine_frame(&tone, i * usize::from(pitch.register(30)), i)
-                {
+                for sample in reference_loop_frame(&tone, i * usize::from(pitch.register(30)), i) {
                     assert_eq!(screen.next(), Some(sample));
                 }
             }
@@ -1118,7 +1080,7 @@ mod tests {
                 assert_eq!(*entity, current);
                 let mut audible = false;
                 for _ in 0..tone.pcm.len() * 4096 / *step + 32 {
-                    for (sample, level) in reference_engine_frame(tone, *phase, *phase / *step)
+                    for (sample, level) in reference_loop_frame(tone, *phase, *phase / *step)
                         .into_iter()
                         .zip(channels)
                     {
@@ -1300,10 +1262,17 @@ mod tests {
             world.run_system_once(crate::driving::advance).unwrap();
             world.run_system_once(update).unwrap();
             let mut voices = world
-                .query::<(Entity, &OneShot, Has<AudioPlayer<pcm::StereoPcm>>)>()
+                .query::<(Entity, &OneShot, &AudioPlayer<pcm::StereoPcm>)>()
                 .iter(world)
                 .filter(|(_, voice, _)| voice.key == Some(Turbo))
-                .map(|(e, _, loops)| (e, loops))
+                .map(|(e, _, source)| {
+                    use bevy::audio::{Decodable, Source};
+                    let clip = world
+                        .resource::<Assets<pcm::StereoPcm>>()
+                        .get(&source.0)
+                        .unwrap();
+                    (e, clip.decoder().total_duration().is_none())
+                })
                 .collect::<Vec<_>>();
             voices.sort();
             voices
