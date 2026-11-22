@@ -12,7 +12,7 @@ use tm1_assets::sound::program;
 use tm1_core::drive::Vehicle;
 
 struct Layer {
-    gun_loop: Option<Handle<super::looping::LoopingPcm>>,
+    looping_clip: Option<Handle<super::looping::LoopingPcm>>,
     source: Handle<AudioSource>,
     priority: u8,
     range: f32,
@@ -58,12 +58,13 @@ impl DuelBank {
                 .map(|tone| {
                     let priority = tone.priority;
                     let first_loop_frame = tone.loop_start.map(|frame| {
-                        let rate = 2.0_f32.powf((60. - f32::from(tone.center)) / 12.);
+                        let note = if engine { tone.low } else { 60 };
+                        let rate = 2.0_f32.powf((f32::from(note) - f32::from(tone.center)) / 12.);
                         (frame as f64 / f64::from(rate)).ceil() as usize
                     });
                     let sample = Sample::from_tones(vec![tone], engine);
                     Ok(Layer {
-                        gun_loop: first_loop_frame.filter(|_| gun).map(|frame| {
+                        looping_clip: first_loop_frame.filter(|_| gun || engine).map(|frame| {
                             world
                                 .resource_mut::<Assets<super::looping::LoopingPcm>>()
                                 .add(super::looping::LoopingPcm::new(&sample.mix, frame))
@@ -114,6 +115,23 @@ impl DuelBank {
             }
         }
         world.insert_resource(self);
+    }
+
+    pub fn play_score_engine(&self, commands: &mut Commands, gain: f32) {
+        for layer in &self.programs[0] {
+            let mut voice = commands.spawn((
+                StageEntity,
+                crate::duel::ScoreEngine,
+                PlaybackSettings::DESPAWN
+                    .with_speed(engine_speed(layer.range, 30))
+                    .with_volume(Volume::Linear(0.28 * gain)),
+            ));
+            if let Some(clip) = &layer.looping_clip {
+                voice.insert(AudioPlayer(clip.clone()));
+            } else {
+                voice.insert(AudioPlayer::new(layer.source.clone()));
+            }
+        }
     }
 
     pub fn menu_voice(&self, select: bool) -> AudioPlayer {
@@ -229,7 +247,7 @@ pub fn mix(
                 PlaybackSettings::DESPAWN.with_volume(volume),
             ));
             if matches!(key, Some(ExclusiveVoice::MachineGuns(_)))
-                && let Some(clip) = &layer.gun_loop
+                && let Some(clip) = &layer.looping_clip
             {
                 voice.insert(AudioPlayer(clip.clone()));
             } else {

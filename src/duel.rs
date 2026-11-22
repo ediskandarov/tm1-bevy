@@ -172,6 +172,8 @@ pub struct DuelMusic;
 pub struct DuelEffect;
 #[derive(Component)]
 pub struct PauseVoice;
+#[derive(Component)]
+pub struct ScoreEngine;
 
 pub fn pause_menu(
     mut commands: Commands,
@@ -191,7 +193,7 @@ pub fn pause_menu(
             &mut PlaybackSettings,
             Option<&mut AudioSink>,
         ),
-        (With<StageEntity>, Without<PauseVoice>),
+        (With<StageEntity>, Without<PauseVoice>, Without<ScoreEngine>),
     >,
 ) {
     use crate::pause::{Action, Page};
@@ -333,6 +335,8 @@ pub fn pause_menu(
 }
 
 pub fn advance(
+    mut commands: Commands,
+    bank: Res<crate::sfx::duel::DuelBank>,
     mut duel: ResMut<Duel>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time<Real>>,
@@ -446,6 +450,7 @@ pub fn advance(
         }
         if let Some(slot) = duel.winner {
             duel.score[slot] += 1;
+            bank.play_score_engine(&mut commands, duel.settings.effects_gain());
         }
     }
     if let Some(winner) = duel.winner {
@@ -473,7 +478,7 @@ pub fn advance(
                     face,
                     20,
                     79 + base,
-                    &car.vehicle().name().to_uppercase(),
+                    &car.vehicle().name().replace('.', "").to_uppercase(),
                 );
                 for (x, label, count) in [
                     (220, "WINS", duel.score[slot]),
@@ -586,6 +591,19 @@ mod tests {
                 .count(),
             0
         );
+        let score_voices: Vec<_> = world
+            .query_filtered::<Entity, With<ScoreEngine>>()
+            .iter(&world)
+            .collect();
+        assert!(!score_voices.is_empty());
+        world.run_system_once(pause_menu).unwrap();
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<ScoreEngine>>()
+                .iter(&world)
+                .collect::<Vec<_>>(),
+            score_voices
+        );
         round_menu(&mut world);
         assert!(world.get_entity(hud_entity).is_ok());
         assert_eq!(world.resource::<Duel>().score, [2, 4]);
@@ -597,6 +615,11 @@ mod tests {
             }
         }
         assert!(world.get_entity(hud_entity).is_err());
+        assert!(
+            score_voices
+                .iter()
+                .all(|&entity| world.get_entity(entity).is_err())
+        );
         let round = world.resource::<Duel>();
         assert_eq!(round.score, [2, 4]);
         assert!(round.winner.is_none());
