@@ -21,8 +21,14 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
             if matches!(kind, 751 | 756 | 760 | 772 | 773 | 775..=778 | 781 | 782) {
                 pedestrians.push((kind, cpu.r[5]));
             }
-            if kind == 650 {
-                sprite_loads.push((0x80137748, cpu.r[5], 0));
+            let loader = match kind {
+                650 => Some(0x80137748),
+                651 => Some(0x8013785c),
+                654 => Some(0x801377a4),
+                _ => None,
+            };
+            if let Some(loader) = loader {
+                sprite_loads.push((loader, cpu.r[5], 0));
             }
             if matches!(kind, 301 | 302 | 308 | 309) {
                 sprite_loads.push((0x8010c108, kind, cpu.r[5]));

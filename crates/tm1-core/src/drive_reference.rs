@@ -2165,39 +2165,66 @@ fn fragment_draw_packets_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn ground_fire_matches_retail_packets() {
+fn particles_match_retail_packets() {
+    for (kind, routine, duration) in [
+        (35, 0x80136e18, 104),
+        (53, 0x801370d0, 2),
+        (8, 0x80137140, 88),
+        (31, 0x80137190, 24),
+        (55, 0x80136aa0, 32),
+        (29, 0x80136cf0, 16),
+    ] {
+        verify_particle_packets(kind, routine, duration);
+    }
+}
+
+fn verify_particle_packets(kind: i32, routine: u32, duration: i32) {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let data = disc.read("UADMD/XARENA1.DMD").unwrap();
-    let frames = tm1_assets::scene::Dmd::parse(&data)
-        .unwrap()
-        .flame_frames()
-        .unwrap();
+    let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
+    let art = particle_frame(kind, duration).unwrap().animation;
+    let frames = match art {
+        ParticleAnimation::Fire => dmd.flame_frames().unwrap().to_vec(),
+        ParticleAnimation::Smoke | ParticleAnimation::Steam => dmd
+            .smoke_frames(art == ParticleAnimation::Steam)
+            .unwrap()
+            .to_vec(),
+        ParticleAnimation::Explosion => dmd.explosion_frames().unwrap().to_vec(),
+        _ => unreachable!(),
+    };
     let mut r = Reference::build(Vehicle::YellowJacket, true);
     r.cpu.call(0x80137268, &[]);
-    let pos = [32, 400, 36];
-    for (k, n) in pos.into_iter().enumerate() {
-        put(&mut r.cpu, VIEW_OUTPUT + k as u32 * 4, n as u32);
-    }
-    r.cpu.call(0x80136e18, &[VIEW_OUTPUT]);
-    {
-        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe extern "C" {
-            fn arena_effect(p: *const i32, kind: i32);
-        }
-        unsafe {
-            tm1_use_scene(r.scene.native.as_ptr());
-            arena_effect(pos.as_ptr(), 35);
-            tm1_use_scene(std::ptr::null_mut());
-        }
-    }
+    let pos = [32, if kind == 8 { 3200 } else { 400 }, 36];
     let ot = 0x80010000;
     let packet = RENDER_SCRATCH + 0x100;
     put(&mut r.cpu, RENDER_SCRATCH, ot);
     put(&mut r.cpu, RENDER_SCRATCH + 12, packet + 256);
-    for update in 1..=105 {
+    for update in 0..=duration + 1 {
         r.cpu.call(0x801360bc, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         for view in 0..=1 {
+            if update == 0 && view == 1 {
+                for (k, n) in pos.into_iter().enumerate() {
+                    put(&mut r.cpu, VIEW_OUTPUT + k as u32 * 4, n as u32);
+                }
+                r.cpu.call(routine, &[VIEW_OUTPUT]);
+                {
+                    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+                    unsafe extern "C" {
+                        fn arena_effect(p: *const i32, kind: i32);
+                    }
+                    unsafe {
+                        tm1_use_scene(r.scene.native.as_ptr());
+                        arena_effect(pos.as_ptr(), kind);
+                        tm1_use_scene(std::ptr::null_mut());
+                    }
+                }
+                assert_eq!(
+                    r.scene.drawn_particles(false, &mut [[0; 5]; 80]),
+                    0,
+                    "late spawn leaked into primary view"
+                );
+            }
             let m = r.cpu.call(0x8010af70, &[view]);
             let matrix = crate::math::Matrix {
                 rotation: if update % 2 == 0 {
@@ -2219,9 +2246,9 @@ fn ground_fire_matches_retail_packets() {
             put(&mut r.cpu, RENDER_SCRATCH + 8, packet);
             r.cpu.call(0x80136288, &[RENDER_SCRATCH, view]);
             let count = (r.cpu.word(RENDER_SCRATCH + 8) - packet) / 160;
-            let mut fire = [[0; 4]; 80];
+            let mut particles = [[0; 5]; 80];
             assert_eq!(
-                r.scene.ground_fire(view == 1, &mut fire),
+                r.scene.drawn_particles(view == 1, &mut particles),
                 count as usize,
                 "update {update}, view {view}"
             );
@@ -2229,13 +2256,30 @@ fn ground_fire_matches_retail_packets() {
                 continue;
             }
             assert_eq!(count, 1);
-            let [x, y, z, phase] = fire[0];
-            assert_eq!([x, y, z], pos);
+            let [x, y, z, drawn_kind, life] = particles[0];
+            assert_eq!(kind, drawn_kind);
+            let sprite = particle_frame(kind, life).unwrap();
+            let phase = sprite.frame;
+            assert_eq!(
+                [x, y, z],
+                [
+                    pos[0],
+                    pos[1],
+                    pos[2] + if kind == 8 { 10 * update } else { 0 }
+                ]
+            );
             let [base, top] =
                 [[x, y, z], [x, y, z + 80]].map(|p| crate::math::multiply(&matrix, p, false));
             let corners = r
                 .player
-                .ground_fire_quad(base, top, focal, center, frames[0].width)
+                .particle_quad(
+                    base,
+                    (kind == 35).then_some(top),
+                    focal,
+                    center,
+                    frames[sprite.first].width,
+                    sprite.scale,
+                )
                 .unwrap();
             for (i, [u, v]) in corners.into_iter().enumerate() {
                 let xy = r.cpu.word(packet + 8 + i as u32 * 8);
@@ -2247,8 +2291,20 @@ fn ground_fire_matches_retail_packets() {
                 let uv = r.cpu.word(packet + 12 + i as u32 * 8);
                 assert_eq!(frames[phase as usize].uv[i], [uv as u8, (uv >> 8) as u8]);
             }
-            assert_eq!(r.cpu.word(packet + 4) >> 24, 0x2f);
-            let bucket = ((base[2] >> 3) - 8).max(0);
+            if kind == 55 {
+                assert_eq!(r.cpu.word(packet + 4), 0x2eff4040);
+            } else {
+                assert_eq!(r.cpu.word(packet + 4) >> 24, 0x2f);
+            }
+            assert_eq!(
+                (r.cpu.word(packet + 12) >> 16) as u16,
+                frames[phase].texture.clut
+            );
+            assert_eq!(
+                (r.cpu.word(packet + 20) >> 16) as u16,
+                frames[phase].texture.page
+            );
+            let bucket = ((base[2] >> 3) - sprite.depth_bias / 8).max(0);
             assert_eq!(
                 r.cpu.word(ot + 4 * bucket as u32) & 0xffffff,
                 packet & 0xffffff

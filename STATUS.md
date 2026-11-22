@@ -23,6 +23,10 @@ Fragments use the two four-frame texture sequences selected by EXPLODE.c. The ma
 
 Wrecks and special-weapon impacts use the same eight-frame flame sequence. It repeats thirteen times over 104 updates. The renderer projects a strip between the impact position and a point 80 units above it using the original angle tables. A disc-backed test checks both cameras against the JP GPU commands over 105 updates, including the frame omitted from the secondary view in the final loop. The Warehouse capture uses Sweet Tooth with `--demo-special-screenshot local/warehouse-ground-fire.png 210`.
 
+## Combat particles in both views
+
+The main camera captures the particle pool immediately after animation. Vehicle updates can then create effects that appear in the mirror or second player's view during the same update. The secondary view skips age one of the last animation loop. Both views use integer projection, the initial sprite width for size, the current animation frame for UVs and the per-effect depth bias. A JP packet comparison follows muzzle flash, smoke, steam, ground fire, blue explosion and large explosion from creation to expiry. It checks visibility, all four screen corners, UVs, texture page, palette, primitive type and ordering-table bucket. The Thumper capture on Metal uses `--level warehouse --car thumper --demo-special-screenshot local/warehouse-thumper-views.png 16`.
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.

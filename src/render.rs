@@ -1352,73 +1352,6 @@ fn draw_view(
             );
         }
     }
-    let mut flames = [[0; 4]; 80];
-    let count = contacts.flame_particles(&mut flames);
-    let mut effects = [[0; 5]; 122];
-    let effect_count = contacts.effects(&mut effects);
-    let particles = flames[..count].iter().map(|&[x, y, z, index]| {
-        (
-            [x, y, z],
-            &arena.explosion_frames[index as usize],
-            6,
-            [1.; 4],
-        )
-    });
-    let wreck_effects = effects[..effect_count]
-        .iter()
-        .filter_map(|&[x, y, z, kind, ttl]| {
-            let (frame, size) = match kind {
-                8 | 34 => {
-                    let age = 88 - ttl;
-                    let frame = if age < 24 { age } else { (age - 24) % 32 } / 2;
-                    (
-                        &arena.smoke_frames[0][frame as usize],
-                        if kind == 8 { 16 } else { 32 },
-                    )
-                }
-                1 => (&arena.spark_frames[(4 - ttl) as usize], 5),
-                31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
-                32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
-                53 => (&arena.explosion_frames[(2 - ttl) as usize], 8),
-                44..=50 => (&arena.burn_frames[(kind - 44 + 2 - ttl) as usize], 8),
-                38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
-                56 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 4),
-                28 | 37 | 55 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
-                29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
-                30 => (&arena.explosion_frames[(16 - ttl) as usize], 96),
-                _ => return None,
-            };
-            Some((
-                [x, y, z],
-                frame,
-                size,
-                if kind == 55 {
-                    [0.5, 0.5, 255. / 128., 1.]
-                } else {
-                    [1.; 4]
-                },
-            ))
-        });
-    for (position, frame, size, tint) in particles.chain(wreck_effects) {
-        let center = world(position.map(|v| v as f32));
-        let radius = f32::from(frame.width) * size as f32 / 8.;
-        let slot = arena.tiles[&(Some(frame.texture), true)];
-        let batch = if (frame.texture.page >> 5) & 3 == 1 {
-            &mut additive
-        } else {
-            &mut transparent
-        };
-        for &i in indices(4) {
-            let offset = right * if i & 1 == 0 { -radius } else { radius }
-                + up * if i < 2 { radius } else { -radius };
-            let [u, v] = frame.uv[i];
-            batch.push(
-                center + offset,
-                arena.uv(slot, Vec2::new(u.into(), v.into())),
-                tint,
-            );
-        }
-    }
     let white = arena.uv(0, Vec2::ZERO);
     let quad = |batch: &mut Batch, points: [Vec2; 4], depths: [f32; 4], colors: [[f32; 4]; 2]| {
         for &i in indices(4) {
@@ -1431,7 +1364,7 @@ fn draw_view(
         }
     };
     let mut bullets = [[0; 8]; 40];
-    let count = contacts.drawn_bullets(view.secondary, &mut bullets);
+    let bullet_count = contacts.drawn_bullets(view.secondary, &mut bullets);
     let mut arcs = [[[0; 3]; 16]; 3];
     let arc_count = contacts.taser_arcs(&mut arcs);
     let camera_point = |p: [i32; 3]| {
@@ -1450,29 +1383,57 @@ fn draw_view(
         (204, [160, 120])
     };
     let pixel_scale = focal / lens as f32;
-    let mut fire = [[0; 4]; 80];
-    let fire_count = contacts.ground_fire(view.secondary, &mut fire);
-    for &[x, y, z, frame] in &fire[..fire_count] {
-        let [base, top] = [[x, y, z], [x, y, z + 80]].map(|p| {
-            let q = camera_point(p);
-            [q.x as i32, -q.y as i32, q.z as i32]
-        });
-        let Some(corners) =
-            player.ground_fire_quad(base, top, [lens; 2], center, arena.flame_frames[0].width)
-        else {
+    let mut particles = [[0; 5]; 80];
+    let count = contacts.drawn_particles(view.secondary, &mut particles);
+    for &[x, y, z, kind, ttl] in &particles[..count] {
+        use tm1_core::drive::ParticleAnimation::*;
+        let Some(particle) = tm1_core::drive::particle_frame(kind, ttl) else {
             continue;
         };
-        let sprite = &arena.flame_frames[frame as usize];
+        let frames = match particle.animation {
+            Explosion => &arena.explosion_frames[..],
+            Smoke => &arena.smoke_frames[0][..],
+            Steam => &arena.smoke_frames[1][..],
+            Spark => &arena.spark_frames[..],
+            Burn => &arena.burn_frames[..],
+            Fire => &arena.flame_frames[..],
+        };
+        let coords = |p| {
+            let q = camera_point(p);
+            [q.x as i32, -q.y as i32, q.z as i32]
+        };
+        let base = coords([x, y, z]);
+        let top = (kind == 35).then(|| coords([x, y, z + 80]));
+        let Some(corners) = player.particle_quad(
+            base,
+            top,
+            [lens; 2],
+            center,
+            frames[particle.first].width,
+            particle.scale,
+        ) else {
+            continue;
+        };
+        let sprite = &frames[particle.frame];
         let tile = arena.tiles[&(Some(sprite.texture), true)];
-        // The original moves fire eight ordering-table buckets toward the camera.
-        let depth = ((base[2].max(8) - 64) as f32).max(near + 0.01);
+        let depth = ((base[2].max(8) - particle.depth_bias) as f32).max(near + 0.01);
+        let tint = if kind == 55 {
+            [0.5, 0.5, 255. / 128., 1.]
+        } else {
+            [1.; 4]
+        };
+        let batch = if (sprite.texture.page >> 5) & 3 == 1 {
+            &mut additive
+        } else {
+            &mut transparent
+        };
         for &i in indices(4) {
             let [u, v] = corners[i];
             let offset = right * u as f32 - up * v as f32;
-            additive.push(
+            batch.push(
                 eye + forward * depth + offset * (depth * pixel_scale / focal),
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
-                [1.; 4],
+                tint,
             );
         }
     }
@@ -1517,7 +1478,7 @@ fn draw_view(
             );
         }
     }
-    for &[x, y, z, px, py, pz, kind, life] in &bullets[..count] {
+    for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
         let head = camera_point([x, y, z]);
         let tail = camera_point([px, py, pz]);
         let camera_coords = |p: Vec3| [p.x as i32, -p.y as i32, p.z as i32];

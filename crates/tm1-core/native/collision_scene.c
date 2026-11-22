@@ -97,8 +97,8 @@ typedef struct CollisionScene {
     int num_pickups, pickup_timer;
     Cs missile_cs[10];
     s32 effects[80][5];
-    s32 primary_fire[80][4];
-    size_t primary_fire_count;
+    s32 primary_particles[80][5];
+    size_t primary_particle_count;
 } CollisionScene;
 
 static bool load(CollisionScene* s, u32 addr, size_t offset, void* out, size_t n)
@@ -709,7 +709,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bullets, 0, sizeof s->bullets);
     s->drawn_bullet_count = 0;
     memset(s->effects, 0, sizeof s->effects);
-    s->primary_fire_count = 0;
+    s->primary_particle_count = 0;
     s->has_temporary_hole = false;
     s->pothole_fields = 0;
     memset(&s->temporary_hole, 0, sizeof(PotHole));
@@ -1476,24 +1476,30 @@ static int free_explosion(void)
     return -1;
 }
 
+static int effect_lifetime(int kind)
+{
+    switch (kind) {
+    case 1: return 4;
+    case 55: case 56: case 28: case 37: return 32;
+    case 8: case 34: return 88;
+    case 44: case 45: case 46: case 47: case 48: case 49: case 50:
+    case 53: return 2;
+    case 38: case 39: case 40: case 41: case 42: case 43: return 3;
+    case 35: return 104;
+    case 31: return 24;
+    case 32: case 29: case 30: return 16;
+    default: return 0; // Sound-only requests have no pyro entry.
+    }
+}
+
 void arena_effect(VECTOR3* pos, s32 kind)
 {
     if (!current)
         return;
     arena_record_effect(pos, kind);
-    int life;
-    switch (kind) {
-    case 1: life = 4; break;
-    case 55: case 56: case 28: case 37: life = 32; break;
-    case 8: case 34: life = 88; break;
-    case 44: case 45: case 46: case 47: case 48: case 49: case 50:
-    case 53: life = 2; break;
-    case 38: case 39: case 40: case 41: case 42: case 43: life = 3; break;
-    case 35: life = 104; break;
-    case 31: life = 24; break;
-    case 32: case 29: case 30: life = 16; break;
-    default: return; // Sound-only requests have no pyro entry.
-    }
+    int life = effect_lifetime(kind);
+    if (!life)
+        return;
     int slot = free_explosion();
     if (slot < 0)
         return;
@@ -1506,19 +1512,32 @@ void tm1_tick_carry_notice(void)
     if (current->carry_notice_frames > 0)
         current->carry_notice_frames--;
 }
-static size_t copy_ground_fire(const CollisionScene* scene, int secondary, s32 (*out)[4])
+static size_t copy_particles(const CollisionScene* scene, int secondary, s32 (*out)[5])
 {
     size_t n = 0;
     for (int i = 0; i < 80; i++) {
         const s32* e = scene->effects[i];
-        if (e[3] != 35 || e[4] <= 0)
-            continue;
-        int age = 104 - e[4];
-        // draw_explosions skips age one on the secondary view of the last loop.
-        if (secondary && age == 97)
-            continue;
-        s32 row[] = {e[0], e[1], e[2], age & 7};
-        memcpy(out[n++], row, sizeof(row));
+        if (scene->bursts[i].life) {
+            if (secondary && scene->bursts[i].life == 1)
+                continue;
+            VECTOR3 p = scene->bursts[i].pos;
+            int age = 2 - scene->bursts[i].life;
+            int first = scene->bursts[i].frame - age;
+            s32 row[] = {p.vx, p.vy, p.vz, 56 + first, age};
+            memcpy(out[n++], row, sizeof(row));
+        } else if (e[4]) {
+            // draw_explosions omits age one of the final animation loop in view two.
+            if (secondary) {
+                int final_loop = effect_lifetime(e[3]);
+                if (e[3] == 35)
+                    final_loop = 8;
+                else if (e[3] == 8 || e[3] == 34)
+                    final_loop = 32;
+                if (e[4] == final_loop - 1)
+                    continue;
+            }
+            memcpy(out[n++], e, sizeof(*out));
+        }
     }
     return n;
 }
@@ -1535,15 +1554,15 @@ void arena_animate_effects(void)
             e[2] += 6;
         e[4]--;
     }
-    current->primary_fire_count = copy_ground_fire(current, 0, current->primary_fire);
+    current->primary_particle_count = copy_particles(current, 0, current->primary_particles);
 }
 
-size_t tm1_ground_fire(const CollisionScene* scene, int secondary, s32 (*out)[4])
+size_t tm1_drawn_particles(const CollisionScene* scene, int secondary, s32 (*out)[5])
 {
     if (secondary)
-        return copy_ground_fire(scene, 1, out);
-    memcpy(out, scene->primary_fire, scene->primary_fire_count * sizeof(*out));
-    return scene->primary_fire_count;
+        return copy_particles(scene, 1, out);
+    memcpy(out, scene->primary_particles, scene->primary_particle_count * sizeof(*out));
+    return scene->primary_particle_count;
 }
 
 void explodeCreateFragments(s32 count, VECTOR3* pos)

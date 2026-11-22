@@ -587,14 +587,15 @@ impl PlayerVehicle {
         let v = i32::from(self.trig[if phase & 1024 == 0 { i } else { 1024 - i }]);
         if phase & 2048 == 0 { v } else { -v }
     }
-    /// EXPLODE.c projects the top of the fire using the depth of its base.
-    pub fn ground_fire_quad(
+    /// EXPLODE.c projects a billboard or a vertical strip using the depth of its base.
+    pub fn particle_quad(
         &self,
         base: [i32; 3],
-        top: [i32; 3],
+        top: Option<[i32; 3]>,
         focal: [i32; 2],
         center: [i32; 2],
         width: u8,
+        scale: i32,
     ) -> Option<[[i32; 2]; 4]> {
         if !(-32..=32000).contains(&base[2]) {
             return None;
@@ -605,16 +606,24 @@ impl PlayerVehicle {
         if !(-99..1000).contains(&(x + center[0])) || !(-99..1000).contains(&(y + center[1])) {
             return None;
         }
+        let size = ((i32::from(width) * scale * focal[0] / depth) >> 3).clamp(1, 512);
+        let Some(top) = top else {
+            return Some([
+                [x - size, y - size],
+                [x + size, y - size],
+                [x - size, y + size],
+                [x + size, y + size],
+            ]);
+        };
         let [tx, ty] = project(top);
-        let size = ((i32::from(width) * 12 * focal[0] / depth) >> 3).clamp(1, 512);
         unsafe extern "C" {
             fn tm1_fire_angle(tables: *const i16, dy: i32, dx: i32) -> i32;
         }
         let angle = unsafe { tm1_fire_angle(self.trig.as_ptr(), ty - y, tx - x) };
         let sin = self.sine(angle);
         let cos = self.sine(angle + 1024);
-        let dx = (cos - sin) * size >> 12;
-        let dy = (cos + sin) * size >> 12;
+        let dx = ((cos - sin) * size) >> 12;
+        let dy = ((cos + sin) * size) >> 12;
         Some([
             [tx - dx, ty - dy],
             [tx + dx, ty + dy],
@@ -1316,6 +1325,60 @@ extern "C" fn tm1_record_hover(log: &mut Vec<BattleEvent>, flags: i32, x: i32, y
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParticleAnimation {
+    Explosion,
+    Smoke,
+    Steam,
+    Spark,
+    Burn,
+    Fire,
+}
+
+pub struct ParticleFrame {
+    pub animation: ParticleAnimation,
+    pub first: usize,
+    pub frame: usize,
+    pub scale: i32,
+    pub depth_bias: i32,
+}
+
+pub fn particle_frame(kind: i32, ticks: i32) -> Option<ParticleFrame> {
+    use ParticleAnimation::*;
+    let (animation, first, age, scale, depth_bias) = match kind {
+        8 | 34 => {
+            let age = 88 - ticks;
+            let phase = if age < 24 { age } else { (age - 24) % 32 };
+            (Smoke, 0, phase / 2, if kind == 8 { 16 } else { 32 }, 0)
+        }
+        1 => (Spark, 0, 4 - ticks, 5, 64),
+        31 => (Steam, 0, (24 - ticks) / 2, 8, 64),
+        32 => (Smoke, 0, 16 - ticks, 4, 64),
+        53 => (Explosion, 0, 2 - ticks, 8, 0),
+        44..=50 => (Burn, kind - 44, 2 - ticks, 8, 0),
+        38..=43 => (Burn, kind - 38, 3 - ticks, 8, 64),
+        56 => (Explosion, 0, (32 - ticks) / 2, 4, 64),
+        28 | 37 | 55 => (Explosion, 0, (32 - ticks) / 2, 16, 64),
+        29 | 30 => (
+            Explosion,
+            0,
+            16 - ticks,
+            if kind == 29 { 72 } else { 96 },
+            64,
+        ),
+        35 => (Fire, 0, (104 - ticks) & 7, 12, 64),
+        57..=60 => (Explosion, kind - 56, ticks, 6, 0),
+        _ => return None,
+    };
+    Some(ParticleFrame {
+        animation,
+        first: first as usize,
+        frame: (first + age) as usize,
+        scale,
+        depth_bias,
+    })
+}
+
 /// Screen offsets for EXPLODE.c explodeDisplayFragments, measured from the viewport center.
 pub fn project_fragment(
     camera: [i32; 3],
@@ -1910,15 +1973,15 @@ impl Opponent {
 }
 
 impl CollisionScene {
-    pub fn ground_fire(&self, secondary: bool, out: &mut [[i32; 4]; 80]) -> usize {
+    pub fn drawn_particles(&self, secondary: bool, out: &mut [[i32; 5]; 80]) -> usize {
         unsafe extern "C" {
-            fn tm1_ground_fire(
+            fn tm1_drawn_particles(
                 scene: *mut std::ffi::c_void,
                 secondary: i32,
-                out: *mut [i32; 4],
+                out: *mut [i32; 5],
             ) -> usize;
         }
-        unsafe { tm1_ground_fire(self.native.as_ptr(), i32::from(secondary), out.as_mut_ptr()) }
+        unsafe { tm1_drawn_particles(self.native.as_ptr(), i32::from(secondary), out.as_mut_ptr()) }
     }
     pub fn fragment_poses(&self, second_view: bool, out: &mut [[i32; 5]; 20]) -> usize {
         unsafe extern "C" {
