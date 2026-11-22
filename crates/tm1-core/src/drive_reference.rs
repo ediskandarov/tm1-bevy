@@ -1981,8 +1981,14 @@ fn player_special_launch_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn outlaw_taser_original() {
-    for (distance, alive, expected_target) in [(647, true, 50), (648, true, -1), (120, false, -1)] {
-        let mut r = Reference::with_vehicle(Vehicle::Outlaw);
+    for (level, distance, alive, expected_target) in [
+        (Level::Arena, 647, true, 50),
+        (Level::Arena, 648, true, -1),
+        (Level::Arena, 120, false, -1),
+        (Level::Rooftops, 648, true, -1),
+    ] {
+        let mut r = Reference::on_level(Vehicle::Outlaw, false, level);
+        put(&mut r.cpu, 0x8018c3b4, level as u32);
         for at in [0x80107f84, 0x80108034, 0x80136a28, 0x80136c00, 0x80137140] {
             r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -2006,10 +2012,26 @@ fn outlaw_taser_original() {
         r.cpu.put(0x800b0000, &[0; 12]);
         for frame in 1..=11 {
             let mut points = Vec::new();
+            let mut effects = Vec::new();
             r.cpu
                 .call_observed(0x801333d0, &[RENDER_SCRATCH, 0], 0x80000080, |cpu| {
                     if cpu.pc() == 0x800fe9c4 {
                         points.push([0, 4, 8].map(|off| cpu.word(cpu.r[5] + off) as i32));
+                    } else {
+                        let kind = match cpu.pc() {
+                            0x8013721c => 32, // do_puff
+                            0x801369b0 => 1,  // do_simple_spark
+                            0x80135f90 => {
+                                // do_flash passes the selected BurnInfo sprite to init_explosion.
+                                let sprite = cpu.word(cpu.r[29] + 16);
+                                38 + ((sprite - 0x8019c6d8) / 8) as i32
+                            }
+                            _ => return,
+                        };
+                        effects.push(BattleEvent::Effect {
+                            kind,
+                            position: [0, 4, 8].map(|off| cpu.word(cpu.r[4] + off) as i32),
+                        });
                     }
                 });
             r.cpu.call(0x80137d2c, &[]);
@@ -2019,6 +2041,7 @@ fn outlaw_taser_original() {
             let count = r.scene.taser_arcs(&mut arcs);
             assert_eq!(count, usize::from(frame <= 10));
             assert_eq!(points.as_slice(), arcs[..count].as_flattened());
+            assert_eq!(r.scene.audio, effects, "{level:?} update {frame}");
             assert_eq!(
                 r.police.health().0,
                 hp - if frame >= 10 && expected_target == 50 {

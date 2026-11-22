@@ -1408,10 +1408,10 @@ fn draw_view(
         }
     }
     let white = arena.uv(0, Vec2::ZERO);
-    let mut quad = |points: [Vec2; 4], depths: [f32; 4], colors: [[f32; 4]; 2]| {
+    let quad = |batch: &mut Batch, points: [Vec2; 4], depths: [f32; 4], colors: [[f32; 4]; 2]| {
         for &i in indices(4) {
             let xy = points[i] * (depths[i] / focal);
-            transparent.push(
+            batch.push(
                 eye + forward * depths[i] + right * xy.x + up * xy.y,
                 white,
                 colors[i / 2],
@@ -1422,23 +1422,34 @@ fn draw_view(
     let count = contacts.bullet_segments(&mut segments);
     let mut arcs = [[[0; 3]; 16]; 3];
     let arc_count = contacts.taser_arcs(&mut arcs);
-    let bullets = segments[..count]
-        .iter()
-        .map(|&s| (s, [[1., 0.82, 0.22, 1.]; 2]));
-    let electricity = arcs[..arc_count].iter().flat_map(|arc| {
-        arc.windows(2).enumerate().map(|(j, points)| {
-            let colors = [j, j + 1].map(|index| {
-                let brightness = (250 - index * 12) as f32 / 255.;
-                [brightness, brightness, 1., 1.]
+    let camera_point = |p: [i32; 3]| {
+        let d = world(p.map(|n| n as f32)) - eye;
+        Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
+    };
+    // draw_tasers emits one opaque Gouraud line per adjacent pair in the PS1 framebuffer.
+    let pixel_scale = focal / if batch_bodies { 228. } else { 204. };
+    for arc in &arcs[..arc_count] {
+        let points = arc.map(camera_point);
+        for (j, segment) in points.windows(2).enumerate() {
+            if segment.iter().any(|p| !(4.0..16364.0).contains(&p.z)) {
+                continue;
+            }
+            let [a, b] = [segment[0], segment[1]].map(|p| p.truncate() * (focal / p.z));
+            let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
+            let colors = [j, j + 1].map(|i| {
+                let level = (250 - 12 * i) as u8;
+                Color::srgb_u8(level, level, 255).to_linear().to_f32_array()
             });
-            ([points[0], points[1]], colors)
-        })
-    });
-    for (segment, tint) in bullets.chain(electricity) {
-        let mut v = segment.map(|p| {
-            let d = world(p.map(|n| n as f32)) - eye;
-            Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
-        });
+            quad(
+                &mut solids,
+                [a - normal, a + normal, b - normal, b + normal],
+                [segment[0].z, segment[0].z, segment[1].z, segment[1].z],
+                colors,
+            );
+        }
+    }
+    for segment in &segments[..count] {
+        let mut v = segment.map(camera_point);
         if v[0].z < near && v[1].z < near {
             continue;
         }
@@ -1451,9 +1462,10 @@ fn draw_view(
         let [a, b] = v.map(|p| p.truncate() * (focal / p.z));
         let normal = (b - a).normalize_or_zero().perp();
         quad(
+            &mut transparent,
             [a - normal, a + normal, b - normal, b + normal],
             [v[0].z, v[0].z, v[1].z, v[1].z],
-            tint,
+            [[1., 0.82, 0.22, 1.]; 2],
         );
     }
     for &[x, y, z, kind, ttl] in &effects[..effect_count] {
@@ -1473,6 +1485,7 @@ fn draw_view(
         };
         let radius = (size * focal / depth).clamp(1., 80.);
         quad(
+            &mut transparent,
             [
                 center - Vec2::X * radius,
                 center + Vec2::Y * radius,

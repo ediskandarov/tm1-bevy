@@ -274,7 +274,7 @@ void arena_update_guns(Car* car, u8 isPlayer)
         r.vy = rsin(m->rot.vz - aim->unk38 + 1024);
         r.vz = -rsin(m->rot.vx - aim->unk30);
         create_bullet((s16)idx, &r, &d, 1);
-        arena_effect(&d, 0);
+        arena_effect(&d, 53);
         if ((isPlayer ? PLAYER_CAR(car)->uaIndex : AI_CAR(car)->uaIndex) == UA_BOSS_CAR && pad->unk04) {
             v.vx = 0;
             v.vy = -v.vy;
@@ -284,7 +284,7 @@ void arena_update_guns(Car* car, u8 isPlayer)
             d.vz += m->pos.vz;
             setVector(&r, -r.vx, -r.vy, -r.vz);
             s_create_bullet(idx, &r, &d, 2, 2, 20, 0);
-            arena_effect(&d, 0);
+            arena_effect(&d, 53);
         }
         pad->gunDelay = 3;
         if (!isPlayer) {
@@ -524,7 +524,7 @@ void arena_move_tasers(void)
         else {
             end.vx = origin.vx + (rsin(tasers[i].life * 400 + 1024) >> 4);
             end.vy = origin.vy + (rsin(tasers[i].life * 400) >> 4);
-            end.vz = 0;
+            end.vz = shellGetCurrentLevel() == LEVEL6_ROOFTOPS ? origin.vz - 40 : 0;
         }
         VECTOR3* pt = tasers[i].points;
         pt[0] = origin;
@@ -540,10 +540,8 @@ void arena_move_tasers(void)
         }
         if (arena_rand() & 1)
             do_puff(&pt[15]);
-        else {
-            (void)arena_rand();
-            arena_effect(&pt[15], 5);
-        }
+        else
+            arena_flash(&pt[15]);
         do_simple_spark(&pt[(arena_rand() & 7) + 8]);
         do_simple_spark(&pt[arena_rand() & 15]);
         if (--tasers[i].life == 0 && tasers[i].target >= 0)
@@ -709,7 +707,7 @@ void arena_update_weapons(Car* car, u8 player)
         break;
     case WEAPON_FLAMETHROWER: {
         Cs* cs = player ? GetPlayerCs3D(p->playerIdx) : GetAICs3D(ai->playerIdx);
-        arena_effect(&cs->pos, 11);
+        arena_record_effect(&cs->pos, 11);
         if (arena_launch_flame(cs, 0)) {
             pad->fireDelay = 20;
             pad->ammo[WEAPON_FLAMETHROWER]--;

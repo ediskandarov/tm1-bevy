@@ -269,7 +269,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
                 m->life = 80;
                 m->damage = 10;
                 m->unk48 = WEAPON_SINGING_MISSILE;
-                arena_effect(&m->pos, 12 + WEAPON_SINGING_MISSILE);
+                arena_record_effect(&m->pos, 12 + WEAPON_SINGING_MISSILE);
                 break;
             case UA_MAD_MAX:
                 m->unk2C = 1;
@@ -277,7 +277,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
                 m->damage = 16;
                 m->unk48 = WEAPON_SPECIAL;
                 m->model = 312;
-                arena_effect(&m->pos, 12 + WEAPON_HOMING_MISSILE);
+                arena_record_effect(&m->pos, 12 + WEAPON_HOMING_MISSILE);
                 do_smoke(&m->pos);
                 break;
             }
@@ -328,7 +328,7 @@ void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* 
     pad->ammo[pad->cur]--;
     pad->totalAmmo--;
     start_trail(m, trail_color[slot]);
-    arena_effect(&cs->pos, 12 + slot);
+    arena_record_effect(&cs->pos, 12 + slot);
 }
 void move_missile(Missile* m)
 {

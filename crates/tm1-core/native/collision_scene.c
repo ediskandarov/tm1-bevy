@@ -1457,7 +1457,7 @@ uint64_t tm1_arena_switch_states(const CollisionScene* scene)
 void arena_special_effect(VECTOR3* pos, s32 owner)
 {
     s32 effect = owner >= 50 ? 18 + owner - 50 : (owner == 2 ? 18 : 10);
-    arena_effect(pos, effect);
+    arena_record_effect(pos, effect);
 }
 
 void arena_effect(VECTOR3* pos, s32 kind)
@@ -1735,7 +1735,7 @@ int arena_launch_flame(Cs* cs, int forward)
         current->flames[i].life = forward ? 25 : 12;
         current->flames[i].age = 0;
         if (forward)
-            arena_effect(&cs->pos, 11);
+            arena_record_effect(&cs->pos, 11);
         return 1;
     }
     return 0;
