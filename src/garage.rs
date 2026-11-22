@@ -142,7 +142,8 @@ impl Garage {
     }
     pub fn join_frame(&self, fonts: &Fonts) -> Vec<u8> {
         let mut frame = self.backdrop.clone();
-        if self.field % 16 >= 8 {
+        // The first field draws with an empty mask before loading 0xff00.
+        if self.field.saturating_sub(2) % 16 >= 8 {
             fonts.centered(&mut frame, Face::Text, 129, "PRESS ANY BUTTON");
         }
         frame

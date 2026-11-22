@@ -9,6 +9,8 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence. New interactive contests sample the emulated root counter when preparing the draw. Deterministic captures use a counter value of 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The title offers the single-player contest, local two-player battle and main options.
 
+On the duel first-pick screen, either keyboard layout can claim the first slot. Simultaneous input gives player two priority. The garage opens after both players release their mapped controls. The prompt times out after 1,200 JP video fields (20 seconds).
+
 Single-player stage setup carries the deal sequence through card angles and pedestrian setup. It samples the counter again before placing vehicles and when entering combat, following the reseeds in uaInitDB and InitLevel. The shell then consumes twelve BIOS random values for six windshield marks in both game modes. A new life samples a fresh combat seed and regenerates the marks. Keyboard restart restores the original stage combat seed and spawn layout. The host counter models the JP counter frequency and wraparound. Exact boot and disc-load timings are platform dependent.
 
 ## Loss of life and Minion introduction

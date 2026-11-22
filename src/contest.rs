@@ -9,10 +9,10 @@ use tm1_core::drive::{Difficulty, Level, Vehicle};
 
 #[derive(Component)]
 struct ContestScreen;
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
     Title,
-    DuelJoin,
+    DuelJoin(Option<usize>),
     DuelGarage {
         slot: usize,
         second: bool,
@@ -367,7 +367,7 @@ impl Contest {
                     self.settings,
                 );
             }
-            Page::DuelJoin => return self.garage.join_frame(&self.fonts),
+            Page::DuelJoin(_) => return self.garage.join_frame(&self.fonts),
             Page::DuelGarage { slot, second, bio } => {
                 if bio {
                     return self.garage.bio(self.duel_cars[slot]);
@@ -509,7 +509,7 @@ impl Contest {
                 }
             }
             Page::Duel(_)
-            | Page::DuelJoin
+            | Page::DuelJoin(_)
             | Page::DuelGarage { .. }
             | Page::DuelOptions(_)
             | Page::DuelControls(_)
@@ -571,7 +571,8 @@ impl Contest {
     fn tick_setup_timeout(&mut self, held: bool, dt: Duration) -> bool {
         let limit = match self.page {
             Page::MainOptions(_) | Page::Audio(_) | Page::Options(_) => 18001,
-            Page::DuelJoin | Page::Duel(_) | Page::Battle(_) | Page::Wrong(_) => 1201,
+            Page::DuelJoin(None) => 1200,
+            Page::Duel(_) | Page::Battle(_) | Page::Wrong(_) => 1201,
             Page::DuelGarage { bio: false, .. } | Page::DuelOptions(_) | Page::DuelStage => 18001,
             Page::Controls | Page::DuelControls(_) => crate::pause::CONTROL_IDLE_FIELDS,
             _ => return false,
@@ -588,7 +589,7 @@ impl Contest {
         match self.page {
             Page::MainOptions(_) => self.page = Page::Title,
             Page::Audio(_) => self.page = Page::MainOptions(0),
-            Page::DuelJoin | Page::DuelGarage { .. } | Page::Duel(_) | Page::Battle(_) => {
+            Page::DuelJoin(_) | Page::DuelGarage { .. } | Page::Duel(_) | Page::Battle(_) => {
                 self.leave_battle()
             }
             Page::DuelOptions(_) => self.page = Page::Duel(1),
@@ -624,7 +625,8 @@ impl Contest {
         let vertical = keys.any_just_pressed([ArrowUp, ArrowDown]);
         let horizontal = keys.any_just_pressed([ArrowLeft, ArrowRight]);
         let index = match before {
-            Page::DuelJoin if before != self.page && !keys.just_pressed(Escape) => 1,
+            Page::DuelJoin(Some(_)) if matches!(self.page, Page::DuelGarage { .. }) => 1,
+            Page::DuelJoin(_) => return None,
             Page::DuelGarage { slot, bio, .. } => {
                 let (select, vertical, horizontal) = if slot == 0 {
                     (Space, [KeyW, KeyS], [KeyA, KeyD])
@@ -682,7 +684,9 @@ impl Contest {
                         1 => {
                             self.duel_stage = 0;
                             self.duel_cars = [0, 0];
-                            Page::DuelJoin
+                            self.idle = Duration::ZERO;
+                            self.field_fraction = 0;
+                            Page::DuelJoin(None)
                         }
                         2 => Page::MainOptions(0),
                         _ => Page::Contest,
@@ -690,30 +694,24 @@ impl Contest {
                     self.garage.reset();
                 }
             }
-            Page::DuelJoin => {
-                use KeyCode::*;
-                let slot = if keys.any_just_pressed([
-                    ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Comma, Period, Slash, ShiftRight,
-                    KeyL, KeyO,
-                ]) {
-                    Some(1)
-                } else if keys.any_just_pressed([
-                    KeyA, KeyD, KeyW, KeyS, Space, KeyE, KeyF, KeyT, ShiftLeft, KeyC,
-                ]) {
-                    Some(0)
+            Page::DuelJoin(pending) => {
+                let pressed = [1, 0]
+                    .into_iter()
+                    .find(|&slot| crate::pause::duel_pad_held(keys, slot));
+                if key(KeyCode::Escape) {
+                    self.leave_battle();
+                } else if let Some(slot) = pending {
+                    if pressed.is_none() {
+                        self.page = Page::DuelGarage {
+                            slot,
+                            second: false,
+                            bio: false,
+                        };
+                        self.idle = Duration::ZERO;
+                        self.garage.reset();
+                    }
                 } else {
-                    None
-                };
-                if key(Escape) {
-                    self.page = Page::Title;
-                } else if let Some(slot) = slot {
-                    self.page = Page::DuelGarage {
-                        slot,
-                        second: false,
-                        bio: false,
-                    };
-                    self.idle = Duration::ZERO;
-                    self.garage.reset();
+                    self.page = Page::DuelJoin(pressed);
                 }
             }
             Page::DuelGarage { slot, second, bio } => {
@@ -1217,7 +1215,10 @@ pub fn update(world: &mut World) {
         } else {
             None
         };
-        let timed_out = menu.tick_setup_timeout(controls.map_or(held, |input| input.reset_idle), menu_delta(world));
+        let joining = matches!(menu.page, Page::DuelJoin(_));
+        let join_held = joining && (crate::pause::duel_pad_held(keys, 0) || crate::pause::duel_pad_held(keys, 1));
+        let join_wait = join_held || matches!(menu.page, Page::DuelJoin(Some(_)));
+        let timed_out = menu.tick_setup_timeout(if joining { join_held } else { controls.map_or(held, |input| input.reset_idle) }, menu_delta(world));
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
             remaining.is_zero()
@@ -1227,7 +1228,7 @@ pub fn update(world: &mut World) {
         if expired {
             menu.page = menu.after_password();
         }
-        let animate = if matches!(menu.page, Page::Contest | Page::DuelJoin | Page::DuelGarage{bio:false,..}) {
+        let animate = if !join_wait && matches!(menu.page, Page::Contest | Page::DuelJoin(None) | Page::DuelGarage{bio:false,..}) {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
@@ -1241,7 +1242,7 @@ pub fn update(world: &mut World) {
         } else {
             false
         };
-        if !timed_out && !animate && !expired && keys.get_just_pressed().next().is_none() {
+        if !join_wait && !timed_out && !animate && !expired && keys.get_just_pressed().next().is_none() {
             return;
         }
         let previous = menu.page;
@@ -1258,7 +1259,7 @@ pub fn update(world: &mut World) {
             });
             (false, sound.map(|select| menu.button_sounds[usize::from(select)].clone()))
         } else if timed_out || expired {
-            (false, None)
+            (false, (joining && timed_out).then(|| menu.button_sounds[1].clone()))
         } else {
             let start = menu.input(keys);
             (start, menu.input_sound(previous, keys))
@@ -1284,7 +1285,7 @@ pub fn update(world: &mut World) {
                 if window.title != title {
                     window.title = title;
                 }
-            } else if menu.page == Page::DuelJoin {
+            } else if matches!(menu.page, Page::DuelJoin(_)) {
                 window.title = "TM1 • First pick   |   Player 1: Space   Player 2: Comma".into();
             } else if let Page::DuelGarage {slot, ..} = menu.page {
                 window.title = if slot == 0 {
@@ -1369,9 +1370,71 @@ mod tests {
         world.insert_resource(keys);
         update(world);
         world.insert_resource(ButtonInput::<KeyCode>::default());
+        if world
+            .get_resource::<Contest>()
+            .is_some_and(|menu| matches!(menu.page, Page::DuelJoin(Some(_))))
+        {
+            update(world);
+        }
         if world.contains_resource::<crate::transition::Transition>() {
             crate::transition::complete(world);
         }
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_join_waits_for_both_players_to_release() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, ArrowDown);
+        press(&mut world, Enter);
+        let mut keys = ButtonInput::default();
+        keys.press(KeyP);
+        keys.press(NumpadEnter);
+        world.insert_resource(keys);
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::DuelJoin(Some(1)));
+        let field = world.resource::<Contest>().garage.field;
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(NumpadEnter);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(21));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::DuelJoin(Some(1)));
+        assert_eq!(world.resource::<Contest>().garage.field, field);
+        let mut keys = ButtonInput::default();
+        keys.press(KeyQ);
+        world.insert_resource(keys);
+        update(&mut world);
+        assert!(matches!(
+            world.resource::<Contest>().page,
+            Page::DuelGarage {
+                slot: 1,
+                second: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_join_expires_after_twenty_seconds_with_an_unmapped_key_held() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, ArrowDown);
+        press(&mut world, Enter);
+        world.resource_mut::<ButtonInput<KeyCode>>().press(KeyQ);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(19999));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::DuelJoin(None));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(1));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Title);
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
