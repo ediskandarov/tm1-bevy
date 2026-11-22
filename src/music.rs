@@ -3,7 +3,6 @@ use bevy::{
     audio::{AudioSinkPlayback, Volume},
     prelude::*,
 };
-use std::time::Duration;
 use tm1_assets::disc::Disc;
 
 #[derive(Resource)]
@@ -94,12 +93,13 @@ pub fn control(
         Entity,
         &mut ArenaMusic,
         &AudioPlayer,
+        &mut PlaybackSettings,
         Option<&mut AudioSink>,
     )>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
 ) {
-    let Ok((entity, mut tracks, player, sink)) = music.single_mut() else {
+    let Ok((entity, mut tracks, player, mut settings, sink)) = music.single_mut() else {
         return;
     };
     let volume = Volume::Linear(0.35 * drive.settings.music_gain());
@@ -114,18 +114,18 @@ pub fn control(
     } else {
         &tracks.opening
     };
-    if player.0 != *desired {
-        let settings = PlaybackSettings::LOOP.with_volume(volume);
-        commands.entity(entity).remove::<AudioSink>().insert((
-            AudioPlayer::new(desired.clone()),
-            if pause { settings.paused() } else { settings },
-        ));
+    settings.paused = pause;
+    settings.volume = volume;
+    if restart || player.0 != *desired {
+        // Bevy's buffered CDDA loop cannot seek. Removing the sink opens a
+        // fresh decoder, including when the restart selects the same track.
+        commands
+            .entity(entity)
+            .remove::<AudioSink>()
+            .insert(AudioPlayer::new(desired.clone()));
         return;
     }
     let Some(mut sink) = sink else { return };
-    if restart && let Err(err) = sink.try_seek(Duration::ZERO) {
-        warn!("Music restart failed: {err}");
-    }
     sink.set_volume(volume);
     if pause != sink.is_paused() {
         if pause {
