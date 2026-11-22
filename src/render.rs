@@ -494,6 +494,7 @@ pub fn update(
     let focal = window.height() * 0.85;
     let near = arena.radius * 0.005;
     let hidden = drive.contacts.hidden_pickups();
+    let (_, stand_branches) = drive.contacts.health_stands();
     let mut screen_batch = Batch::default();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
@@ -517,6 +518,11 @@ pub fn update(
             && p.animation.is_empty()
             && p.billboard.is_none()
             && !p.semi_transparent
+        {
+            continue;
+        }
+        if p.health_stand
+            .is_some_and(|(slot, branch)| (stand_branches >> slot) & 1 != u16::from(branch))
         {
             continue;
         }
@@ -690,7 +696,7 @@ pub fn update(
             8 => (8., [0.4, 0.39, 0.38, 0.55]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 => continue,
+            3 | 26 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };
@@ -819,6 +825,24 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, w
             RadarSignal::Down => edges[1] = true,
             RadarSignal::Right => edges[2] = true,
             RadarSignal::Left => edges[3] = true,
+        }
+    }
+    if drive.player.frame() % 2 == 0 {
+        let (active, _) = drive.contacts.health_stands();
+        for &(slot, pos) in &arena.scene.health_stands {
+            let [x, y] = drive.player.radar_offset(pos);
+            if active & (1 << slot) != 0 && (-36..36).contains(&x) && (-22..22).contains(&y) {
+                for (dx, dy) in [(-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)] {
+                    rect(
+                        53 + x + dx,
+                        55 + y + dy,
+                        1,
+                        1,
+                        [white; 4],
+                        [1., 0.784, 1., 1.],
+                    );
+                }
+            }
         }
     }
     for (i, (x, y)) in [(47, 26), (47, 77), (89, 49), (10, 49)]

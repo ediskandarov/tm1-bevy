@@ -14,6 +14,9 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count;
+    DbSwitch* stands[10];
+    u16 stand_slots, active_stands;
+    int regen_timer;
     Bullet bullets[40];
     Missile missiles[10];
     DropWeap drops[12];
@@ -127,6 +130,12 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
         if (!load(s, addr, 4, &n->sw.sub, 4) || n->sw.sel >= n->sw.nChild
             || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth))
             return NULL;
+        if (n->h.kind == 920 && n->sw.sub >= 1 && n->sw.sub <= 10 && n->sw.nChild == 2) {
+            int slot = n->sw.sub - 1;
+            s->stands[slot] = &n->sw;
+            s->stand_slots |= 1u << slot;
+            s->active_stands = s->stand_slots;
+        }
         break;
     case DB_OP_BOX:
         if (!load(s, addr, 0, &n->box, sizeof(n->box)))
@@ -245,6 +254,7 @@ CollisionScene* tm1_scene_load(
     for (size_t i = 0; i < count; i++)
         if (!s->opponents[i].drawMode)
             goto invalid;
+    s->regen_timer = -1;
     s->bytes = NULL;
     return s;
 invalid:
@@ -305,6 +315,58 @@ Missile* arena_missiles(void)
 {
     return current->missiles;
 }
+u8 health_stand_active(s32 id)
+{
+    return current && id >= 1 && id <= 10 && (current->active_stands & (1u << (id-1)));
+}
+
+u32 tm1_stand_state(const CollisionScene* scene)
+{
+    u32 state = scene->active_stands;
+    for (int i = 0; i < 10; i++)
+        if (scene->stands[i] && scene->stands[i]->sel)
+            state |= 1u << (16+i);
+    return state;
+}
+
+u8 tm1_recharge_player(PlayerCar* player)
+{
+    int id = player->standId;
+    if (!player->flags[22] || !health_stand_active(id))
+        return 0;
+    DbSwitch* model = current->stands[id-1];
+    arena_effect(&player->motion.pos, 26);
+    model->sel = arena_rand() & 1;
+    int hp = player->stats.unk40 + player->stats.healthRate;
+    player->stats.unk40 = hp;
+    if (hp > player->stats.unk44)
+        player->stats.unk40 = player->stats.unk44;
+    else if (hp > player->stats.healthCap)
+        player->stats.unk40 = player->stats.healthCap;
+    else
+        return 1;
+    current->active_stands &= ~(1u << (id-1));
+    model->sel = 1;
+    return 0;
+}
+
+void tm1_regenerate_stands(void)
+{
+    if (!current->stand_slots || current->active_stands)
+        return;
+    if (current->regen_timer < 0) {
+        current->regen_timer = 4000;
+    } else if (current->regen_timer == 0) {
+        current->active_stands = current->stand_slots;
+        current->regen_timer = -1;
+        for (int i = 0; i < 10; i++)
+            if (current->stands[i])
+                current->stands[i]->sel = 0;
+    } else {
+        current->regen_timer--;
+    }
+}
+
 void tm1_reset_projectiles(CollisionScene* s)
 {
     memset(s->bullets, 0, sizeof s->bullets);
@@ -318,6 +380,11 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bursts, 0, sizeof s->bursts);
     memset(s->tasers, 0, sizeof s->tasers);
     s->battle_wait = 0;
+    s->active_stands = s->stand_slots;
+    s->regen_timer = -1;
+    for (int i = 0; i < 10; i++)
+        if (s->stands[i])
+            s->stands[i]->sel = 0;
     s->pickup_timer = 0;
     for (int i = 0; i < 50; i++)
         if (s->pickups[i])

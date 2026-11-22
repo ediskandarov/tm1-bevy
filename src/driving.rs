@@ -166,6 +166,7 @@ pub fn advance(
         let count = state.contacts.effects(&mut effects);
         for &[x, y, z, kind, life] in &effects[..count] {
             let id = match (kind, life) {
+                (26, 2) => 12 + state.opponents.len(),
                 (0, 2) => 1,
                 (11, 2) => 6,
                 (10, 2) => 5,

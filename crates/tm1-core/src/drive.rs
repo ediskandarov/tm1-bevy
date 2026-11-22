@@ -271,7 +271,7 @@ impl PlayerVehicle {
         self.frame
     }
     /// HUD.c projects horizontal world offsets into the 72 by 44 radar field.
-    pub fn radar_signal(&self, position: [i32; 3], vehicle: Vehicle) -> RadarSignal {
+    pub fn radar_offset(&self, position: [i32; 3]) -> [i32; 2] {
         let origin = self.position();
         let dx = position[0].wrapping_sub(origin[0]);
         let dy = position[1].wrapping_sub(origin[1]);
@@ -289,6 +289,10 @@ impl PlayerVehicle {
             .wrapping_add(dy.wrapping_mul(c))
             .wrapping_neg()
             / 0x14d555;
+        [x, y]
+    }
+    pub fn radar_signal(&self, position: [i32; 3], vehicle: Vehicle) -> RadarSignal {
+        let [x, y] = self.radar_offset(position);
         if (-36..36).contains(&x) && (-22..22).contains(&y) {
             use Vehicle::*;
             let rgb = match vehicle {
@@ -516,6 +520,14 @@ impl CollisionScene {
             opponent_count: opponents.len(),
             battle: [0; 3],
         })
+    }
+    /// Active and selected DMD branch bits for the ten health stand slots.
+    pub fn health_stands(&self) -> (u16, u16) {
+        unsafe extern "C" {
+            fn tm1_stand_state(scene: *const std::ffi::c_void) -> u32;
+        }
+        let state = unsafe { tm1_stand_state(self.native.as_ptr()) };
+        (state as u16, (state >> 16) as u16)
     }
     pub fn reset_projectiles(&mut self) {
         self.battle = [0; 3];

@@ -1,31 +1,33 @@
-running 22 tests
+running 24 tests
 test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... ok
 test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
-test drive::reference::bullet_impact_original ... ok
-test drive::reference::arena_animation_matches_retail ... ok
-Warehouse retail encounter with SweetTooth
 test drive::reference::damage_body_switch_matches_retail ... ok
-test drive::reference::group_battle_selection_original ... ok
-Hammerhead completed the crush at step 19
+test drive::reference::arena_animation_matches_retail ... ok
+test drive::reference::radar_signals_original ... ok
+Warehouse retail encounter with SweetTooth
 test drive::reference::police_update_original ... ok
+Hammerhead completed the crush at step 19
+test drive::reference::bullet_impact_original ... ok
+test drive::reference::group_battle_selection_original ... ok
 test drive::reference::coupled_arena_original ... ok
+vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
+test drive::reference::warehouse_group_hit_ids_original ... ok
 test drive::vehicle_body_thresholds ... ok
 test tests::original_timer_rounding_and_clamp ... ok
 test tests::unsigned_clock_wrap_and_replay_reset ... ok
-vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
-test drive::reference::warehouse_group_hit_ids_original ... ok
-test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
-test drive::reference::warehouse_group_spawn_original ... ok
 test drive::reference::hammerhead_crush_original ... ok
+test drive::reference::warehouse_group_spawn_original ... ok
+test drive::reference::warehouse_lineups_and_ai_profiles_original ... ok
 wall fixture at tick 73, taxi [3946, 3946, 16], police [4096, 2896, 0]
 test drive::reference::vehicle_and_wall_contact_original ... ok
-test drive::reference::outlaw_taser_original ... ok
 test drive::reference::flamethrowers_original ... ok
+test drive::reference::outlaw_taser_original ... ok
+test drive::reference::warehouse_stands_match_retail ... ok
 Warehouse retail encounter with YellowJacket
 Warehouse retail encounter with Darkside
-test drive::reference::special_missiles_original ... ok
 test drive::reference::regular_missile_impacts_original ... ok
 test drive::reference::player_special_launch_original ... ok
+test drive::reference::special_missiles_original ... ok
 Warehouse retail encounter with Hammerhead
 Warehouse retail encounter with Outlaw
 Warehouse retail encounter with CrimsonFury
@@ -37,7 +39,7 @@ Warehouse retail encounter with Spectre
 Warehouse retail encounter with RoadKill
 test drive::reference::warehouse_encounter_original ... ok
 
-test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.45s
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.21s
 
 
 running 4 tests
@@ -71,9 +73,10 @@ test mips::executes_branch_and_load_delay_slots ... ok
 Original MIPS vs native C: 8192 matrix cases, 4096 normalization cases, 4444 square-root cases; seed 0x544d3101
 test native_math_matches_original_instructions ... ok
 
-test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.72s
 
 
 running 0 tests
 
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

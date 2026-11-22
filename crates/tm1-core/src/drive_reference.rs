@@ -910,6 +910,79 @@ fn warehouse_encounter_original() {
         compare_encounter(player, 20, Level::Warehouse);
     }
 }
+fn register_retail_stands(cpu: &mut Cpu, data: &[u8]) {
+    for at in [0x80147508, 0x8010844c, 0x80141300] {
+        cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    cpu.call(0x80135d7c, &[]);
+    let world = tm1_assets::scene::Dmd::parse(data)
+        .unwrap()
+        .extract_kind(1)
+        .unwrap();
+    for (slot, pos) in world.health_stands {
+        for (axis, value) in pos.into_iter().enumerate() {
+            put(cpu, 0x800e7000 + axis as u32 * 4, value as u32);
+        }
+        cpu.call(0x80135da8, &[u32::from(slot) + 1, 0x800e7000]);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_stands_match_retail() {
+    let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Warehouse);
+    r.sync();
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    register_retail_stands(&mut r.cpu, &disc.read("UADMD/WH1.DMD").unwrap());
+    put(&mut r.cpu, 0x8018c080, 4000);
+    unsafe extern "C" {
+        fn CheckHealthStands(car: *mut u8, is_player: i32);
+        fn tm1_recharge_player(car: *mut u8) -> u8;
+        fn tm1_regenerate_stands();
+    }
+    #[repr(align(4))]
+    struct Record([u8; 0x4a4]);
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe { tm1_use_scene(r.scene.native.as_ptr()) };
+    struct Clear;
+    impl Drop for Clear {
+        fn drop(&mut self) {
+            unsafe { tm1_use_scene(std::ptr::null_mut()) }
+        }
+    }
+    let _clear = Clear;
+    assert_eq!(r.scene.health_stands().0, 3);
+    for id in 1..=2 {
+        let mut car = Record(r.player.state);
+        car.0[0x270 + 14] = id;
+        car.0[0x178..0x17c].copy_from_slice(&25i32.to_le_bytes());
+        r.cpu.put(PLAYER, &car.0);
+        r.cpu.call(0x8011f038, &[PLAYER, 1]);
+        unsafe { CheckHealthStands(car.0.as_mut_ptr(), 1) };
+        assert_eq!(car.0[1], id);
+        let start = (PLAYER & 0x1fffff) as usize;
+        for tick in 0..=500 {
+            assert_eq!(&car.0[..], &r.cpu.ram[start..start + car.0.len()]);
+            let retail = r.cpu.call(0x8014e20c, &[0]);
+            let native = unsafe { tm1_recharge_player(car.0.as_mut_ptr()) };
+            assert_eq!(u32::from(native), retail);
+            if native == 0 {
+                assert!(tick > 0);
+                assert_eq!(&car.0[..], &r.cpu.ram[start..start + car.0.len()]);
+                break;
+            }
+        }
+        assert_eq!(r.scene.health_stands().0 & (1 << (id - 1)), 0);
+    }
+    for tick in 1..=4002 {
+        unsafe { tm1_regenerate_stands() };
+        r.cpu.call(0x80135e10, &[]);
+        let retail = r.cpu.call(0x80135c74, &[1]) | (r.cpu.call(0x80135c74, &[2]) << 1);
+        assert_eq!(u32::from(r.scene.health_stands().0), retail, "tick {tick}");
+        assert_eq!(retail, if tick == 4002 { 3 } else { 0 });
+    }
+}
+
 fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     let mut r = Reference::on_level(vehicle, true, level);
     r.cpu.call(0x80137268, &[]);
@@ -979,6 +1052,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     if level == Level::Warehouse {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc.read("UADMD/WH1.DMD").unwrap();
+        register_retail_stands(&mut r.cpu, &data);
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
         let kinds = vehicle.warehouse_opponents();
         let root = |v| roots.iter().find(|r| r.1 == v).unwrap().0;
@@ -1047,7 +1121,9 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.call(0x8010e3d8, &[]);
         r.cpu.call(0x80137d2c, &[]);
         r.cpu.call(0x801360bc, &[]);
-        r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
+        if r.cpu.call(0x8014e20c, &[0]) == 0 {
+            r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
+        }
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
         for (i, &cs) in slots.iter().enumerate() {
@@ -1055,6 +1131,7 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         }
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
+        r.cpu.call(0x80135e10, &[]);
         if lineup.is_empty() {
             r.scene.step(&mut r.player, &mut r.police, input, fields);
             r.compare();

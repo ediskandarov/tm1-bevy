@@ -46,6 +46,7 @@ pub struct Polygon {
     pub animation: Vec<AnimationFrame>,
     pub billboard: Option<[f32; 2]>,
     pub pickup: Option<u8>,
+    pub health_stand: Option<(u8, u8)>,
     pub object_id: u32,
     pub source_offset: usize,
     pub vertices: Vec<Vertex>,
@@ -61,6 +62,7 @@ pub struct Scene {
     pub polygons: Vec<Polygon>,
     pub object_ids: Vec<u32>,
     pub omitted_nodes: Vec<String>,
+    pub health_stands: Vec<(u8, [i32; 3])>,
 }
 
 #[derive(Clone, Copy)]
@@ -237,6 +239,7 @@ impl<'a> Dmd<'a> {
             version: self.version,
             root_id,
             polygons: vec![],
+            health_stands: vec![],
             object_ids: vec![],
             omitted_nodes: vec![],
         };
@@ -386,7 +389,30 @@ impl<'a> Dmd<'a> {
                     .filter(|(node, _)| *node == ptr)
                     .map_or(d[p + 7], |(_, stage)| stage);
                 ensure!(child < d[p + 6], "switch child out of range");
-                children.push(u32le(d, p + 8 + 4 * child as usize)?);
+                if u16le(d, p + 2)? == 920 && d[p + 6] == 2 {
+                    let id = u16le(d, p + 4)?;
+                    ensure!((1..=10).contains(&id), "invalid health stand ID");
+                    let slot = (id - 1) as u8;
+                    scene
+                        .health_stands
+                        .push((slot, transform.offset.map(|x| x as i32)));
+                    for branch in 0..2 {
+                        let start = scene.polygons.len();
+                        self.visit(
+                            u32le(d, p + 8 + 4 * branch)?,
+                            transform,
+                            selection,
+                            pickup,
+                            ancestors,
+                            scene,
+                        )?;
+                        for poly in &mut scene.polygons[start..] {
+                            poly.health_stand = Some((slot, branch as u8));
+                        }
+                    }
+                } else {
+                    children.push(u32le(d, p + 8 + 4 * child as usize)?);
+                }
             }
             6..=8 | 10 => {}
             11 => {
@@ -493,6 +519,7 @@ impl<'a> Dmd<'a> {
                 animation: Vec::new(),
                 billboard,
                 pickup,
+                health_stand: None,
                 object_id: ptr,
                 source_offset: poly,
                 vertices,

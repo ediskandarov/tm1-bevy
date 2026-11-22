@@ -21,3 +21,5 @@ s32 rsin(s32);
 s32 ratan2(s32,s32);
 void do_smoke(VECTOR3 *);
 void explodeCreateFragments(s32,VECTOR3 *);
+
+u8 health_stand_active(s32);

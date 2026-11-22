@@ -309,6 +309,7 @@ void tm1_drive_step(u8* state, u8* opponent, u16 buttons, s16 fields, u32 frame,
         CarCheckDynamics(&car);
     car.speedDelta = car.motion.vel.vy - speed;
     CheckSlickSpots(&car, 1);
+    CheckHealthStands(&car, 1);
     CalcTireCoordinates(&car, 1);
     CheckCurbs(&car, 1);
     CheckBridges(&car, 1);
@@ -548,15 +549,17 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     for (int i = 0; i < count; i++)
         tm1_contact_setup(GetAICs3D(i), &cars[i].motion, &cars[i].stats);
     contact_phase(&player, cars, 2, fields);
-    *seed = random_state;
-    AICar* crushed = NULL;
-    for (int i = 0; i < count && player.flags[27]; i++)
-        if (cars[i].uaIndex == player.stats.unk30)
-            crushed = &cars[i];
-    tm1_drive_step((u8*)&player, (u8*)crushed, buttons, fields, frame, tables, seed);
-    trig = tables;
-    tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
-    contact_phase(&player, cars, 1, fields);
+    if (!tm1_recharge_player(&player)) {
+        *seed = random_state;
+        AICar* crushed = NULL;
+        for (int i = 0; i < count && player.flags[27]; i++)
+            if (cars[i].uaIndex == player.stats.unk30)
+                crushed = &cars[i];
+        tm1_drive_step((u8*)&player, (u8*)crushed, buttons, fields, frame, tables, seed);
+        trig = tables;
+        tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
+        contact_phase(&player, cars, 1, fields);
+    }
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
     for (int i = 0; i < count; i++) {
         AICarUpdate(&cars[i]);
@@ -564,6 +567,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     }
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();
+    tm1_regenerate_stands();
     tm1_store_battle(battle);
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));

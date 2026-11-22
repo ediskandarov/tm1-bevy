@@ -63,3 +63,6 @@ void arena_ai_weapon_profile(AICar* car);
 void tm1_load_battle(const s16*);
 void tm1_store_battle(s16*);
 s16 GetNumAICars(void);
+
+u8 tm1_recharge_player(PlayerCar*);
+void tm1_regenerate_stands(void);

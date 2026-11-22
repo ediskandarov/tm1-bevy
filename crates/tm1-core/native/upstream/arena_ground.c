@@ -1,4 +1,5 @@
 #include "tm1/arena_ground.h"
+#include "tm1/arena_ai.h"
 
 s16 numTriggerPoints, numBridges, numCheckBridges;
 s16 numPotHoles, numCheckPotHoles, numCurbs, numSlickSpots;
@@ -2080,4 +2081,148 @@ void UpdateTirePositions(Car* car, u8 isPlayer)
         hi += st->unk70 * ang / 1024;
     }
     m->pos.vz += hi;
+}
+
+void CheckHealthStands(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    CarTire* tires;
+    u8* flags;
+    s8* sel;
+    CarStats* st;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        tires = PLAYER_CAR(car)->tires;
+        flags = PLAYER_CAR(car)->flags;
+        sel = &PLAYER_CAR(car)->standId;
+        st = &PLAYER_CAR(car)->stats;
+    } else {
+        m = &AI_CAR(car)->motion;
+        tires = AI_CAR(car)->tires;
+        flags = AI_CAR(car)->flags;
+        sel = &AI_CAR(car)->unk04;
+        st = &AI_CAR(car)->stats;
+    }
+    if (!isPlayer) {
+        flags[22] = 0;
+        tires[0].unk0E = 0;
+        tires[1].unk0E = 0;
+        tires[2].unk0E = 0;
+        tires[3].unk0E = 0;
+    }
+    if (flags[22]) {
+        if (health_stand_active(*sel) == 0) {
+            st->unk16 -= GetFieldsLastFrame();
+        } else {
+            st->unk16 = 0x3C;
+        }
+        if ((s16)st->unk16 <= 0) {
+            flags[22] = 0;
+            tires[0].unk0E = 0;
+            tires[1].unk0E = 0;
+            tires[2].unk0E = 0;
+            tires[3].unk0E = 0;
+        }
+        return;
+    }
+    if (st->unk40 <= 0) {
+        return;
+    }
+    if (m->vel.vy > 0) {
+        if (tires[2].unk0E != 0) {
+            flags[22] = 1;
+            *sel = tires[2].unk0E;
+        } else if (tires[3].unk0E != 0) {
+            flags[22] = 1;
+            *sel = tires[3].unk0E;
+        }
+    } else {
+        if (tires[0].unk0E != 0 && health_stand_active(tires[0].unk0E)) {
+            flags[22] = 1;
+            *sel = tires[0].unk0E;
+        } else if (tires[1].unk0E != 0 && health_stand_active(tires[1].unk0E)) {
+            flags[22] = 1;
+            *sel = tires[1].unk0E;
+        }
+    }
+    if (flags[22]) {
+        st->healthCap = st->unk40 + st->unk50;
+        st->healthRate = ((st->healthCap - st->unk50) * GetFieldsLastFrame()) / 180;
+        if (st->healthRate <= 0) {
+            st->healthRate = 1;
+        }
+        return;
+    }
+    if (!isPlayer) {
+        return;
+    }
+    if (st->unk01 != 0) {
+        return;
+    }
+    if (m->vel.vy != 0) {
+        return;
+    }
+    switch (shellGetCurrentLevel()) {
+    case LEVEL2_WAREHOUSE:
+        if (m->pos.vx >= -12464) {
+            if (m->pos.vx < -12399) {
+                if (m->pos.vy >= -4360) {
+                    if (m->pos.vy < -4239) {
+                        st->unk01 = 1;
+                        st->unk40 = st->unk44;
+                    }
+                }
+            }
+        }
+        break;
+    case LEVEL3_FREEWAY:
+        if (m->pos.vx >= 16288) {
+            if (m->pos.vx < 16337) {
+                if (m->pos.vy >= -7600) {
+                    if (m->pos.vy < -7439) {
+                        st->unk01 = 1;
+                        st->unk40 = st->unk44;
+                    }
+                }
+            }
+        }
+        break;
+    case LEVEL4_CITY_PARK:
+        if (m->pos.vx >= 11840) {
+            if (m->pos.vx < 12161) {
+                if (m->pos.vy >= -4000) {
+                    if (m->pos.vy < -3919) {
+                        st->unk01 = 1;
+                        st->unk40 = st->unk44;
+                    }
+                }
+            }
+        }
+        break;
+    case LEVEL5_CYBURBIA:
+        if (m->pos.vx >= 22640) {
+            if (m->pos.vx < 22673) {
+                if (m->pos.vy >= 11632) {
+                    if (m->pos.vy < 11793) {
+                        st->unk01 = 1;
+                        st->unk40 = st->unk44;
+                    }
+                }
+            }
+        }
+        break;
+    case LEVEL6_ROOFTOPS:
+        if (m->pos.vx >= 8272) {
+            if (m->pos.vx < 8345) {
+                if (m->pos.vy >= 10072) {
+                    if (m->pos.vy < 10145) {
+                        st->unk01 = 1;
+                        st->unk40 = st->unk44;
+                    }
+                }
+            }
+        }
+        break;
+    }
 }

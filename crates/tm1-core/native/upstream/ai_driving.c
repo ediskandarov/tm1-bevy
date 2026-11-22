@@ -312,6 +312,7 @@ void AICarUpdateTransition(AICar* car)
         CarUpdateDeltas(car, 0);
     }
     CheckSlickSpots(car, 0);
+    CheckHealthStands(car, 0);
 
     CalcTireCoordinates(car, 0);
     CheckCurbs(car, 0);
