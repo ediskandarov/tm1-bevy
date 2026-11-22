@@ -393,6 +393,7 @@ pub struct PlayerVehicle {
     initial_seed: u32,
     initial_state: [u8; 0x4a4],
     used_starts: u16,
+    last_fields: u8,
     seed: u32,
     state: [u8; 0x4a4],
     frame: u32,
@@ -495,6 +496,7 @@ impl PlayerVehicle {
             initial_seed: seed,
             initial_state: state,
             used_starts: 0,
+            last_fields: 3,
             seed,
         })
     }
@@ -512,6 +514,7 @@ impl PlayerVehicle {
         self.seed = self.initial_seed;
         self.frame = 0;
         self.used_starts = 0;
+        self.last_fields = 3;
         self.state = self.initial_state;
     }
     pub fn for_next_stage(&self, level: Level) -> Self {
@@ -533,6 +536,7 @@ impl PlayerVehicle {
             initial_seed: seed,
             seed,
             used_starts: 0,
+            last_fields: 3,
             frame: 0,
             level,
             vehicle: self.vehicle,
@@ -768,6 +772,7 @@ impl PlayerVehicle {
     /// Advance driving dynamics with the original packed two-controller input.
     pub fn step_with_pads(&mut self, buttons: u32, fields: u8) {
         assert!((1..=5).contains(&fields));
+        self.last_fields = fields;
         self.frame = self.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
@@ -789,7 +794,14 @@ impl PlayerVehicle {
 }
 
 unsafe extern "C" {
-    fn tm1_place_boss(boss: *mut u8, player: *mut u8, table: *const i16, seed: *mut u32, fov: i32);
+    fn tm1_place_boss(
+        boss: *mut u8,
+        player: *mut u8,
+        table: *const i16,
+        seed: *mut u32,
+        fov: i32,
+        fields: i16,
+    );
     fn tm1_ai_step(
         scene: *mut std::ffi::c_void,
         state: *mut u8,
@@ -1147,7 +1159,10 @@ impl Opponent {
     pub fn spawn_lineup<const N: usize>(player: &mut Taxi, vehicles: [Vehicle; N]) -> [Self; N] {
         assert!(N <= 8);
         let mut used = 0;
-        std::array::from_fn(|slot| Self::spawn_slot(player, vehicles[slot], slot, &mut used))
+        let cars =
+            std::array::from_fn(|slot| Self::spawn_slot(player, vehicles[slot], slot, &mut used));
+        player.used_starts = used;
+        cars
     }
     pub fn spawn_bout(player: &mut Taxi, vehicles: &[Vehicle]) -> Vec<Self> {
         assert!((1..=8).contains(&vehicles.len()));
@@ -1175,6 +1190,7 @@ impl Opponent {
                 player.trig.as_ptr(),
                 &mut player.seed,
                 60,
+                player.last_fields.into(),
             );
         }
         boss
@@ -1185,7 +1201,7 @@ impl Opponent {
             state: [0; 0x560],
         };
         car.state[6..8].copy_from_slice(&(slot as i16).to_le_bytes());
-        car.update(player, 3, Some(used), std::ptr::null_mut());
+        car.update(player, player.last_fields, Some(used), std::ptr::null_mut());
         car
     }
     pub fn step(&mut self, player: &mut Taxi, fields: u8) {
@@ -1859,6 +1875,8 @@ impl CollisionScene {
         assert_eq!(first.level, second.level);
         let buttons = u32::from(first.keyboard_buttons(inputs[0]))
             | (u32::from(second.keyboard_buttons(inputs[1])) << 16);
+        first.last_fields = fields;
+        second.last_fields = fields;
         first.frame = first.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
@@ -1919,6 +1937,7 @@ impl CollisionScene {
     ) -> PreparedBout {
         assert!((1..=5).contains(&fields));
         self.audio.clear();
+        player.last_fields = fields;
         player.frame = player.frame.wrapping_add(1);
         let update_player = self.bout_phase(player, opponents, 0, fields, None, false);
         PreparedBout {

@@ -844,8 +844,10 @@ void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life)
 }
 
 // UA.c uaInitBossCar, after slot 3 receives its default weapons.
-void tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed, int fov)
+void tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed, int fov, s16 fields)
 {
+    gFieldsLastFrame = fields;
+    gUpdateRate = 60 / fields;
     AICar boss;
     PlayerCar player;
     memcpy(&boss, state, sizeof(boss));

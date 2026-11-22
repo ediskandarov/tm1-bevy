@@ -3653,6 +3653,7 @@ fn minion_initial_record_matches_retail() {
                     r.player.trig.as_ptr(),
                     &mut placement_seed,
                     fov as i32,
+                    3,
                 )
             };
             assert_eq!(placement_seed, r.cpu.random_state);
@@ -3661,6 +3662,90 @@ fn minion_initial_record_matches_retail() {
             for (i, b) in player.iter().enumerate() {
                 assert_eq!(*b, r.cpu.ram[p + i], "player byte {i:x}, height {height}");
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn rooftop_boss_handoff_matches_retail_after_three_reserved_starts() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let level = Level::Rooftops;
+    for fields in 1u8..=5 {
+        for (index, vehicle) in Vehicle::CARD_ORDER.into_iter().enumerate() {
+            let difficulty = [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard][index % 3];
+            let layout = (index as u8 + fields) % 4;
+            let initial_seed = 0x123456 + index as u32 * 5 + u32::from(fields);
+            let mut player =
+                PlayerVehicle::contest(&exe, vehicle, level, initial_seed, difficulty).unwrap();
+            player.set_pad_layout(layout);
+            let mut cpu = Cpu::new(&exe);
+            cpu.call(0x80150224, &[difficulty as u32]);
+            put(&mut cpu, 0x8018c3b4, level as u32);
+            put(&mut cpu, 0x8018bf9c, 70); // single-screen uaInitView, FOV entry 6
+            put(&mut cpu, 0x8018c640, u32::from(layout));
+            cpu.call(0x8012b5a4, &[]); // InitLevel6TriggerPoints
+            cpu.put(0x80170238, &3i16.to_le_bytes());
+            cpu.put(0x8017023a, &20i16.to_le_bytes());
+            cpu.random_state = player.seed;
+            let rivals = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
+            let mut kinds = rivals.clone();
+            kinds.push(Vehicle::Minion);
+            cpu.put(0x8018c336, &(kinds.len() as u16).to_le_bytes());
+            for (slot, kind) in kinds.iter().enumerate() {
+                put(&mut cpu, 0x8019edd8 + 4 * slot as u32, *kind as u32);
+                put(
+                    &mut cpu,
+                    0x8019ee0c + 4 * slot as u32,
+                    EXTRA_MODELS + 0x200 * slot as u32,
+                );
+            }
+            // Only scene drawing and parenting are outside this car-state replay.
+            for address in [0x800ff38c, 0x8010abc8] {
+                cpu.put(address, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            }
+            for (slot, kind) in rivals.iter().enumerate() {
+                cpu.call(0x8014d838, &[slot as u32, *kind as u32]);
+            }
+            if index % 2 == 0 {
+                Opponent::spawn_bout(&mut player, &rivals);
+            } else {
+                Opponent::spawn_lineup(
+                    &mut player,
+                    <[Vehicle; 3]>::try_from(rivals.as_slice()).unwrap(),
+                );
+            }
+            assert_eq!(player.seed, cpu.random_state);
+            assert_eq!(player.used_starts.count_ones(), 3);
+            player.step(Input::default(), fields);
+            cpu.put(0x80170238, &i16::from(fields).to_le_bytes());
+            cpu.put(0x8017023a, &(60 / i16::from(fields)).to_le_bytes());
+            cpu.random_state = player.seed;
+            let group = [5i16, 6][index % 2];
+            let height = [6399i32, 6400, 7300][(index + usize::from(fields)) % 3];
+            player.state[0xc0..0xc2].copy_from_slice(&group.to_le_bytes());
+            player.state[0x390..0x394].copy_from_slice(&height.to_le_bytes());
+            player.state[0x394..0x3a0].fill(47);
+            player.state[0x3ac..0x3b8].fill(53);
+            cpu.put(PLAYER, &player.state);
+            cpu.call(0x80150d04, &[]);
+            let boss = Opponent::spawn_minion(&mut player);
+            assert_eq!(player.used_starts.count_ones(), 4);
+            for (address, record) in [
+                (PLAYER, &player.state[..]),
+                (POLICE + 3 * 0x560, &boss.state[..]),
+            ] {
+                let base = (address & 0x1fffff) as usize;
+                for (offset, &byte) in record.iter().enumerate() {
+                    assert_eq!(
+                        byte,
+                        cpu.ram[base + offset],
+                        "{vehicle:?}, {fields} fields, z={height}: {address:x}+{offset:x}"
+                    );
+                }
+            }
+            assert_eq!(player.seed, cpu.random_state);
         }
     }
 }
