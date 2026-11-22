@@ -44,14 +44,35 @@ impl Drive {
             .filter(|_| self.helicopter_active)
             .map(|heli| heli.pose)
     }
-    pub(crate) fn toggle_helicopter(&mut self) {
+    fn helicopter_available(&self) -> bool {
         use tm1_core::drive::Level;
-        if !self.helicopter_unlocked
-            || !matches!(
+        self.helicopter_unlocked
+            && matches!(
                 self.player.level(),
                 Level::Arena | Level::Rooftops | Level::Arena5
             )
+    }
+    fn cycle_camera(&mut self, forward: bool) {
+        use tm1_core::drive::CarView;
+        if self.helicopter_active {
+            self.helicopter_active = false;
+            self.camera.mode = if forward {
+                CarView::Cockpit
+            } else {
+                CarView::Far
+            };
+            self.camera.update(&self.player, true);
+        } else if self.helicopter_available()
+            && (forward && self.camera.mode == CarView::Far
+                || !forward && self.camera.mode == CarView::Cockpit)
         {
+            self.toggle_helicopter();
+        } else {
+            self.camera.cycle(forward);
+        }
+    }
+    pub(crate) fn toggle_helicopter(&mut self) {
+        if !self.helicopter_available() {
             return;
         }
         self.helicopter_active = !self.helicopter_active;
@@ -61,6 +82,8 @@ impl Drive {
                 .helicopter
                 .get_or_insert_with(|| tm1_core::drive::Helicopter::new(&mut self.player));
             heli.update(&self.player, 3, true);
+        } else {
+            self.camera.update(&self.player, true);
         }
     }
     pub fn cleared(&self) -> bool {
@@ -349,8 +372,9 @@ pub fn advance(
         drive.mirror = !drive.mirror;
     }
     if keys.just_pressed(KeyCode::KeyC) {
-        drive.helicopter_active = false;
-        drive.camera.cycle();
+        drive.cycle_camera(true);
+    } else if keys.just_pressed(KeyCode::KeyZ) {
+        drive.cycle_camera(false);
     }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE),
@@ -825,6 +849,28 @@ mod tests {
             assert!(!drive.mirror);
             assert!(drive.helicopter_pose().is_some());
             drive.toggle_helicopter();
+        }
+        use tm1_core::drive::CarView::{Chase, Cockpit, Far};
+        for (key, mode, helicopter) in [
+            (KeyCode::KeyZ, Cockpit, false),
+            (KeyCode::KeyZ, Cockpit, true),
+            (KeyCode::KeyZ, Far, false),
+            (KeyCode::KeyC, Far, true),
+            (KeyCode::KeyC, Cockpit, false),
+            (KeyCode::KeyC, Chase, false),
+        ] {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            tick(&mut app, 0);
+            let drive = app.world().resource::<Drive>();
+            assert_eq!(
+                (drive.camera.mode, drive.helicopter_active),
+                (mode, helicopter)
+            );
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(key);
         }
         let start = snapshot(&app);
         let mut pad = Gamepad::default();

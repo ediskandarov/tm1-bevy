@@ -643,11 +643,12 @@ impl VehicleCamera {
         view
     }
 
-    pub fn cycle(&mut self) {
-        self.mode = match self.mode {
-            CarView::Cockpit => CarView::Chase,
-            CarView::Chase => CarView::Far,
-            CarView::Far => CarView::Cockpit,
+    pub fn cycle(&mut self, forward: bool) {
+        use CarView::*;
+        self.mode = match (self.mode, forward) {
+            (Cockpit, true) | (Far, false) => Chase,
+            (Chase, true) | (Cockpit, false) => Far,
+            (Far, true) | (Chase, false) => Cockpit,
         };
     }
 

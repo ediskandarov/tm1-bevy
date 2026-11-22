@@ -608,12 +608,19 @@ fn ordinary_camera_original() {
         r.cpu.put(PLAYER, &r.player.state);
         r.cpu.call(0x80124474, &[PLAYER]);
         let mut cam = VehicleCamera::new(&r.player, CarView::Chase);
+        put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
+        r.cpu.put(0x800ffd10, &[8, 0, 224, 3, 0, 0, 2, 36]); // No cheat input.
         vec3_cpu(&mut r.cpu, PLAYER + 0xc, cam.offset);
         put(&mut r.cpu, PLAYER + 4, cam.pitch as u32);
         for tick in 0..180 {
-            if matches!(tick, 12 | 48 | 110 | 143) {
-                cam.cycle();
+            let forward = matches!(tick, 12 | 48 | 75);
+            let backward = matches!(tick, 95 | 110 | 143);
+            r.cpu.put(PLAYER + 0xd9, &[backward.into(), forward.into()]);
+            r.cpu.call(0x8014eff4, &[PLAYER]); // CheckVRMode
+            if forward || backward {
+                cam.cycle(forward);
             }
+            assert_eq!(cam.mode as u32, r.cpu.word(PLAYER + 0xf4));
             r.player.step(
                 Input {
                     accelerate: true,
@@ -630,7 +637,6 @@ fn ordinary_camera_original() {
                 r.player.speed_mph(fields),
                 r.cpu.call(0x8014f794, &[0]) as i32
             );
-            put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
             r.cpu.call(0x80116bcc, &[PLAYER]);
             cam.update(&r.player, false);
             let offset = std::array::from_fn(|i| r.cpu.word(PLAYER + 0xc + 4 * i as u32) as i32);
