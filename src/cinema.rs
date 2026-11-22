@@ -38,6 +38,13 @@ impl Drop for Decoder {
     }
 }
 
+#[derive(PartialEq, Eq)]
+pub enum CinemaStep {
+    Playing,
+    Finished,
+    Skipped,
+}
+
 pub struct Cinema {
     pub clip: Clip,
     elapsed: Duration,
@@ -45,6 +52,7 @@ pub struct Cinema {
     decoder: Option<Decoder>,
     frame: u32,
     frames: u32,
+    last_callback_frame: Option<u32>,
     pub voice: Option<Entity>,
 }
 impl Cinema {
@@ -56,6 +64,7 @@ impl Cinema {
             decoder: None,
             frame: 0,
             frames: 0,
+            last_callback_frame: None,
             voice: None,
         };
         let (name, limit) = match clip {
@@ -140,21 +149,33 @@ impl Cinema {
         select: bool,
         images: &mut Assets<Image>,
         handle: &Handle<Image>,
-    ) -> Result<bool> {
+    ) -> Result<CinemaStep> {
         if std::mem::take(&mut self.first_tick) {
-            return Ok(false);
+            return Ok(CinemaStep::Playing);
         }
         self.elapsed += dt;
         let fields = self.elapsed.as_nanos() * 60 / 1_000_000_000;
         if self.decoder.is_none() {
-            return Ok(match self.clip {
+            let finished = match self.clip {
                 Clip::Presents => fields >= 121 || (fields >= 120 && select),
                 _ => fields >= 140,
+            };
+            return Ok(if finished {
+                CinemaStep::Finished
+            } else {
+                CinemaStep::Playing
             });
         }
         let frame = (fields / 4) as u32;
-        if frame >= self.frames || (select && (self.clip != Clip::Logo || frame + 2 >= 31)) {
-            return Ok(true);
+        if frame >= self.frames {
+            return Ok(CinemaStep::Finished);
+        }
+        // moviecdPlayMovie polls after displaying a frame and reading its
+        // successor. Reaching the stream limit bypasses the final callback.
+        let poll =
+            self.last_callback_frame.replace(frame) != Some(frame) && frame + 1 < self.frames;
+        if poll && select && (self.clip != Clip::Logo || frame + 2 >= 31) {
+            return Ok(CinemaStep::Skipped);
         }
         if frame > self.frame {
             let mut image = images.get_mut(handle).context("missing cinema texture")?;
@@ -164,6 +185,6 @@ impl Cinema {
                 self.frame += 1;
             }
         }
-        Ok(false)
+        Ok(CinemaStep::Playing)
     }
 }

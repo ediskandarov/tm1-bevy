@@ -1,6 +1,6 @@
 //! Keyboard contest selection and five-slot JP stage passwords.
 use crate::campaign::{self, Campaign, PasswordModes, Stage};
-use crate::cinema::{Cinema, Clip};
+use crate::cinema::{Cinema, CinemaStep, Clip};
 use anyhow::Result;
 use bevy::{audio::AudioSinkPlayback, prelude::*};
 use std::time::Duration;
@@ -269,6 +269,14 @@ impl Contest {
         } else if let Some(entity) = self.theme_entity.take() {
             world.despawn(entity);
         }
+    }
+    fn play_button(&self, world: &mut World, voice: Handle<AudioSource>) {
+        world.spawn((
+            AudioPlayer::new(voice),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
+                0.44 * self.settings.effects_gain(),
+            )),
+        ));
     }
     fn play(&mut self, world: &mut World, mut clip: Option<Clip>) {
         if let Some(voice) = self.cinema.take().and_then(|movie| movie.voice) {
@@ -1161,11 +1169,12 @@ pub fn update(world: &mut World) {
             world.resource::<ButtonInput<KeyCode>>()
         };
         if menu.cinema.is_some() {
-            let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space])
+            let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
                 || !scripted && world
-                    .query::<&Gamepad>()
+                    .query::<(Entity, &Gamepad)>()
                     .iter(world)
-                    .any(|p| p.any_pressed([GamepadButton::South, GamepadButton::Start]));
+                    .min_by_key(|(id, _)| *id)
+                    .is_some_and(|(_, p)| p.any_pressed([GamepadButton::South, GamepadButton::Start, GamepadButton::Select]));
             let dt = menu_delta(world);
             let handle = menu.image.clone();
             let mut images = world.resource_mut::<Assets<Image>>();
@@ -1174,10 +1183,13 @@ pub fn update(world: &mut World) {
                 .advance(dt, select, &mut images, &handle)
                 .unwrap_or_else(|err| {
                     warn!("Disc cinema ended early: {err:#}");
-                    true
+                    CinemaStep::Finished
                 });
-            if done {
+            if done != CinemaStep::Playing {
                 let next = movie.clip.next();
+                if done == CinemaStep::Skipped {
+                    menu.play_button(world, menu.button_sounds[1].clone());
+                }
                 menu.play(world, next);
             }
             return;
@@ -1251,10 +1263,7 @@ pub fn update(world: &mut World) {
             menu.controls_view = Default::default();
         }
         if let Some(voice) = voice {
-            world.spawn((
-                AudioPlayer::new(voice),
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * menu.settings.effects_gain())),
-            ));
+            menu.play_button(world, voice);
         }
         if start_battle {
             start = true;
@@ -1876,14 +1885,54 @@ mod tests {
         }
         assert!(clip(&world) == Some(Clip::Logo));
         tick(&mut world, 0);
+        let confirmations = |world: &mut World| {
+            let sound = world.resource::<Contest>().button_sounds[1].clone();
+            world
+                .query::<&AudioPlayer>()
+                .iter(world)
+                .filter(|p| p.0 == sound)
+                .count()
+        };
+        let mut pads = [
+            world.spawn(Gamepad::default()).id(),
+            world.spawn(Gamepad::default()).id(),
+        ];
+        pads.sort();
         world
-            .resource_mut::<ButtonInput<KeyCode>>()
-            .press(KeyCode::Enter);
-        tick(&mut world, 1000);
+            .get_mut::<Gamepad>(pads[1])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::South);
+        world
+            .get_mut::<Gamepad>(pads[0])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::Select);
+        tick(&mut world, 1933);
         assert!(clip(&world) == Some(Clip::Logo));
-        tick(&mut world, 1000);
+        assert_eq!(confirmations(&mut world), 0);
+        world
+            .get_mut::<Gamepad>(pads[0])
+            .unwrap()
+            .digital_mut()
+            .release(GamepadButton::Select);
+        tick(&mut world, 67);
+        assert!(clip(&world) == Some(Clip::Logo));
+        world
+            .get_mut::<Gamepad>(pads[0])
+            .unwrap()
+            .digital_mut()
+            .press(GamepadButton::Select);
+        tick(&mut world, 10);
+        assert!(clip(&world) == Some(Clip::Logo));
+        tick(&mut world, 57);
         assert!(clip(&world) == Some(Clip::Title));
-        world.insert_resource(ButtonInput::<KeyCode>::default());
+        assert_eq!(confirmations(&mut world), 1);
+        world
+            .get_mut::<Gamepad>(pads[0])
+            .unwrap()
+            .digital_mut()
+            .release(GamepadButton::Select);
         let handle = world.resource::<Contest>().image.clone();
         let original = world
             .resource::<Assets<Image>>()
@@ -1902,16 +1951,24 @@ mod tests {
                 .data
                 .as_deref()
         );
-        tick(&mut world, 2500);
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Space);
+        tick(&mut world, 2334); // Last displayed frame has no input callback.
+        assert!(clip(&world) == Some(Clip::Title));
+        tick(&mut world, 166);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
         assert!(clip(&world).is_none());
+        assert_eq!(confirmations(&mut world), 1);
         assert!(world.resource::<Contest>().theme_entity.is_some());
         tick(&mut world, 0);
         tick(&mut world, 20017);
         assert!(clip(&world) == Some(Clip::Attract));
         assert!(world.resource::<Contest>().theme_entity.is_none());
         tick(&mut world, 0);
-        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::KeyP);
         assert!(clip(&world) == Some(Clip::Title));
+        assert_eq!(confirmations(&mut world), 2);
     }
 
     #[test]
