@@ -29,15 +29,11 @@ pub struct Ending {
     frame: u32,
     waits: u8,
     remainder: Duration,
-    credit_y: i32,
-    speed: u8,
-    tick: u8,
-    key_delay: u8,
+    credits: crate::scroll::Scroll,
     wait_for_release: bool,
     fonts: Fonts,
     reward: Vec<u8>,
     backdrop: Vec<u8>,
-    lines: Vec<String>,
     car: Scene,
     textures: Vram,
     vehicle: Vehicle,
@@ -75,19 +71,7 @@ impl Ending {
         };
         let track = track.map(|n| crate::music::track(disc, n)).transpose()?;
         let backdrop = screen::background(&disc.read(&format!("UASCREEN/{background}.TIM"))?)?;
-        let credits = String::from_utf8(disc.read("UATEXT/CREDITS.TXT")?)?;
-        let mut lines = credits.split("\r\n");
-        let count = lines
-            .next()
-            .and_then(|s| s.strip_suffix(" C"))
-            .ok_or_else(|| anyhow::anyhow!("invalid centered credits header"))?
-            .parse::<usize>()?;
-        let lines = lines
-            .filter(|s| !s.starts_with("@S"))
-            .take(count)
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        ensure!(lines.len() == count, "incomplete disc credits");
+        let credits = crate::scroll::Scroll::load(disc.read("UATEXT/CREDITS.TXT")?, &fonts)?;
         let data = disc.read("UADMD/CARSEND.DMD")?;
         let car = Dmd::parse(&data)?.extract_kind(vehicle as u16)?;
         let textures = Vram::from_tms(&disc.read("UADMD/CARSEND.TMS")?)?;
@@ -100,15 +84,11 @@ impl Ending {
             frame: 0,
             waits: 0,
             remainder: Duration::ZERO,
-            credit_y: 240 + fonts.line_height(),
-            speed: 3,
-            tick: 0,
-            key_delay: 0,
+            credits,
             wait_for_release: false,
             fonts,
             reward,
             backdrop,
-            lines,
             car,
             textures,
             vehicle,
@@ -132,26 +112,12 @@ impl Ending {
             }
             Phase::Credits => {
                 self.wait_for_release &= select;
-                if self.speed < 6 && self.tick >= self.speed {
-                    self.credit_y -= 1;
-                    self.tick = 0;
-                }
-                self.tick = self.tick.saturating_add(1);
-                if self.key_delay == 0 && (up || down) {
-                    self.speed = if up {
-                        self.speed.saturating_sub(1).max(1)
-                    } else {
-                        (self.speed + 1).min(6)
-                    };
-                    self.key_delay = 30;
-                } else if (select && !self.wait_for_release)
-                    || self.credit_y
-                        + (self.lines.len() as i32 - 1) * (self.fonts.line_height() + 10)
-                        < 0
+                if self
+                    .credits
+                    .field(select && !self.wait_for_release, up, down)
+                    != crate::scroll::Outcome::Running
                 {
                     self.phase = Phase::Finished;
-                } else {
-                    self.key_delay = self.key_delay.saturating_sub(1);
                 }
             }
             Phase::Finished => {}
@@ -160,13 +126,7 @@ impl Ending {
     fn credits_frame(&self, out: &mut [u8]) {
         out.copy_from_slice(&self.backdrop);
         self.draw_car(out);
-        let spacing = self.fonts.line_height() + 10;
-        for (i, line) in self.lines.iter().enumerate() {
-            let y = self.credit_y + i as i32 * spacing;
-            if (0..240 + spacing).contains(&y) {
-                self.fonts.centered(out, Face::Text, y, line);
-            }
-        }
+        self.credits.draw(out, &self.fonts);
     }
     fn draw_car(&self, out: &mut [u8]) {
         let (eye, angles, spin, start, step) = match self.vehicle {
@@ -499,11 +459,11 @@ mod tests {
         assert_eq!(ending.phase, Phase::Reward);
         ending.field(true, false, false);
         assert_eq!(ending.phase, Phase::Credits);
-        assert_eq!(ending.lines.len(), 153);
+        assert_eq!(ending.credits.lines.len(), 153);
         ending.field(true, false, false);
         assert_eq!(ending.phase, Phase::Credits);
         ending.field(false, true, false);
-        assert_eq!(ending.speed, 2);
+        assert_eq!(ending.credits.speed, 2);
         ending.field(true, false, false);
         assert_eq!(ending.phase, Phase::Finished);
     }

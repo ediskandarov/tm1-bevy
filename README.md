@@ -22,6 +22,8 @@ cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 
 The opening sequence plays the three JP presentation cards, Sony logo and title movie from the disc. STR video and XA sound playback requires `ffmpeg` on the application’s PATH. The game skips an unavailable movie and continues to the menu. Enter skips the title movie or the Sony logo after its first two seconds.
 
+Leaving the title idle cycles through the battle movie, contest history and vehicle showcase. During the history, Up and Down adjust the scrolling speed. Enter skips history or a showcase and returns through the title movie.
+
 With only the CUE argument, press Enter at the title to open the garage at Sweet Tooth. Left and Right browse the twelve rotating vehicles in retail card order. Up and Down choose SELECT, CAR INFO or EXIT. Enter opens the selected action. Press Enter again to close a driver biography. To start directly in the garage at a specific vehicle, pass `--garage --car outlaw`. D cycles through Medium, Hard and Easy before starting. Finishing Rooftops on Hard continues into Arena 5 after the credits with the remaining lives and inventory. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Space inserts a blank slot. Use 21422 to play Arena 5. The special passwords below can be entered before starting the contest.
 
 | Password keys | Result |

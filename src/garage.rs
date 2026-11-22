@@ -11,6 +11,7 @@ use tm1_core::drive::Vehicle;
 
 pub struct Garage {
     backdrop: Vec<u8>,
+    demo_backdrop: Vec<u8>,
     audio: Vec<(AudioSource, AudioSource, f32)>,
     voices: Option<(usize, [Entity; 2])>,
     cars: Vec<Scene>,
@@ -50,6 +51,7 @@ impl Garage {
             )?);
         }
         Ok(Self {
+            demo_backdrop: screen::background(&disc.read("UASCREEN/SCRND2.TIM")?)?,
             backdrop: screen::background(&disc.read("UASCREEN/SCRND.TIM")?)?,
             cars,
             audio,
@@ -63,6 +65,9 @@ impl Garage {
             slide: 22,
             left: false,
         })
+    }
+    pub fn voices(&self) -> impl Iterator<Item = Entity> {
+        self.voices.iter().flat_map(|(_, voices)| *voices)
     }
     pub fn sound(&mut self, world: &mut World, index: Option<usize>) {
         if self.voices.as_ref().map(|v| v.0) == index {
@@ -118,8 +123,19 @@ impl Garage {
         self.field = self.field.wrapping_add(n);
         self.slide = self.slide.saturating_add(n).min(22);
     }
-    pub fn frame(&self, fonts: &Fonts, i: usize) -> Vec<u8> {
-        let mut frame = self.backdrop.clone();
+    pub fn reset(&mut self) {
+        self.row = 0;
+        self.field = 0;
+        self.heading = 1365;
+        self.slide = 22;
+        self.left = false;
+    }
+    pub fn frame(&self, fonts: &Fonts, i: usize, demo: bool) -> Vec<u8> {
+        let mut frame = if demo {
+            self.demo_backdrop.clone()
+        } else {
+            self.backdrop.clone()
+        };
         let radians = std::f32::consts::TAU / 4096.;
         let side = if self.left { -1. } else { 1. };
         let spin = side * ((self.slide * 16384 / 360) as f32 * radians).sin() * 7680.;
@@ -157,29 +173,31 @@ impl Garage {
                 }
             }
         }
-        for (row, label) in ["SELECT", "CAR INFO", "EXIT"].into_iter().enumerate() {
-            fonts.at(
-                &mut frame,
-                if row == self.row {
-                    Face::Selected
+        if !demo {
+            for (row, label) in ["SELECT", "CAR INFO", "EXIT"].into_iter().enumerate() {
+                fonts.at(
+                    &mut frame,
+                    if row == self.row {
+                        Face::Selected
+                    } else {
+                        Face::Choice
+                    },
+                    110,
+                    40 + 20 * row as i32,
+                    label,
+                );
+            }
+            if self.field % 16 >= 8 {
+                fonts.centered_at(&mut frame, Face::Control, 42, 30, "Player 1");
+            }
+            for (x, label, left) in [(14, "<", true), (285, ">", false)] {
+                let face = if self.slide == 0 && self.row == 0 && self.left == left {
+                    Face::ArrowActive
                 } else {
-                    Face::Choice
-                },
-                110,
-                40 + 20 * row as i32,
-                label,
-            );
-        }
-        if self.field % 16 >= 8 {
-            fonts.centered_at(&mut frame, Face::Control, 42, 30, "Player 1");
-        }
-        for (x, label, left) in [(14, "<", true), (285, ">", false)] {
-            let face = if self.slide == 0 && self.row == 0 && self.left == left {
-                Face::ArrowActive
-            } else {
-                Face::Control
-            };
-            fonts.at(&mut frame, face, x, 215, label);
+                    Face::Control
+                };
+                fonts.at(&mut frame, face, x, 215, label);
+            }
         }
         let name = Vehicle::CARD_ORDER[i]
             .name()

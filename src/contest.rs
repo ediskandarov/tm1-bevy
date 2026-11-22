@@ -12,6 +12,8 @@ struct ContestScreen;
 #[derive(PartialEq, Eq)]
 enum Page {
     Title,
+    History,
+    Showcase(usize),
     Contest,
     Bio,
     Password,
@@ -29,7 +31,9 @@ pub struct Contest {
     fonts: Fonts,
     title: Vec<u8>,
     garage: crate::garage::Garage,
-    garage_fraction: u128,
+    field_fraction: u128,
+    history: crate::scroll::Scroll,
+    history_background: Vec<u8>,
     entry: Vec<u8>,
     image: Handle<Image>,
     theme: Handle<AudioSource>,
@@ -43,11 +47,116 @@ pub struct Contest {
     cursor: usize,
     released: bool,
 }
+#[derive(Default, Resource)]
+struct AttractCycle(u8);
 impl Contest {
+    fn begin_showcase(&mut self) {
+        self.garage.reset();
+        self.field_fraction = 0;
+        self.page = Page::Showcase(0);
+    }
+    fn presentation_fields(&mut self, elapsed: Duration) -> u32 {
+        self.field_fraction += elapsed.as_nanos() * 60;
+        let fields = (self.field_fraction / 1_000_000_000) as u32;
+        self.field_fraction %= 1_000_000_000;
+        fields
+    }
+    fn showcase_fields(&mut self, mut i: usize, mut fields: u32) -> bool {
+        while fields > 0 {
+            let n = fields.min(361 - self.garage.field);
+            self.garage.tick(n);
+            fields -= n;
+            if self.garage.field == 361 {
+                i += 1;
+                if i == Vehicle::CARD_ORDER.len() {
+                    return true;
+                }
+                self.garage.reset();
+                self.garage.slide = 0;
+            }
+        }
+        self.page = Page::Showcase(i);
+        false
+    }
+
+    fn update_attract(&mut self, world: &mut World, select: bool, up: bool, down: bool) -> bool {
+        let dt = menu_delta(world);
+        match self.page {
+            Page::Title => {
+                self.idle += dt;
+                if self.idle.as_nanos() * 60 < 1201 * 1_000_000_000 {
+                    return false;
+                }
+                let mut cycle = world.get_resource_or_init::<AttractCycle>();
+                let current = cycle.0;
+                cycle.0 = (current + 1) % 3;
+                self.idle = Duration::ZERO;
+                match current {
+                    0 => {
+                        self.play(world, Some(Clip::Attract));
+                        return true;
+                    }
+                    1 => {
+                        self.history.reset();
+                        self.field_fraction = 0;
+                        self.page = Page::History;
+                    }
+                    _ => self.begin_showcase(),
+                }
+            }
+            Page::History | Page::Showcase(_) => {
+                let fields = self.presentation_fields(dt);
+                if fields == 0 && !select {
+                    return true;
+                }
+                let done = match self.page {
+                    Page::Showcase(i) => select || self.showcase_fields(i, fields),
+                    Page::History => {
+                        let mut skipped = false;
+                        for _ in 0..fields.max(u32::from(select)) {
+                            match self.history.field(select, up, down) {
+                                crate::scroll::Outcome::Running => {}
+                                crate::scroll::Outcome::Skipped => {
+                                    skipped = true;
+                                    break;
+                                }
+                                crate::scroll::Outcome::Finished => {
+                                    self.begin_showcase();
+                                    break;
+                                }
+                            }
+                        }
+                        skipped
+                    }
+                    _ => unreachable!(),
+                };
+                if done {
+                    self.garage.reset();
+                    self.page = Page::Title;
+                    self.play(world, Some(Clip::Title));
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+        world
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&self.image)
+            .unwrap()
+            .data = Some(self.frame());
+        self.sync_theme(world);
+        true
+    }
     fn sync_theme(&mut self, world: &mut World) {
-        let car = matches!(self.page, Page::Contest | Page::Bio).then_some(self.vehicle);
+        let car = match self.page {
+            Page::Contest | Page::Bio => Some(self.vehicle),
+            Page::Showcase(i) => Some(i),
+            _ => None,
+        };
         self.garage.sound(world, car);
-        if self.page == Page::Title && self.cinema.is_none() {
+        if matches!(self.page, Page::Title | Page::History | Page::Showcase(_))
+            && self.cinema.is_none()
+        {
             if self.theme_entity.is_none() {
                 let gain = world
                     .get_resource::<crate::driving::Drive>()
@@ -111,7 +220,13 @@ impl Contest {
     fn frame(&self) -> Vec<u8> {
         let mut frame = match self.page {
             Page::Title => self.title.clone(),
-            Page::Contest => return self.garage.frame(&self.fonts, self.vehicle),
+            Page::Contest => return self.garage.frame(&self.fonts, self.vehicle, false),
+            Page::History => {
+                let mut out = self.history_background.clone();
+                self.history.draw(&mut out, &self.fonts);
+                return out;
+            }
+            Page::Showcase(i) => return self.garage.frame(&self.fonts, i, true),
             Page::Bio => return self.garage.bio(self.vehicle),
             _ => self.entry.clone(),
         };
@@ -121,7 +236,7 @@ impl Contest {
                 line(165, Face::Text, "1P CONTEST");
                 line(193, Face::Text, "PRESS ENTER");
             }
-            Page::Contest | Page::Bio => unreachable!(),
+            Page::Contest | Page::Bio | Page::History | Page::Showcase(_) => unreachable!(),
             Page::Password => {
                 line(72, Face::Text, "ENTER PASSWORD");
                 line(98, Face::Text, "SPACE  BLANK");
@@ -166,10 +281,11 @@ impl Contest {
     fn input(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let key = |k| keys.just_pressed(k);
         match self.page {
+            Page::History | Page::Showcase(_) => {}
             Page::Title => {
                 if key(KeyCode::Enter) {
                     self.page = Page::Contest;
-                    self.garage.row = 0;
+                    self.garage.reset();
                 }
             }
             Page::Bio => {
@@ -287,12 +403,15 @@ pub fn show(
 ) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
     let theme = crate::music::track(disc, 2)?;
+    let fonts = Fonts::load(disc)?;
     let mut menu = Contest {
         cinema: None,
         idle: Duration::ZERO,
-        fonts: Fonts::load(disc)?,
+        history: crate::scroll::Scroll::load(disc.read("UATEXT/HISTORY.TXT")?, &fonts)?,
+        history_background: screen::background(&disc.read("UASCREEN/SCRNCALY.TIM")?)?,
+        fonts,
         garage: crate::garage::Garage::load(disc)?,
-        garage_fraction: 0,
+        field_fraction: 0,
         title: screen::background(&disc.read("UASCREEN/SCRNC.TIM")?)?,
         entry: screen::background(&disc.read("UASCREEN/SCRNFD.TIM")?)?,
         theme: default(),
@@ -342,7 +461,10 @@ pub fn update(world: &mut World) {
     let Ok(window) = world.query::<&Window>().single(world) else {
         return;
     };
-    let focused = window.focused;
+    let scripted = world
+        .get_resource::<crate::smoke::Capture>()
+        .is_some_and(|c| c.demo && !c.realtime);
+    let focused = window.focused || scripted;
     let h = window.height().min(window.width() * 0.75);
     if let Ok(mut sprite) = world
         .query_filtered::<&mut Sprite, With<ContestScreen>>()
@@ -350,12 +472,18 @@ pub fn update(world: &mut World) {
     {
         sprite.custom_size = Some(Vec2::new(h * 4. / 3., h));
     }
-    if let Some(movie) = world.resource::<Contest>().cinema.as_ref() {
-        if let Some(sink) = movie.voice.and_then(|e| world.get::<AudioSink>(e)) {
+    let menu = world.resource::<Contest>();
+    let voices = menu
+        .garage
+        .voices()
+        .chain(menu.theme_entity)
+        .chain(menu.cinema.as_ref().and_then(|m| m.voice));
+    for entity in voices {
+        if let Some(sink) = world.get::<AudioSink>(entity) {
             use bevy::audio::AudioSinkPlayback;
-            if focused {
+            if focused && sink.is_paused() {
                 sink.play();
-            } else {
+            } else if !focused && !sink.is_paused() {
                 sink.pause();
             }
         }
@@ -366,14 +494,14 @@ pub fn update(world: &mut World) {
     let mut start = None;
     world.resource_scope(|world, mut menu: Mut<Contest>| {
         let no_input = ButtonInput::default();
-        let keys = if world.get_resource::<crate::smoke::Capture>().is_some_and(|c| c.demo && !c.realtime) {
+        let keys = if scripted {
             &no_input
         } else {
             world.resource::<ButtonInput<KeyCode>>()
         };
         if menu.cinema.is_some() {
             let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space])
-                || world
+                || !scripted && world
                     .query::<&Gamepad>()
                     .iter(world)
                     .any(|p| p.any_pressed([GamepadButton::South, GamepadButton::Start]));
@@ -397,17 +525,16 @@ pub fn update(world: &mut World) {
             menu.released = keys.get_pressed().next().is_none();
             return;
         }
-        if menu.page == Page::Title {
-            if keys.get_pressed().next().is_some() {
-                menu.idle = Duration::ZERO;
-            } else {
-                menu.idle += world.resource::<Time<Real>>().delta();
-            }
-            if menu.idle.as_nanos() * 60 >= 1201 * 1_000_000_000 {
-                menu.play(world, Some(Clip::Attract));
-                return;
-            }
+        let held = keys.get_pressed().next().is_some();
+        let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space]);
+        let up = keys.pressed(KeyCode::ArrowUp);
+        let down = keys.pressed(KeyCode::ArrowDown);
+        if matches!(menu.page, Page::History | Page::Showcase(_)) || menu.page == Page::Title && !held {
+            if menu.update_attract(world, select, up, down) { return; }
+        } else if menu.page == Page::Title {
+            menu.idle = Duration::ZERO;
         }
+        let keys = if scripted { &no_input } else { world.resource::<ButtonInput<KeyCode>>() };
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
             remaining.is_zero()
@@ -418,9 +545,7 @@ pub fn update(world: &mut World) {
             menu.page = Page::Contest;
         }
         let animate = if menu.page == Page::Contest {
-            menu.garage_fraction += menu_delta(world).as_nanos() * 60;
-            let fields = (menu.garage_fraction / 1_000_000_000) as u32;
-            menu.garage_fraction %= 1_000_000_000;
+            let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
         } else {
@@ -518,6 +643,55 @@ mod tests {
         }
         press(world, KeyCode::Enter);
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
+    fn history_showcase_and_attract_rotation() {
+        let mut world = menu_world();
+        world.insert_resource(AttractCycle(1));
+        let tick = |world: &mut World, millis| {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(millis));
+            update(world);
+        };
+        tick(&mut world, 20_017);
+        assert!(world.resource::<Contest>().page == Page::History);
+        assert_eq!(world.resource::<Contest>().history.lines.len(), 31);
+        let theme = world.resource::<Contest>().theme_entity;
+        tick(&mut world, 10_000);
+        let menu = world.resource::<Contest>();
+        assert!(menu.frame() != menu.history_background);
+        tick(&mut world, 80_000);
+        assert!(world.resource::<Contest>().page == Page::Showcase(0));
+        assert_eq!(world.resource::<Contest>().theme_entity, theme);
+        for car in 1..12 {
+            tick(&mut world, 6017);
+            assert!(world.resource::<Contest>().page == Page::Showcase(car));
+        }
+        tick(&mut world, 6017);
+        assert!(matches!(
+            world.resource::<Contest>().cinema.as_ref().map(|c| c.clip),
+            Some(Clip::Title)
+        ));
+        tick(&mut world, 0);
+        tick(&mut world, 4500);
+        tick(&mut world, 0);
+        tick(&mut world, 20_017);
+        assert!(world.resource::<Contest>().page == Page::Showcase(0));
+        press(&mut world, KeyCode::Enter);
+        assert!(world.resource::<Contest>().page == Page::Title);
+        assert_eq!(world.resource::<AttractCycle>().0, 0);
+        assert_eq!(world.resource::<Contest>().vehicle, 1);
+        tick(&mut world, 0);
+        tick(&mut world, 4500);
+        tick(&mut world, 0);
+        world.insert_resource(AttractCycle(1));
+        tick(&mut world, 20_017);
+        press(&mut world, KeyCode::Enter);
+        assert!(world.resource::<Contest>().page == Page::Title);
+        assert!(world.resource::<Contest>().cinema.is_some());
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn garage_bios_and_card_order() {

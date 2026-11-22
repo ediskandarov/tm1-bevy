@@ -10,6 +10,7 @@ mod gpu_timing;
 mod music;
 mod pause;
 mod render;
+mod scroll;
 mod sfx;
 mod smoke;
 

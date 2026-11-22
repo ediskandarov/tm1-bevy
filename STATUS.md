@@ -17,7 +17,7 @@ The one-player garage reads the twelve showroom models and occupant portraits fr
 
 A normal launch displays the three original JP startup TIMs and plays the Sony logo and title movies in order. The shell reads each STR as a bounded range of raw sectors on track 1. FFmpeg decodes MDEC frames at 320 × 240 and interleaved XA sound for Bevy. Video frames stream through a pipe, and the decoder is reaped on skip, completion or shutdown. The original `MOVIE.c` lookahead leaves the last numbered frame undisplayed. Sound and image pause while the window is unfocused.
 
-The first title idle timeout (1,201 fields) opens the demonstration movie, which returns through the title movie. Subsequent history and vehicle attract modes are still pending. A disc-backed integration test covers startup order, logo skip timing, title frame changes, the theme handoff and the idle demo. To inspect the title movie in a deterministic Metal run, use `--menu --demo-screenshot local/title-cinema.png 378`.
+After 1,201 idle fields the title cycles through the battle movie, the contest history, and the vehicle demonstration on successive visits. History scrolls the 31 lines of HISTORY.TXT over SCRNCALY.TIM. Natural completion introduces the twelve competitors, while Enter skips to the title movie. The vehicle demonstration uses SCRND2.TIM, rotates through the original card order at 361 fields per vehicle, and plays each signature over the title theme. A disc-backed integration test covers startup order, logo skip timing, title frame changes, the theme handoff and the idle demo. To inspect the title movie in a deterministic Metal run, use `--menu --demo-screenshot local/title-cinema.png 378`.
 
 ## Defeat and Minion introduction
 
