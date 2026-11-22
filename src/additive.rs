@@ -23,6 +23,8 @@ pub struct Additive {
     #[texture(0)]
     #[sampler(1)]
     pub atlas: Handle<Image>,
+    #[uniform(2)]
+    pub foreground_scale: f32,
 }
 impl Material2d for Additive {
     fn alpha_mode(&self) -> AlphaMode2d {

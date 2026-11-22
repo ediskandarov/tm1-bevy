@@ -39,10 +39,19 @@ const MIRROR_WIDTH: u32 = 101;
 const MIRROR_HEIGHT: u32 = 30;
 const MIRROR_FOCAL: f32 = 91.;
 
+// PS1 ABR modes 1 and 3 add the foreground at full and quarter strength.
+fn additive_index(texture: TextureKey) -> Option<usize> {
+    match (texture.page >> 5) & 3 {
+        1 => Some(0),
+        3 => Some(1),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct ViewMeshes {
     secondary: bool,
-    additive: Handle<Mesh>,
+    additive: [Handle<Mesh>; 2],
     solids: Handle<Mesh>,
     transparent: Handle<Mesh>,
 }
@@ -327,8 +336,11 @@ pub fn setup(
         Transform::from_xyz(0., 0., -2.),
     ));
     let texture = images.add(image);
-    let additive_material = additive_materials.add(crate::additive::Additive {
-        atlas: texture.clone(),
+    let additive_handles = [1., 0.25].map(|foreground_scale| {
+        additive_materials.add(crate::additive::Additive {
+            atlas: texture.clone(),
+            foreground_scale,
+        })
     });
     let masked = materials.add(ColorMaterial {
         texture: Some(texture.clone()),
@@ -431,14 +443,16 @@ pub fn setup(
         (3, &mut arena_views.rear_view),
     ] {
         view.secondary = layer == 3;
-        view.additive = meshes.add(Batch::default().mesh());
-        commands.spawn((
-            crate::campaign::StageEntity,
-            Mesh2d(view.additive.clone()),
-            MeshMaterial2d(additive_material.clone()),
-            RenderLayers::layer(layer),
-            NoFrustumCulling,
-        ));
+        for (handle, material) in view.additive.iter_mut().zip(&additive_handles) {
+            *handle = meshes.add(Batch::default().mesh());
+            commands.spawn((
+                crate::campaign::StageEntity,
+                Mesh2d(handle.clone()),
+                MeshMaterial2d(material.clone()),
+                RenderLayers::layer(layer),
+                NoFrustumCulling,
+            ));
+        }
         for (handle, material) in [
             (&mut view.solids, masked.clone()),
             (&mut view.transparent, blend.clone()),
@@ -1127,7 +1141,7 @@ fn draw_view(
     let (_, stand_branches) = contacts.health_stands();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
-    let mut additive = Batch::default();
+    let mut additive = [Batch::default(), Batch::default()];
     let visible = (0..arena.vehicle_start).chain(
         arena
             .body_ranges
@@ -1215,8 +1229,12 @@ fn draw_view(
             }
         }
         let indices = indices(p.vertices.len());
-        let batch = if p.semi_transparent && p.texture.is_some_and(|k| (k.page >> 5) & 3 == 1) {
-            &mut additive
+        let batch = if let Some(i) = p
+            .texture
+            .filter(|_| p.semi_transparent)
+            .and_then(additive_index)
+        {
+            &mut additive[i]
         } else if p.semi_transparent {
             &mut transparent
         } else {
@@ -1263,7 +1281,7 @@ fn draw_view(
         let tint = [16, 8, 0].map(|shift| ((face[1] >> shift) & 255) as f32 / 128.);
         for &i in indices(4) {
             let [u, v] = frame.uv[i ^ 1];
-            additive.push(
+            additive[0].push(
                 points[i],
                 arena.uv(slot, Vec2::new(u.into(), v.into())),
                 [tint[0], tint[1], tint[2], 1.],
@@ -1312,8 +1330,12 @@ fn draw_view(
             {
                 continue;
             }
-            let batch = if p.semi_transparent && p.texture.is_some_and(|t| (t.page >> 5) & 3 == 1) {
-                &mut additive
+            let batch = if let Some(i) = p
+                .texture
+                .filter(|_| p.semi_transparent)
+                .and_then(additive_index)
+            {
+                &mut additive[i]
             } else if p.semi_transparent {
                 &mut transparent
             } else {
@@ -1458,8 +1480,8 @@ fn draw_view(
         } else {
             [1.; 4]
         };
-        let batch = if (sprite.texture.page >> 5) & 3 == 1 {
-            &mut additive
+        let batch = if let Some(i) = additive_index(sprite.texture) {
+            &mut additive[i]
         } else {
             &mut transparent
         };
@@ -1571,8 +1593,8 @@ fn draw_view(
                 };
                 let sprite = &frames[frame];
                 let tile = arena.tiles[&(Some(sprite.texture), true)];
-                let batch = if (sprite.texture.page >> 5) & 3 == 1 {
-                    &mut additive
+                let batch = if let Some(i) = additive_index(sprite.texture) {
+                    &mut additive[i]
                 } else {
                     &mut transparent
                 };
@@ -1591,7 +1613,9 @@ fn draw_view(
             }
         }
     }
-    additive.write(meshes, &view.additive);
+    for (batch, handle) in additive.into_iter().zip(&view.additive) {
+        batch.write(meshes, handle);
+    }
     solids.write(meshes, &view.solids);
     // Sort all translucent surfaces together, including smoke and tracers.
     let mut triangles: Vec<_> = transparent
