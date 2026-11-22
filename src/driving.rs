@@ -9,9 +9,11 @@ pub enum ExclusiveVoice {
     Recharge,
     Hover,
     Pickup(i32),
+    Contact(tm1_core::drive::ContactVoice),
 }
 
 pub struct BattleSound {
+    pub volume_percent: i32,
     pub exclusive: Option<ExclusiveVoice>,
     pub id: usize,
     pub position: [i32; 3],
@@ -518,6 +520,24 @@ pub fn advance(
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
+        let first_contact_sample = state.recharge_sound() + 5;
+        let cars = std::iter::once((state.player.position(), state.player.contact_sounds())).chain(
+            state
+                .opponents
+                .iter()
+                .map(|ai| (ai.position(), ai.contact_sounds())),
+        );
+        for (position, contacts) in cars {
+            for (voice, volume_percent) in contacts.into_iter().flatten() {
+                state.sounds.push(BattleSound {
+                    volume_percent,
+                    id: first_contact_sample + voice as usize,
+                    exclusive: Some(ExclusiveVoice::Contact(voice)),
+                    position,
+                    full_range: false,
+                });
+            }
+        }
         let mut effects = [[0; 5]; 122];
         let count = state.contacts.effects(&mut effects);
         for &[x, y, z, kind, life] in &effects[..count] {
@@ -538,6 +558,7 @@ pub fn advance(
                 _ => continue,
             };
             state.sounds.push(BattleSound {
+                volume_percent: 99,
                 exclusive: match kind {
                     26 => Some(ExclusiveVoice::Recharge),
                     401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
@@ -555,6 +576,7 @@ pub fn advance(
         for slot in 0..2 {
             if let Some([_, x, y, z, 1]) = state.contacts.merc_pose(slot) {
                 state.sounds.push(BattleSound {
+                    volume_percent: 99,
                     exclusive: Some(ExclusiveVoice::Hover),
                     id: state.recharge_sound() + 3,
                     position: [x, y, z],

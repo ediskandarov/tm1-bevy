@@ -264,6 +264,70 @@ fn engine_requests_match_disc() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn skid_and_crash_requests_match_disc() {
+    let mut r = Reference::new();
+    let table = r.cpu.call(0x801073bc, &[]);
+    for car in Vehicle::ROSTER.into_iter().chain([Vehicle::Minion]) {
+        for player in [false, true] {
+            let (address, flag, collision, name) = if player {
+                (PLAYER, 0xa2, 0x26a, 0x94)
+            } else {
+                (POLICE, 0x68, 0x15a, 0x3c)
+            };
+            for impact in [-1i16, 0, 1, 14, 33, 34, 39, 50, 51, 66, 67, 99, 120] {
+                for skid in [false, true] {
+                    let state = if player {
+                        &mut r.player.state[..]
+                    } else {
+                        &mut r.police.state[..]
+                    };
+                    state[name..name + 4].copy_from_slice(&(car as i32).to_le_bytes());
+                    state[flag] = u8::from(skid);
+                    state[collision..collision + 2].copy_from_slice(&impact.to_le_bytes());
+                    if !player {
+                        state[0x40] = 1;
+                    }
+                    r.cpu.put(address, state);
+                    let mut original = Vec::new();
+                    r.cpu.call_observed(
+                        0x80150790,
+                        &[0, address, player as u32],
+                        0x80000080,
+                        |cpu| {
+                            if cpu.pc() == 0x80106d60 && (106..=111).contains(&cpu.r[4]) {
+                                assert_eq!(cpu.r[7], 8);
+                                let rec = (table + 6 * cpu.r[4]) as usize & 0x1fffff;
+                                original.push((
+                                    cpu.ram[rec + 2] as usize,
+                                    cpu.word(cpu.r[29] + 16) as i32,
+                                ));
+                            }
+                        },
+                    );
+                    let port = if player {
+                        r.player.contact_sounds()
+                    } else {
+                        r.police.contact_sounds()
+                    };
+                    let sounds: Vec<_> = port
+                        .into_iter()
+                        .flatten()
+                        .map(|(kind, v)| (ContactVoice::PROGRAMS[kind as usize], v))
+                        .collect();
+                    assert_eq!(
+                        sounds, original,
+                        "{car:?} player {player} skid {skid} impact {impact}"
+                    );
+                }
+            }
+        }
+    }
+    r.police.state[0x40] = 0;
+    assert_eq!(r.police.contact_sounds(), [None; 2]);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn hud_opponent_matches_disc() {
     let mut r = Reference::new();
     let mut opponents = Opponent::spawn_bout(&mut r.player, &[Vehicle::Outlaw, Vehicle::Darkside]);

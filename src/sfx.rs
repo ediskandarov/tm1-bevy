@@ -104,7 +104,9 @@ impl Sounds {
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .chain(opponents.iter().map(|&car| car.sound_programs().1))
-            .chain([52, 53, 27, 38, 36, SweetTooth.sound_programs().1, 57, 58])
+            .chain([52, 53, 27, 38, 36])
+            .chain(tm1_core::drive::ContactVoice::PROGRAMS)
+            .chain([SweetTooth.sound_programs().1, 57, 58])
             .enumerate()
         {
             let sample = Sample::load(&bank, prog, id == 0)?;
@@ -180,7 +182,7 @@ pub fn update(
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
     mut engine: Query<&mut AudioSink, With<Engine>>,
-    shots: Query<(Entity, Option<&AudioSink>, &OneShot), Without<Engine>>,
+    mut shots: Query<(Entity, Option<&mut AudioSink>, &OneShot), Without<Engine>>,
     mut rivals: Query<(
         Entity,
         &RivalEngine,
@@ -268,7 +270,7 @@ pub fn update(
         }
     }
     *restart = drive.restart_count;
-    for (e, sink, _) in &shots {
+    for (e, sink, _) in &mut shots {
         if reset || drive.pause.is_some() {
             commands.entity(e).despawn();
         } else if let Some(sink) = sink {
@@ -293,26 +295,47 @@ pub fn update(
     let mut remaining = 22usize.saturating_sub(shots.iter().count() + active_engines);
     let mut active: Vec<_> = shots
         .iter()
-        .filter_map(|(_, _, shot)| shot.0.filter(|_| !reset))
+        .filter_map(|(entity, _, shot)| shot.0.filter(|_| !reset).map(|key| (key, entity)))
         .collect();
     for sound in &drive.sounds {
         let id = sound.id;
         let (pan, attenuation) = mix_position(sound.position);
         let bin = (pan * 2.).round() as i32 + 2;
         let attenuation = if sound.full_range { 1. } else { attenuation };
-        let volume = attenuation * if id == 2 { 0.16 } else { 0.44 };
-        if sound.exclusive.is_some_and(|voice| active.contains(&voice)) {
+        let volume =
+            attenuation * if id == 2 { 0.16 } else { 0.44 } * sound.volume_percent.max(0) as f32
+                / 99.;
+        let level = Volume::Linear(volume * gain);
+        let playback = || {
+            (
+                AudioPlayer::new(sounds.voices[id * 5 + bin as usize].clone()),
+                PlaybackSettings::DESPAWN.with_volume(level),
+            )
+        };
+        if let Some(key) = sound.exclusive
+            && let Some(&(_, entity)) = active.iter().find(|(active_key, _)| *active_key == key)
+        {
+            if matches!(key, crate::driving::ExclusiveVoice::Contact(_)) {
+                if let Ok((_, Some(mut sink), _)) = shots.get_mut(entity) {
+                    sink.set_volume(level);
+                } else {
+                    commands.entity(entity).insert(playback());
+                }
+            }
             continue;
         }
         if volume > 0. && remaining > 0 {
-            active.extend(sound.exclusive);
             remaining -= 1;
-            commands.spawn((
-                crate::campaign::StageEntity,
-                OneShot(sound.exclusive),
-                AudioPlayer::new(sounds.voices[id * 5 + bin as usize].clone()),
-                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * gain)),
-            ));
+            let entity = commands
+                .spawn((
+                    crate::campaign::StageEntity,
+                    OneShot(sound.exclusive),
+                    playback(),
+                ))
+                .id();
+            if let Some(key) = sound.exclusive {
+                active.push((key, entity));
+            }
         }
     }
 }

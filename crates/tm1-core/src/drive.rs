@@ -1352,6 +1352,53 @@ impl PlayerVehicle {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ContactVoice {
+    LightCrash,
+    MediumCrash,
+    HeavyCrash,
+    Skid,
+}
+impl ContactVoice {
+    pub const PROGRAMS: [usize; 4] = [30, 31, 32, 35];
+}
+
+fn contact_sounds(skid: bool, impact: i16) -> [Option<(ContactVoice, i32)>; 2] {
+    let impact = i32::from(impact);
+    let strength = impact + if impact >= 51 { 20 } else { 0 };
+    let crash = if strength < 34 {
+        (ContactVoice::LightCrash, strength * 3)
+    } else if strength < 67 {
+        (ContactVoice::MediumCrash, strength * 50 / 66 + 49)
+    } else {
+        (ContactVoice::HeavyCrash, strength * 50 / 99 + 49)
+    };
+    [
+        skid.then_some((ContactVoice::Skid, 99)),
+        (impact != 0).then_some(crash),
+    ]
+}
+
+impl PlayerVehicle {
+    pub fn contact_sounds(&self) -> [Option<(ContactVoice, i32)>; 2] {
+        contact_sounds(
+            self.state[0xa2] != 0,
+            i16::from_le_bytes([self.state[0x26a], self.state[0x26b]]),
+        )
+    }
+}
+impl Opponent {
+    pub fn contact_sounds(&self) -> [Option<(ContactVoice, i32)>; 2] {
+        if self.state[0x40] == 0 {
+            return [None; 2];
+        }
+        contact_sounds(
+            self.state[0x68] != 0,
+            i16::from_le_bytes([self.state[0x15a], self.state[0x15b]]),
+        )
+    }
+}
+
 fn engine_rev(speed: i32, gear_speed: i32, gear: u8, turbo: u8) -> i32 {
     if gear != 0 && turbo != 0 {
         return 99;
