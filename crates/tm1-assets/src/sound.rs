@@ -6,12 +6,42 @@ pub struct Tone {
     pub priority: u8,
     pub pcm: Vec<i16>,
     pub loop_start: Option<usize>,
+    repeat_prefix: Vec<i16>,
     pub center: u8,
     pub fine: u8,
     pub low: u8,
     pub high: u8,
     pub pan: u8,
     pub volume: u8,
+}
+
+impl Tone {
+    /// Extend the first pass through the loop with the samples affected by the
+    /// end block's predictor history. Rotate the loop point past that prefix.
+    pub fn prepare_loop(&mut self) {
+        if let Some(start) = &mut self.loop_start {
+            *start += self.repeat_prefix.len();
+            self.pcm.append(&mut self.repeat_prefix);
+        }
+    }
+}
+
+fn decode_block(block: &[u8], history: &mut [i32; 2], pcm: &mut Vec<i16>) -> Result<()> {
+    let filter = usize::from(block[0] >> 4);
+    let shift = block[0] & 15;
+    ensure!(filter < 5 && shift <= 12, "invalid ADPCM predictor");
+    let (c, d) = [(0, 0), (60, 0), (115, -52), (98, -55), (122, -60)][filter];
+    for &byte in &block[2..] {
+        for nibble in [byte & 15, byte >> 4] {
+            let residual = ((i32::from(nibble) << 28) >> 16) >> shift;
+            // The SPU shifts each history term before adding it to the residual.
+            let v =
+                (residual + ((history[0] * c) >> 6) + ((history[1] * d) >> 6)).clamp(-32768, 32767);
+            pcm.push(v as i16);
+            *history = [v, history[0]];
+        }
+    }
+    Ok(())
 }
 
 pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
@@ -48,26 +78,13 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
             let raw = bytes(bank, offset, 8 * u16le(bank, sizes + sample * 2)? as usize)?;
             ensure!(raw.len() % 16 == 0, "incomplete ADPCM block");
             let mut pcm = Vec::with_capacity(raw.len() / 16 * 28);
-            let (mut a, mut b) = (0i32, 0i32);
+            let mut history = [0; 2];
             let mut loop_start = None;
             for block in raw.chunks_exact(16) {
                 if block[1] & 4 != 0 {
                     loop_start = Some(pcm.len());
                 }
-                let filter = usize::from(block[0] >> 4);
-                let shift = block[0] & 15;
-                ensure!(filter < 5 && shift <= 12, "invalid ADPCM predictor");
-                let (c, d) = [(0, 0), (60, 0), (115, -52), (98, -55), (122, -60)][filter];
-                for &byte in &block[2..] {
-                    for nibble in [byte & 15, byte >> 4] {
-                        let residual = ((i32::from(nibble) << 28) >> 16) >> shift;
-                        // The SPU shifts each history term before adding it to the residual.
-                        let v = (residual + ((a * c) >> 6) + ((b * d) >> 6)).clamp(-32768, 32767);
-                        pcm.push(v as i16);
-                        b = a;
-                        a = v;
-                    }
-                }
+                decode_block(block, &mut history, &mut pcm)?;
                 if block[1] & 1 != 0 {
                     if block[1] & 2 == 0 {
                         loop_start = None;
@@ -76,8 +93,30 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
                 }
             }
             ensure!(!pcm.is_empty(), "empty VAB sample");
+            let mut repeat_prefix = Vec::new();
+            if let Some(start) = loop_start {
+                let end_history = history;
+                for frame in (start..pcm.len()).step_by(28) {
+                    let at = frame / 28 * 16;
+                    decode_block(&raw[at..at + 16], &mut history, &mut repeat_prefix)?;
+                    if history == [i32::from(pcm[frame + 27]), i32::from(pcm[frame + 26])] {
+                        break;
+                    }
+                }
+                ensure!(
+                    repeat_prefix.len() < pcm.len() - start || history == end_history,
+                    "unstable loop predictor in VAB sample {sample}"
+                );
+                while repeat_prefix
+                    .last()
+                    .is_some_and(|v| *v == pcm[start + repeat_prefix.len() - 1])
+                {
+                    repeat_prefix.pop();
+                }
+            }
             Ok(Tone {
                 priority: t[0],
+                repeat_prefix,
                 loop_start,
                 pcm,
                 center: t[4],

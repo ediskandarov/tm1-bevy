@@ -219,3 +219,58 @@ fn vab_predictors_match_pcm_reference() {
         assert_eq!(format!("{:x}", hash.finalize()), digest, "program {id}");
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn repeated_vab_blocks_keep_predictor_history() {
+    use sha2::{Digest, Sha256};
+    let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let bank = disc.read("SND/UACORE.VAB").unwrap();
+    // Hash of a second pass through the compressed blocks with the decoder
+    // history carried from the end of the first pass.
+    for (program, expected) in [
+        (
+            0,
+            "b75d7a244c461fab49c62caf1bc629a849a71c255fad6fc723133d6c8ac80a98",
+        ),
+        (
+            1,
+            "caa7a1022f3eb1bacd3c42657fabe580078183a318093f1f2d7f1563e9835eab",
+        ),
+        (
+            4,
+            "9b13358a10bd761663ffe17f9520a524d12e9ede97236e84c190128d0cb5edfa",
+        ),
+        (
+            9,
+            "c46215fcd60bc254ba3f83b09c00acce6b7c629d18449b73228d9a765c364860",
+        ),
+        (
+            12,
+            "d784f46014771dad16f14867ad6174d2f95c781fff6e97fb1cf3a62cc82cf371",
+        ),
+    ] {
+        let mut tone = tm1_assets::sound::program(&bank, program)
+            .unwrap()
+            .remove(0);
+        let first_end = tone.pcm.len();
+        let period = first_end - tone.loop_start.unwrap();
+        tone.prepare_loop();
+        let start = tone.loop_start.unwrap();
+        assert_eq!(tone.pcm.len() - start, period);
+        let mut repeated = tone.pcm[first_end..]
+            .iter()
+            .chain(tone.pcm[start..].iter().cycle());
+        for _ in 0..2 {
+            let mut hash = Sha256::new();
+            for sample in repeated.by_ref().take(period) {
+                hash.update(sample.to_le_bytes());
+            }
+            assert_eq!(
+                format!("{:x}", hash.finalize()),
+                expected,
+                "program {program}"
+            );
+        }
+    }
+}

@@ -29,7 +29,7 @@ impl EffectTone {
             .into_iter()
             .map(|tone| {
                 let priority = tone.priority;
-                let (sample, marker) = Sample::single(tone, false);
+                let (sample, marker) = Sample::single(tone, false, looping);
                 Self {
                     clip: pcm::StereoPcm::new(&sample.mix, marker.filter(|_| looping)),
                     priority,
@@ -50,7 +50,7 @@ impl EngineSample {
             .into_iter()
             .map(|tone| {
                 let priority = tone.priority;
-                let (sample, marker) = Sample::single(tone, true);
+                let (sample, marker) = Sample::single(tone, true, true);
                 let marker = marker
                     .ok_or_else(|| anyhow::anyhow!("missing engine VAB loop point for {car:?}"))?;
                 Ok(Self {
@@ -117,7 +117,14 @@ impl Sample {
         }
         Self { mix, pitch }
     }
-    fn single(tone: tm1_assets::sound::Tone, engine: bool) -> (Self, Option<usize>) {
+    fn single(
+        mut tone: tm1_assets::sound::Tone,
+        engine: bool,
+        looping: bool,
+    ) -> (Self, Option<usize>) {
+        if looping {
+            tone.prepare_loop();
+        }
         let first_loop_frame = tone
             .loop_start
             .map(|frame| (frame * 4096).div_ceil(sample_pitch(&tone, engine)));
@@ -154,7 +161,7 @@ struct Layer {
 impl PreparedTone {
     fn new(tone: tm1_assets::sound::Tone, engine: bool, looping: bool) -> Result<Self> {
         let priority = tone.priority;
-        let (sample, marker) = Sample::single(tone, engine);
+        let (sample, marker) = Sample::single(tone, engine, looping);
         let first_loop_frame = marker.filter(|_| looping);
         anyhow::ensure!(
             !engine || first_loop_frame.is_some(),
@@ -682,7 +689,7 @@ mod tests {
                 v * (f32::from(tone.pan) / 64.).min(1.)
             })
             .collect();
-        let (sample, loop_start) = Sample::single(tone, false);
+        let (sample, loop_start) = Sample::single(tone, false, false);
         assert_eq!(sample.mix.len(), frames);
         assert_eq!(loop_start, marker);
         assert!(samples.iter().any(|v| *v != 0.));
@@ -930,7 +937,7 @@ mod tests {
         {
             assert_eq!(pitch, EnginePitch::from_tone(&tone));
             assert_eq!(speed, engine_speed(pitch, 30));
-            let (dry, marker) = Sample::single(tone, true);
+            let (dry, marker) = Sample::single(tone, true, true);
             let mut drive = clips.get(&driving).unwrap().decoder();
             let mut screen = clips.get(&ending).unwrap().decoder();
             for frame in dry
@@ -1032,7 +1039,7 @@ mod tests {
             assert_eq!(voices.len(), count);
             if playbacks.is_empty() {
                 for ((entity, handle), tone) in voices.iter().zip(tones.drain(..)) {
-                    let (dry, marker) = Sample::single(tone, true);
+                    let (dry, marker) = Sample::single(tone, true, true);
                     let played = world
                         .resource::<Assets<pcm::StereoPcm>>()
                         .get(handle)
