@@ -2,6 +2,12 @@ use bevy::prelude::*;
 use std::time::Duration;
 use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 
+pub struct BattleSound {
+    pub id: usize,
+    pub position: [i32; 3],
+    pub full_range: bool,
+}
+
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
@@ -14,7 +20,7 @@ pub struct Drive {
     pub deck: tm1_core::drive::ArenaDeck,
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
-    pub sounds: Vec<(usize, [i32; 3])>,
+    pub sounds: Vec<BattleSound>,
     remainder: Duration,
     pub pause: Option<crate::pause::Page>,
     pub settings: crate::pause::Settings,
@@ -454,12 +460,16 @@ pub fn advance(
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
                 (1, 2) => 2,
-                (2, 7) | (28, 32) | (29 | 30, 16) => 3,
+                (33, 2) | (2, 7) | (28, 32) | (29 | 30, 16) => 3,
                 (12, 2) => 4,
                 (kind @ 13..=17, 2) => (kind - 6) as usize,
                 _ => continue,
             };
-            state.sounds.push((id, [x, y, z]));
+            state.sounds.push(BattleSound {
+                id,
+                position: [x, y, z],
+                full_range: kind == 33,
+            });
         }
         if state.player.health().0 > 0 && state.opponents.iter().all(|car| car.health().0 <= 0) {
             state.advance_victory_delay(3);

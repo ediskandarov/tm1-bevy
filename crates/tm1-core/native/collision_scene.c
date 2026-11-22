@@ -14,10 +14,11 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count, model_count;
-    // Slots 0..3 are Freeway barricades, 4 is the release, 5 the falling box.
-    DbSwitch* arena_switches[6];
-    int drop_box_tick;
-    u8 initial_switches[6];
+    // Freeway barricades occupy 0..3. Rooftop crate and window pairs follow.
+    DbSwitch* arena_switches[8];
+    int drop_box_tick, window_tick;
+    VECTOR3 window_pos;
+    u8 initial_switches[8];
     DbSwitch* stands[10];
     u16 stand_slots, active_stands;
     int regen_timer;
@@ -59,19 +60,19 @@ static bool load(CollisionScene* s, u32 addr, size_t offset, void* out, size_t n
     memcpy(out, s->bytes + i, n);
     return true;
 }
-static DbNode* decode(CollisionScene*, u32, unsigned);
+static DbNode* decode(CollisionScene*, u32, unsigned, VECTOR3);
 static bool children(
-    CollisionScene* s, u32 addr, size_t offset, DbNode** out, size_t count, unsigned depth)
+    CollisionScene* s, u32 addr, size_t offset, DbNode** out, size_t count, unsigned depth, VECTOR3 origin)
 {
     for (size_t i = 0; i < count; i++) {
         u32 ptr;
-        if (!load(s, addr, offset + 4 * i, &ptr, 4) || !(out[i] = decode(s, ptr, depth + 1)))
+        if (!load(s, addr, offset + 4 * i, &ptr, 4) || !(out[i] = decode(s, ptr, depth + 1, origin)))
             return false;
     }
     return true;
 }
 
-static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
+static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth, VECTOR3 origin)
 {
     if (depth >= 64 || addr < s->base || (addr & 3))
         return NULL;
@@ -94,7 +95,7 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
         break;
     case DB_OP_GROUP:
         if (!load(s, addr, 4, &n->grp.center, 20)
-            || !children(s, addr, 24, n->grp.child, n->grp.nChild, depth))
+            || !children(s, addr, 24, n->grp.child, n->grp.nChild, depth, origin))
             return NULL;
         break;
     case DB_OP_LOD:
@@ -105,18 +106,26 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
             DbLodRec* r = calloc(1, sizeof(*r));
             n->lod.rec[i] = r;
             if (!r || !load(s, addr, 20 + i * 4, &ptr, 4) || !load(s, ptr, 0, &r->far, 8)
-                || !children(s, ptr, 8, &r->child, 1, depth))
+                || !children(s, ptr, 8, &r->child, 1, depth, origin))
                 return NULL;
         }
         break;
     case DB_OP_ROT:
-        if (!load(s, addr, 4, &n->rot.mat, 36)
-            || !children(s, addr, 40, n->rot.child, n->rot.nChild, depth))
+        if (!load(s, addr, 4, &n->rot.mat, 36))
+            return NULL;
+        origin.vx += n->rot.mat.t[0];
+        origin.vy += n->rot.mat.t[1];
+        origin.vz += n->rot.mat.t[2];
+        if (!children(s, addr, 40, n->rot.child, n->rot.nChild, depth, origin))
             return NULL;
         break;
     case DB_OP_TRANS:
-        if (!load(s, addr, 4, &n->trans.ofs, 16)
-            || !children(s, addr, 20, n->trans.child, n->trans.nChild, depth))
+        if (!load(s, addr, 4, &n->trans.ofs, 16))
+            return NULL;
+        origin.vx += n->trans.ofs.vx;
+        origin.vy += n->trans.ofs.vy;
+        origin.vz += n->trans.ofs.vz;
+        if (!children(s, addr, 20, n->trans.child, n->trans.nChild, depth, origin))
             return NULL;
         if (UA_IS_PICKUP(n->h.kind) && n->trans.sub && n->trans.sub <= 50 && n->trans.nChild == 1) {
             int i = n->trans.sub - 1;
@@ -128,18 +137,23 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
         break;
     case DB_OP_ANIM:
         if (!load(s, addr, 4, &n->anim.sub, 12) || n->anim.cur >= n->anim.nChild
-            || !children(s, addr, 16, n->anim.child, n->anim.nChild, depth))
+            || !children(s, addr, 16, n->anim.child, n->anim.nChild, depth, origin))
             return NULL;
         break;
     case DB_OP_SWITCH:
         if (!load(s, addr, 4, &n->sw.sub, 4) || n->sw.sel >= n->sw.nChild
-            || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth))
+            || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth, origin))
             return NULL;
         int slot = -1;
         if (n->h.kind == UA_BARRICADE && n->sw.sub >= 1 && n->sw.sub <= 4)
             slot = n->sw.sub - 1;
         else if (n->h.kind == UA_DROP_BOX || n->h.kind == UA_FALLING_BOX)
             slot = n->h.kind == UA_DROP_BOX ? 4 : 5;
+        else if (n->h.kind == UA_UNK_1001) {
+            slot = 6;
+            s->window_pos = origin;
+        } else if (n->h.kind == UA_BREAKING_WINDOW)
+            slot = 7;
         if (slot >= 0) {
             s->arena_switches[slot] = &n->sw;
             s->initial_switches[slot] = n->sw.sel;
@@ -167,7 +181,7 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
             if (!load(s, addr, 12 + i * 4, &ptr, 4))
                 return NULL;
             if (ptr) {
-                DbNode* child = decode(s, ptr, depth + 1);
+                DbNode* child = decode(s, ptr, depth + 1, origin);
                 if (!child)
                     return NULL;
                 if (i)
@@ -229,8 +243,8 @@ CollisionScene* tm1_scene_load(
     s->slots = size / 4;
     s->nodes = calloc(s->slots, sizeof(DbNode*));
     s->visiting = calloc(s->slots, 1);
-    if (!s->nodes || !s->visiting || !(s->world.epNode = decode(s, world, 0))
-        || !(s->taxi.epNode = decode(s, taxi, 0))) {
+    if (!s->nodes || !s->visiting || !(s->world.epNode = decode(s, world, 0, (VECTOR3){ 0 }))
+        || !(s->taxi.epNode = decode(s, taxi, 0, (VECTOR3){ 0 }))) {
         tm1_scene_free(s);
         return NULL;
     }
@@ -255,7 +269,7 @@ CollisionScene* tm1_scene_load(
             if (root != (j ? opponents[j - 1] : taxi))
                 continue;
             Cs* cs = j ? &s->opponents[j - 1] : &s->taxi;
-            if (cs->drawMode || !(cs->epNode = decode(s, root, 0)))
+            if (cs->drawMode || !(cs->epNode = decode(s, root, 0, (VECTOR3){ 0 })))
                 goto invalid;
             cs->unkC0 = j ? 49 + j : 1;
             cs->unk0C = cs->drawMode = 1;
@@ -400,8 +414,8 @@ void tm1_reset_projectiles(CollisionScene* s)
     tm1_new_life(s);
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
-    s->drop_box_tick = 0;
-    for (int i = 0; i < 6; i++)
+    s->drop_box_tick = s->window_tick = 0;
+    for (int i = 0; i < 8; i++)
         if (s->arena_switches[i])
             s->arena_switches[i]->sel = s->initial_switches[i];
     s->active_stands = s->stand_slots;
@@ -509,7 +523,18 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
         current->drop_box_tick = 1;
         return;
     }
-    (void)sub;
+    if ((id <= 0 || id == 8) && tag == UA_UNK_1001) {
+        DbSwitch* pane = current->arena_switches[6];
+        if (pane && pane->sub == sub && pane->sel == 0 && pane->nChild > 1 && dmg > 0) {
+            pane->sel = 1;
+            current->window_tick = 1;
+            do_smoke(&current->window_pos);
+            do_puff(&current->window_pos);
+            arena_effect(&current->window_pos, 31);
+            arena_effect(&current->window_pos, 33);
+        }
+        return;
+    }
     (void)owner;
     if (id == 1 || (id >= 50 && id < 50 + current->opponent_count))
         carTakeHit(id, dmg, dir, 0);
@@ -619,9 +644,13 @@ static void check_smash(CarStats* st, CarMotion* motion, CarTire* tires, u8* fla
                 pos.vz = 1;
             explodeCreateFragments(arena_rand() & 3, &pos);
             switch (arena_rand() & 15) {
-            case 0:
             case 1:
+                arena_effect(&pos, 34);
+                break;
             case 3:
+                arena_effect(&pos, 31);
+                break;
+            case 0:
                 do_smoke(&pos);
                 break;
             case 2:
@@ -731,25 +760,30 @@ void UAeffectBarricade(s32 tag, s32 sub, s32 bearing)
         node->sel = bearing + 1;
 }
 
-void tm1_move_drop_box(void)
+static void advance_rooftop_switch(DbSwitch* node, int* tick)
 {
-    if (!current->drop_box_tick)
+    if (!*tick)
         return;
-    int branch = current->drop_box_tick - 1;
-    DbSwitch* box = current->arena_switches[5];
-    if (box && branch < box->nChild)
-        box->sel = branch;
-    if (++current->drop_box_tick == 10) {
-        if (box && box->nChild > 9)
-            box->sel = 9;
-        current->drop_box_tick = 0;
+    int branch = *tick - 1;
+    if (node && branch < node->nChild)
+        node->sel = branch;
+    if (++*tick == 10) {
+        if (node && node->nChild > 9)
+            node->sel = 9;
+        *tick = 0;
     }
+}
+
+void tm1_move_rooftop_targets(void)
+{
+    advance_rooftop_switch(current->arena_switches[5], &current->drop_box_tick);
+    advance_rooftop_switch(current->arena_switches[7], &current->window_tick);
 }
 
 uint64_t tm1_arena_switch_states(const CollisionScene* scene)
 {
     uint64_t states = 0;
-    for (int i = 0; i < 6; i++)
+    for (int i = 0; i < 8; i++)
         if (scene->arena_switches[i])
             states |= (uint64_t)scene->arena_switches[i]->sel << (8 * i);
     return states;
@@ -765,6 +799,10 @@ void arena_effect(VECTOR3* pos, s32 kind)
     e[3] = kind;
     switch (kind) {
     case 2: e[4] = 7; break;
+    case 8:
+    case 34: e[4] = 88; break;
+    case 31: e[4] = 24; break;
+    case 32: e[4] = 16; break;
     case 27: e[4] = 8; break;
     case 28: e[4] = 32; break;
     case 29:
@@ -774,9 +812,16 @@ void arena_effect(VECTOR3* pos, s32 kind)
 }
 void tm1_age_effects(void)
 {
-    for (int i = 0; i < 80; i++)
-        if (current->effects[i][4] > 0)
-            current->effects[i][4]--;
+    for (int i = 0; i < 80; i++) {
+        s32* e = current->effects[i];
+        if (e[4] <= 0)
+            continue;
+        if (e[3] == 8 || e[3] == 34)
+            e[2] += 10;
+        else if (e[3] == 32)
+            e[2] += 6;
+        e[4]--;
+    }
 }
 void explodeCreateFragments(s32 count, VECTOR3* pos)
 {
@@ -849,7 +894,7 @@ void do_simple_spark(VECTOR3* pos)
 }
 void do_puff(VECTOR3* pos)
 {
-    arena_effect(pos, 8);
+    arena_effect(pos, 32);
 }
 void SetFXSheet(s32 n, s32 r, s32 g, s32 b)
 {

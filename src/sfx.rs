@@ -210,14 +210,21 @@ pub fn update(
     let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
     let recharge_id = drive.recharge_sound();
     let mut recharge_playing = !reset && shots.iter().any(|(_, _, sound)| sound.0 == recharge_id);
-    for &(id, point) in &drive.sounds {
+    for sound in &drive.sounds {
+        let id = sound.id;
+        let point = sound.position;
         let car = drive.player.position();
         let offset = Vec3::from_array(std::array::from_fn(|i| (point[i] - car[i]) as f32));
         let range = offset.length();
         let pan = ((offset.x * heading.cos() - offset.y * heading.sin()) / range.max(100.))
             .clamp(-1., 1.);
         let bin = (pan * 2.).round() as i32 + 2;
-        let volume = (1. - range / 6000.).clamp(0., 1.) * if id == 2 { 0.16 } else { 0.44 };
+        let attenuation = if sound.full_range {
+            1.
+        } else {
+            (1. - range / 6000.).clamp(0., 1.)
+        };
+        let volume = attenuation * if id == 2 { 0.16 } else { 0.44 };
         if id == recharge_id && recharge_playing {
             continue;
         }

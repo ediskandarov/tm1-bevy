@@ -2301,6 +2301,22 @@ fn barricade_impacts_match_retail_switches() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn rooftop_drop_box_matches_retail() {
+    compare_rooftop_switches(1016, 1018, 4, [0x8018c5c8, 0x8018c5c4], 0x8014b0a4);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn rooftop_breaking_window_matches_retail() {
+    compare_rooftop_switches(1001, 1019, 6, [0x8019cef4, 0x8018c5cc], 0x8014b104);
+}
+
+fn compare_rooftop_switches(
+    trigger: u16,
+    animation: u16,
+    first_slot: u8,
+    globals: [u32; 2],
+    advance: u32,
+) {
     unsafe extern "C" {
         fn bulDispatchDamage(id: i32, tag: i32, sub: i32, damage: i32, dir: *const i32, owner: i32);
     }
@@ -2316,7 +2332,10 @@ fn rooftop_drop_box_matches_retail() {
             .unwrap();
         let mut r = Reference::on_level(vehicle, true, level);
         let mut records = Vec::new();
-        for (slot, kind, global) in [(4, 1016u16, 0x8018c5c8), (5, 1018, 0x8018c5c4)] {
+        for (slot, kind, global) in [
+            (first_slot, trigger, globals[0]),
+            (first_slot + 1, animation, globals[1]),
+        ] {
             let offset = (0..data.len() - 8)
                 .step_by(4)
                 .find(|&i| data[i] == 9 && data[i + 2..i + 4] == kind.to_le_bytes())
@@ -2332,11 +2351,18 @@ fn rooftop_drop_box_matches_retail() {
             );
             records.push(offset + 7);
         }
-        // Aim the first midpoint collision sample inside the suspended crate.
+        if trigger == 1001 {
+            // Register a one-hit target using the retail initializer. The impact
+            // still has to intersect the window in the original DMD hierarchy.
+            put(&mut r.cpu, 0x801ac968 + 8, u32::MAX);
+            r.cpu.call(0x80147bd0, &[1001, 0, 0x800be040]);
+            r.cpu.put(0x80108604, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        // Aim the midpoint collision sample inside the intact model.
         let vertices = world
             .polygons
             .iter()
-            .filter(|p| p.arena_switches.contains(&(4, 0)))
+            .filter(|p| p.arena_switches.contains(&(first_slot, 0)))
             .flat_map(|p| p.vertices.iter().map(|v| v.position));
         let mut lo = [f32::INFINITY; 3];
         let mut hi = [f32::NEG_INFINITY; 3];
@@ -2347,6 +2373,13 @@ fn rooftop_drop_box_matches_retail() {
             }
         }
         let mut pos: [i32; 3] = std::array::from_fn(|i| ((lo[i] + hi[i]) * 0.5) as i32);
+        // The pane is a plane. Its collision volume lies behind the visible surface.
+        let center = pos;
+        pos = (0..=400)
+            .flat_map(|d| [center[0] - d, center[0] + d])
+            .map(|x| [x, center[1], center[2]])
+            .find(|&p| r.scene.world_point(p)[2] == i32::from(trigger))
+            .expect("tagged trigger volume");
         pos[0] -= 125;
         let dir = [4096, 0, 0];
         unsafe extern "C" {
@@ -2370,27 +2403,131 @@ fn rooftop_drop_box_matches_retail() {
         r.cpu.call(0x8010d03c, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         assert_eq!(r.cpu.ram[0x188b8 + records[0]], 1, "retail shot at {pos:?}");
-        assert_eq!(r.scene.arena_switch_branches()[4], 1);
+        assert_eq!(r.scene.arena_switch_branches()[usize::from(first_slot)], 1);
+        if trigger == 1001 {
+            let mut effects = [[0; 5]; 122];
+            let count = r.scene.effects(&mut effects);
+            let steam = effects[..count]
+                .iter()
+                .find(|e| e[3] == 31 && e[4] == 24)
+                .unwrap();
+            for (kind, life) in [(8, 88), (32, 16), (33, 2)] {
+                assert!(
+                    effects[..count]
+                        .iter()
+                        .any(|e| e[..3] == steam[..3] && e[3..] == [kind, life])
+                );
+            }
+        }
         for tick in 0..25 {
             if matches!(tick, 4 | 15) {
                 let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
                 unsafe {
                     tm1_use_scene(r.scene.native.as_ptr());
-                    bulDispatchDamage(8, 1016, 0, 1, std::ptr::null(), 0);
+                    bulDispatchDamage(8, i32::from(trigger), 0, 1, std::ptr::null(), 0);
                     tm1_use_scene(std::ptr::null_mut());
                 }
-                r.cpu.call(0x80110f74, &[8, 1016, 0, 1]);
+                r.cpu.call(0x80110f74, &[8, u32::from(trigger), 0, 1]);
             }
             r.scene
                 .step(&mut r.player, &mut r.police, Input::default(), 3);
-            r.cpu.call(0x8014b0a4, &[]);
+            r.cpu.call(advance, &[]);
             for (i, &offset) in records.iter().enumerate() {
                 assert_eq!(
-                    r.scene.arena_switch_branches()[4 + i],
+                    r.scene.arena_switch_branches()[usize::from(first_slot) + i],
                     r.cpu.ram[0x188b8 + offset],
                     "tick {tick}, switch {i}"
                 );
             }
         }
+        r.scene.reset_projectiles();
+        assert_eq!(
+            &r.scene.arena_switch_branches()[usize::from(first_slot)..usize::from(first_slot) + 2],
+            &[0, 0]
+        );
+        let impact = [pos[0] + 125, pos[1], pos[2]];
+        assert_eq!(r.scene.world_point(impact)[2], i32::from(trigger));
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn smoke_puff_and_steam_match_retail() {
+    let r = Reference::new();
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
+    let sprite = (0..data.len() - 4)
+        .step_by(4)
+        .find(|&p| data[p..p + 4] == [0, 255, 0x8b, 2])
+        .unwrap() as u32
+        + 0x800188b8;
+    cpu.put(0x800188b8, &data);
+    cpu.call(0x8013785c, &[sprite]);
+    for (steam, address) in [(false, 0x19c738), (true, 0x19c8c8)] {
+        for (i, frame) in dmd.smoke_frames(steam).unwrap().iter().enumerate() {
+            let at = address + 8 * i;
+            assert_eq!(frame.uv[0], cpu.ram[at..at + 2]);
+            assert_eq!(frame.width, cpu.ram[at + 2]);
+            assert_eq!(frame.uv[2][1].wrapping_sub(frame.uv[0][1]), cpu.ram[at + 3]);
+            assert_eq!(frame.texture.page.to_le_bytes(), cpu.ram[at + 4..at + 6]);
+            assert_eq!(frame.texture.clut.to_le_bytes(), cpu.ram[at + 6..at + 8]);
+        }
+    }
+    const PYRO: u32 = 0x8019a088;
+    for i in 0..80 {
+        put(&mut cpu, PYRO + i * 64 + 24, u32::MAX);
+    }
+    let pos = [42i32, 100, 400];
+    for (i, value) in pos.into_iter().enumerate() {
+        put(&mut cpu, 0x800be000 + 4 * i as u32, value as u32);
+    }
+    for address in [0x80137140, 0x8013721c, 0x80137190, 0x801371cc] {
+        cpu.call(address, &[0x800be000]);
+    }
+    unsafe extern "C" {
+        fn do_smoke(pos: *const i32);
+        fn do_puff(pos: *const i32);
+        fn arena_effect(pos: *const i32, kind: i32);
+        fn tm1_age_effects();
+    }
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        tm1_use_scene(r.scene.native.as_ptr());
+        do_smoke(pos.as_ptr());
+        do_puff(pos.as_ptr());
+        arena_effect(pos.as_ptr(), 31);
+        arena_effect(pos.as_ptr(), 34);
+        tm1_use_scene(std::ptr::null_mut());
+    }
+    for tick in 0..=88 {
+        let mut effects = [[0; 5]; 122];
+        let count = r.scene.effects(&mut effects);
+        for (slot, (kind, ttl)) in [(8, 88), (32, 16), (31, 24), (34, 88)]
+            .into_iter()
+            .enumerate()
+        {
+            let row = effects[..count].iter().find(|e| e[3] == kind);
+            let addr = PYRO + slot as u32 * 64;
+            let age = cpu.word(addr + 24) as i32;
+            assert_eq!(age >= 0, row.is_some(), "tick {tick} kind {kind}");
+            if let Some(row) = row {
+                assert_eq!(row[..3], [0, 4, 8].map(|off| cpu.word(addr + off) as i32));
+                assert_eq!(row[4], ttl - tick);
+                let cycle = if matches!(kind, 8 | 34) && tick >= 24 {
+                    (tick - 24) % 32
+                } else {
+                    tick
+                };
+                assert_eq!(cycle, age, "tick {tick} kind {kind}");
+            }
+        }
+        unsafe {
+            tm1_use_scene(r.scene.native.as_ptr());
+            tm1_age_effects();
+            tm1_use_scene(std::ptr::null_mut());
+        }
+        cpu.call(0x801360bc, &[]);
     }
 }

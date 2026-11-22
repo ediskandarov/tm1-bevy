@@ -53,6 +53,7 @@ pub struct Arena {
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     flame_frames: [SpriteFrame; 10],
+    smoke_frames: [[SpriteFrame; 16]; 2],
     vehicle_start: usize,
     body_ranges: Vec<[std::ops::Range<usize>; 3]>,
     overview: bool,
@@ -84,6 +85,7 @@ impl Arena {
         missile_models: [Option<Scene>; 2],
         explosion_frames: [SpriteFrame; 16],
         flame_frames: [SpriteFrame; 10],
+        smoke_frames: [[SpriteFrame; 16]; 2],
         contrail_frames: [SpriteFrame; 8],
         icons: tm1_assets::scene::DashboardIcons,
         arrows: [SpriteFrame; 4],
@@ -114,6 +116,7 @@ impl Arena {
         for (frame, semi) in explosion_frames
             .iter()
             .chain(&flame_frames)
+            .chain(smoke_frames.iter().flatten())
             .chain(&contrail_frames)
             .chain(&arrows)
             .map(|f| (f, true))
@@ -161,6 +164,7 @@ impl Arena {
             body_ranges,
             explosion_frames,
             flame_frames,
+            smoke_frames,
             contrail_frames,
             overview: false,
             radar: true,
@@ -1078,6 +1082,16 @@ fn draw_view(
         .iter()
         .filter_map(|&[x, y, z, kind, ttl]| {
             let (frame, size) = match kind {
+                8 | 34 => {
+                    let age = 88 - ttl;
+                    let frame = if age < 24 { age } else { (age - 24) % 32 } / 2;
+                    (
+                        &arena.smoke_frames[0][frame as usize],
+                        if kind == 8 { 16 } else { 32 },
+                    )
+                }
+                31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
+                32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
                 28 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
                 29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
@@ -1090,11 +1104,16 @@ fn draw_view(
         let center = world(position.map(|v| v as f32));
         let radius = f32::from(frame.width) * size as f32 / 8.;
         let slot = arena.tiles[&(Some(frame.texture), true)];
+        let batch = if (frame.texture.page >> 5) & 3 == 1 {
+            &mut additive
+        } else {
+            &mut transparent
+        };
         for &i in indices(4) {
             let offset = right * if i & 1 == 0 { -radius } else { radius }
                 + up * if i < 2 { radius } else { -radius };
             let [u, v] = frame.uv[i];
-            additive.push(
+            batch.push(
                 center + offset,
                 arena.uv(slot, Vec2::new(u.into(), v.into())),
                 [1.; 4],
@@ -1160,10 +1179,9 @@ fn draw_view(
         let (size, tint) = match kind {
             2 => (12. + (7 - ttl) as f32 * 6., [1., 0.24, 0.04, 0.82]),
             7 => (3., [0.7, 0.5, 0.3, 1.]),
-            8 => (8., [0.4, 0.39, 0.38, 0.55]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 26..=30 => continue,
+            3 | 8 | 26..=34 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };

@@ -1062,7 +1062,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     arena_regenerate_pickups();
     tm1_regenerate_stands();
     if (current_level == LEVEL6_ROOFTOPS)
-        tm1_move_drop_box();
+        tm1_move_rooftop_targets();
     UpdateNumPotHoles();
     tm1_store_battle(battle);
     *seed = random_state;

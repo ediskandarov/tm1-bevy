@@ -203,6 +203,10 @@ impl<'a> Dmd<'a> {
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
         self.sprite_frames(654, true)
     }
+    pub fn smoke_frames(&self, steam: bool) -> Result<[SpriteFrame; 16]> {
+        let object = self.sprite_node(0, 651)?;
+        self.read_sprite_frames(object, steam, u32le(self.data, object + 16)? as usize)
+    }
     pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
         self.sprite_frames(650, true)
     }
@@ -588,11 +592,14 @@ impl<'a> Dmd<'a> {
                     .map_or(d[p + 7], |(_, stage)| stage);
                 ensure!(child < d[p + 6], "switch child out of range");
                 let kind = u16le(d, p + 2)?;
-                if matches!(kind, 700 | 1016 | 1018) || (kind == 920 && d[p + 6] == 2) {
+                if matches!(kind, 700 | 1001 | 1016 | 1018 | 1019) || (kind == 920 && d[p + 6] == 2)
+                {
                     let id = u16le(d, p + 4)?;
                     let slot = match kind {
                         1016 => 4,
                         1018 => 5,
+                        1001 => 6,
+                        1019 => 7,
                         _ => {
                             ensure!(
                                 (1..=if kind == 700 { 4 } else { 10 }).contains(&id),

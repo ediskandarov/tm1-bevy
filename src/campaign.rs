@@ -136,6 +136,7 @@ impl Stage {
             ],
             dmd.explosion_frames()?,
             dmd.flame_frames()?,
+            [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],
             dmd.contrail_frames()?,
             dmd.dashboard_icons()?,
             dmd.radar_arrows()?,
