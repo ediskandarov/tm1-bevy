@@ -106,3 +106,6 @@ s16 GetNumAICars(void);
 
 u8 tm1_recharge_player(PlayerCar*);
 void tm1_regenerate_stands(void);
+void tm1_begin_radar_reports(void);
+void tm1_report_radar(const PlayerCar*, const VECTOR3*, int slot);
+void tm1_report_radar_stands(const PlayerCar*);

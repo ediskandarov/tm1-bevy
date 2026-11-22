@@ -66,6 +66,9 @@ typedef struct CollisionScene {
     int drop_box_tick, window_tick;
     u8 initial_switches[8];
     DbSwitch* stands[10];
+    VECTOR3 stand_positions[10];
+    s32 radar_reports[18][4];
+    size_t radar_count;
     u16 stand_slots, active_stands;
     int regen_timer;
     Bullet bullets[40];
@@ -339,6 +342,8 @@ static bool scan_targets(CollisionScene* s, DbNode* n, VECTOR3 pos, unsigned* vi
             && scan_targets(s, n->ctrl.childOut, pos, visits);
     }
 
+    if (op == DB_OP_SWITCH && type == 920 && n->sw.sub >= 1 && n->sw.sub <= 10)
+        s->stand_positions[n->sw.sub - 1] = pos;
     if (op == DB_OP_SWITCH && type >= 753 && type <= 755 && n->sw.sub >= 1 && n->sw.sub <= 25)
         s->cops[n->sw.sub - 1] = (StaticCop){ &n->sw, pos, 0, 6 };
     int group = damage_node_class(type);
@@ -655,6 +660,28 @@ u32 tm1_stand_state(const CollisionScene* scene)
         if (scene->stands[i] && scene->stands[i]->sel)
             state |= 1u << (16+i);
     return state;
+}
+
+// PlayGame records each target before the next actor can move or damage it.
+void tm1_begin_radar_reports(void) { current->radar_count = 0; }
+void tm1_report_radar(const PlayerCar* player, const VECTOR3* pos, int slot)
+{
+    s32* report = current->radar_reports[current->radar_count++];
+    report[0] = slot;
+    report[1] = pos->vx - player->motion.pos.vx;
+    report[2] = pos->vy - player->motion.pos.vy;
+    report[3] = player->motion.rot.vz;
+}
+void tm1_report_radar_stands(const PlayerCar* player)
+{
+    for (int slot = 0; slot < 10; slot++)
+        if (current->active_stands & (1u << slot))
+            tm1_report_radar(player, &current->stand_positions[slot], -1);
+}
+size_t tm1_radar_reports(const CollisionScene* scene, s32 reports[18][4])
+{
+    memcpy(reports, scene->radar_reports, scene->radar_count * sizeof(*reports));
+    return scene->radar_count;
 }
 
 u8 tm1_recharge_player(PlayerCar* player)

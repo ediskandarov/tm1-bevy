@@ -11,6 +11,10 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 Single-player stage setup carries the deal sequence through card angles and pedestrian setup. It samples the counter again before placing vehicles and when entering combat, following the reseeds in uaInitDB and InitLevel. The shell then consumes twelve BIOS random values for six windshield marks in both game modes. A new life samples a fresh combat seed and regenerates the marks. Keyboard restart restores the original stage combat seed and spawn layout. The host counter models the JP counter frequency and wraparound. Exact boot and disc-load timings are platform dependent.
 
+## Battle radar
+
+The single-player radar collects opponents during their individual updates and active repair stands before regeneration. It displays the previous simulation pass, retaining up to twelve marks and four directional flags while hidden. Repair stands blink with the original radar buffer. A disc-backed test compares the buffered marks, colors, coordinates and edge flags with the JP executable across hide and show transitions, including a full buffer. The Cyburbia Metal capture at `local/cyburbia-radar.png` shows Road Kill at update 40. Framebuffer blending has not been compared pixel by pixel.
+
 ## Rival names and font sprites
 
 L displays each surviving opponent on its original roster row. Destroying a car leaves its row blank. The HUD uses the JP sign strings, including their one-pixel cursor backsteps, and draws the glyph sprites in ordering-table order. Font colors modulate the five-bit texture channels before framebuffer expansion. A disc-backed test runs the JP list renderer, reads its linked sprite packets and compares all 320 × 240 RGBA pixels across two eight-car rosters, partial and empty lists, and the hidden state. The garage takes its names from the separate vehicle selection table and also uses sprite order. A Metal capture is reproducible with `--level cyburbia --car road-kill --demo-rivals-screenshot local/cyburbia-rivals.png 40`.

@@ -196,6 +196,23 @@ impl Vehicle {
         Self::Hammerhead,
         Self::RoadKill,
     ];
+    fn radar_color(self) -> [u8; 3] {
+        use Vehicle::*;
+        match self {
+            SweetTooth => [255, 144, 186],
+            YellowJacket => [255, 255, 0],
+            Darkside | Minion => [0, 0, 0],
+            Hammerhead => [0, 233, 0],
+            Outlaw => [0, 0, 255],
+            CrimsonFury => [255, 0, 0],
+            Warthog => [130, 202, 54],
+            MrGrimm => [255, 102, 0],
+            PitViper => [199, 113, 0],
+            Thumper => [255, 0, 255],
+            Spectre => [255, 255, 255],
+            RoadKill => [155, 155, 50],
+        }
+    }
     pub fn sound_programs(self) -> (usize, usize) {
         use Vehicle::*;
         // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
@@ -301,15 +318,64 @@ impl ArenaDeck {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RadarSignal {
     Contact { x: i32, y: i32, rgb: [u8; 3] },
-    Up,
-    Down,
-    Right,
-    Left,
+    Stand { x: i32, y: i32 },
 }
 
+#[derive(Default)]
+pub struct RadarFrame {
+    pub marks: Vec<RadarSignal>,
+    pub edges: [bool; 4],
+}
+#[derive(Default)]
+pub struct Radar {
+    pending: RadarFrame,
+    displayed: RadarFrame,
+    visible: bool,
+    alternate: bool,
+    ready: bool,
+}
+impl Radar {
+    /// RT displays and clears the previous PlayGame pass only when radar is on.
+    pub fn display(&mut self, enabled: bool) {
+        self.visible = enabled && self.ready;
+        if self.visible {
+            std::mem::swap(&mut self.pending, &mut self.displayed);
+            self.pending.marks.clear();
+            self.pending.edges = [false; 4];
+            self.alternate = !self.alternate;
+        }
+    }
+    pub fn frame(&self) -> Option<&RadarFrame> {
+        self.visible.then_some(&self.displayed)
+    }
+    fn add(&mut self, [x, y]: [i32; 2], vehicle: Option<Vehicle>) {
+        let inside = (-36..36).contains(&x) && (-22..22).contains(&y);
+        let room = self.pending.marks.len() < 12;
+        if let Some(vehicle) = vehicle {
+            if inside && room {
+                self.pending.marks.push(RadarSignal::Contact {
+                    x,
+                    y,
+                    rgb: vehicle.radar_color(),
+                });
+            } else {
+                let edge = if !(-36..36).contains(&x) && x.abs() > y.abs() {
+                    if x < 0 { 3 } else { 2 }
+                } else if y > 0 {
+                    1
+                } else {
+                    0
+                };
+                self.pending.edges[edge] = true;
+            }
+        } else if inside && room && !self.alternate {
+            self.pending.marks.push(RadarSignal::Stand { x, y });
+        }
+    }
+}
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
     cheat_controls: bool,
@@ -659,12 +725,9 @@ impl PlayerVehicle {
         ])
     }
     /// HUD.c projects horizontal world offsets into the 72 by 44 radar field.
-    pub fn radar_offset(&self, position: [i32; 3]) -> [i32; 2] {
-        let origin = self.position();
-        let dx = position[0].wrapping_sub(origin[0]);
-        let dy = position[1].wrapping_sub(origin[1]);
-        let s = self.sine(self.heading());
-        let c = self.sine(self.heading().wrapping_add(1024));
+    fn radar_offset(&self, dx: i32, dy: i32, heading: i32) -> [i32; 2] {
+        let s = self.sine(heading);
+        let c = self.sine(heading.wrapping_add(1024));
         let x = dx.wrapping_mul(c).wrapping_sub(dy.wrapping_mul(s)) / 0x14d555;
         let y = dx
             .wrapping_mul(s)
@@ -672,37 +735,6 @@ impl PlayerVehicle {
             .wrapping_neg()
             / 0x14d555;
         [x, y]
-    }
-    pub fn radar_signal(&self, position: [i32; 3], vehicle: Vehicle) -> RadarSignal {
-        let [x, y] = self.radar_offset(position);
-        if (-36..36).contains(&x) && (-22..22).contains(&y) {
-            use Vehicle::*;
-            let rgb = match vehicle {
-                SweetTooth => [255, 144, 186],
-                YellowJacket => [255, 255, 0],
-                Darkside | Minion => [0, 0, 0],
-                Hammerhead => [0, 233, 0],
-                Outlaw => [0, 0, 255],
-                CrimsonFury => [255, 0, 0],
-                Warthog => [130, 202, 54],
-                MrGrimm => [255, 102, 0],
-                PitViper => [199, 113, 0],
-                Thumper => [255, 0, 255],
-                Spectre => [255, 255, 255],
-                RoadKill => [155, 155, 50],
-            };
-            RadarSignal::Contact { x, y, rgb }
-        } else if !(-36..36).contains(&x) && x.abs() > y.abs() {
-            if x < 0 {
-                RadarSignal::Left
-            } else {
-                RadarSignal::Right
-            }
-        } else if y > 0 {
-            RadarSignal::Down
-        } else {
-            RadarSignal::Up
-        }
     }
     /// UA.c GetPlayerSpeed, in displayed MPH.
     pub fn speed_mph(&self, fields: u8) -> i32 {
@@ -1463,6 +1495,7 @@ impl PreparedBout {
 }
 
 pub struct CollisionScene {
+    pub radar: Radar,
     duel_updated: [u8; 2],
     native: std::ptr::NonNull<std::ffi::c_void>,
     opponent_count: usize,
@@ -1513,6 +1546,7 @@ impl CollisionScene {
             native,
             opponent_count: if duel { 0 } else { opponents.len() },
             battle: [0; 3],
+            radar: Radar::default(),
             duel_returns: Vec::new(),
             duel_winner: None,
             duel_updated: [0; 2],
@@ -1643,6 +1677,7 @@ impl CollisionScene {
             );
             tm1_new_life(self.native.as_ptr());
         }
+        self.radar = Radar::default();
         self.battle = [0; 3];
         self.audio.clear();
     }
@@ -1680,6 +1715,7 @@ impl CollisionScene {
         unsafe { tm1_level_won(self.native.as_ptr()) }
     }
     pub fn reset_projectiles(&mut self) {
+        self.radar = Radar::default();
         self.battle = [0; 3];
         self.audio.clear();
         unsafe {
@@ -1837,6 +1873,7 @@ impl CollisionScene {
         pads: u32,
         fields: u8,
     ) {
+        self.radar.display(true);
         let prepared = self.begin_bout_step(player, opponents, fields);
         self.finish_bout_step(player, opponents, pads, prepared);
     }
@@ -1871,6 +1908,17 @@ impl CollisionScene {
             prepared.fields,
             Some(prepared.update_player),
         );
+        unsafe extern "C" {
+            fn tm1_radar_reports(scene: *const std::ffi::c_void, out: *mut [i32; 4]) -> usize;
+        }
+        let mut reports = [[0; 4]; 18];
+        self.radar.ready = true;
+        let count = unsafe { tm1_radar_reports(self.native.as_ptr(), reports.as_mut_ptr()) };
+        for &[slot, dx, dy, heading] in &reports[..count] {
+            let vehicle = (slot >= 0).then(|| opponents[slot as usize].vehicle());
+            self.radar
+                .add(player.radar_offset(dx, dy, heading), vehicle);
+        }
         player.cap_turbo_reserve();
     }
 

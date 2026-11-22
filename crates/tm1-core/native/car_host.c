@@ -1197,17 +1197,21 @@ u8 tm1_bout_phase(bool prepare, bool update_player, struct CollisionScene* scene
     }
     capture_car_sounds(0, sounds[0], player.flags, &player.motion, &player.collision);
     tm1_start_death(&player, 1);
+    tm1_begin_radar_reports();
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
     for (int i = 0; i < count; i++) {
         AICarUpdate(&cars[i]);
         contact_phase(&player, &cars[i], 0, fields);
         if (cars[i].unk40)
             capture_car_sounds(i + 1, sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision);
+        if (cars[i].stats.unk40 > 0)
+            tm1_report_radar(&player, &cars[i].motion.pos, i);
         tm1_start_death(&cars[i], 0);
     }
     tm1_check_victory(&player, cars, count);
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();
+    tm1_report_radar_stands(&player);
     tm1_regenerate_stands();
     tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
     move_arena_targets(&player.motion.pos);

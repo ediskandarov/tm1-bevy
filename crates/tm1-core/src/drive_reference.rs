@@ -4250,6 +4250,10 @@ fn radar_signals_original() {
     const RADAR: u32 = 0x8019e648;
     const OFFSET: u32 = 0x80030000;
     cpu.call(0x8014728c, &[]);
+    let mut radar = Radar {
+        ready: true,
+        ..Default::default()
+    };
     for heading in [0i32, 193, 512, 1024, -1536, 2048, 3737] {
         player.state[0x3a8..0x3ac].copy_from_slice(&heading.to_le_bytes());
         for vehicle in Vehicle::ROSTER {
@@ -4269,16 +4273,16 @@ fn radar_signals_original() {
                 [-17200, -17000],
                 [-15000, 17000],
             ] {
-                let [x, y, z] = player.position();
-                let sig = player.radar_signal([x + dx, y + dy, z], vehicle);
+                radar.display(true);
+                radar.add(player.radar_offset(dx, dy, heading), Some(vehicle));
                 for (i, v) in [dx, dy, 0].into_iter().enumerate() {
                     put(&mut cpu, OFFSET + 4 * i as u32, v as u32);
                 }
                 cpu.call(0x80146bd4, &[]);
                 cpu.call(0x80147508, &[vehicle as u32, OFFSET, heading as u32]);
                 let edges = cpu.word(RADAR + 0x35c);
-                match sig {
-                    RadarSignal::Contact { x, y, rgb } => {
+                match radar.pending.marks.as_slice() {
+                    &[RadarSignal::Contact { x, y, rgb }] => {
                         assert_eq!(edges, 0);
                         assert_eq!(cpu.word(RADAR + 0x360), 2);
                         let prim = RADAR + 0x30 + cpu.word(RADAR + 0x36c) * 16;
@@ -4291,22 +4295,64 @@ fn radar_signals_original() {
                             (x + 53) as u32 | (((y + 55) as u32) << 16)
                         );
                     }
-                    edge => {
+                    _ => {
+                        assert!(radar.pending.marks.is_empty());
                         assert_eq!(cpu.word(RADAR + 0x360), 0);
-                        assert_eq!(
-                            edges,
-                            match edge {
-                                RadarSignal::Up => 1,
-                                RadarSignal::Down => 1 << 8,
-                                RadarSignal::Right => 1 << 16,
-                                RadarSignal::Left => 1 << 24,
-                                _ => unreachable!(),
-                            }
-                        );
+                        assert_eq!(edges, u32::from_le_bytes(radar.pending.edges.map(u8::from)));
                     }
                 }
             }
         }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn radar_hidden_frames_and_repair_stands_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let player = PlayerVehicle::from_executable(&exe).unwrap();
+    let mut cpu = Cpu::new(&exe);
+    const RADAR: u32 = 0x8019e648;
+    const OFFSET: u32 = 0x80030000;
+    cpu.call(0x8014728c, &[]);
+    let mut radar = Radar::default();
+    for visible in [true, false, false, true, true, true] {
+        radar.display(visible);
+        if visible && radar.ready {
+            let frame = radar.frame().unwrap();
+            assert_eq!(frame.marks.len() as u32 * 2, cpu.word(RADAR + 0x360));
+            assert_eq!(
+                u32::from_le_bytes(frame.edges.map(u8::from)),
+                cpu.word(RADAR + 0x35c)
+            );
+            for (i, signal) in frame.marks.iter().enumerate() {
+                let (x, y, rgb) = match *signal {
+                    RadarSignal::Stand { x, y } => (x + 52, y + 54, [255, 200, 255]),
+                    RadarSignal::Contact { x, y, rgb } => (x + 53, y + 55, rgb),
+                };
+                let prim = RADAR + 0x30 + 16 * (cpu.word(RADAR + 0x36c) + 4 * i as u32);
+                assert_eq!(cpu.word(prim + 8), x as u32 | ((y as u32) << 16));
+                assert_eq!(
+                    cpu.word(prim + 4) & 0xffffff,
+                    u32::from_le_bytes([rgb[0], rgb[1], rgb[2], 0])
+                );
+            }
+            cpu.call(0x80146bd4, &[]);
+        } else {
+            assert!(radar.frame().is_none());
+        }
+        for (i, dx) in [0i32, 2, 500, 3000, -3900, 730, 19000, -19000]
+            .into_iter()
+            .enumerate()
+        {
+            let vehicle = (i != 0).then_some(Vehicle::ROSTER[i]);
+            put(&mut cpu, OFFSET, dx as u32);
+            put(&mut cpu, OFFSET + 4, 640);
+            cpu.call(0x80147508, &[vehicle.map_or(920, |v| v as u32), OFFSET, 0]);
+            radar.add(player.radar_offset(dx, 640, 0), vehicle);
+        }
+        radar.ready = true;
     }
 }
 

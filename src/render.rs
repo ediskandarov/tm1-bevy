@@ -1000,8 +1000,8 @@ pub fn update(
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
     windshield.write(&mut meshes, &arena.windshield_mesh);
-    if drive.radar {
-        draw_radar(&mut screen_batch, &arena, &drive, &window);
+    if let Some(radar) = drive.contacts.radar.frame() {
+        draw_radar(&mut screen_batch, &arena, radar, &window);
     }
     screen_batch.write(&mut meshes, &arena.mesh);
     draw_view(
@@ -1771,7 +1771,12 @@ fn draw_instruments(
         [120, 36, 36],
     );
 }
-fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, window: &Window) {
+fn draw_radar(
+    batch: &mut Batch,
+    arena: &Arena,
+    radar: &tm1_core::drive::RadarFrame,
+    window: &Window,
+) {
     use tm1_core::drive::RadarSignal;
     let scale = Vec2::new(window.width() / 320., window.height() / 240.);
     let origin = Vec2::new(-window.width() / 2., window.height() / 2.);
@@ -1787,36 +1792,18 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, w
             );
         }
     };
-    rect(16, 32, 73, 45, [white; 4], [0.204, 0.443, 0.067, 0.60]);
-    rect(51, 55, 5, 1, [white; 4], [0., 0.188, 0., 1.]);
-    rect(53, 54, 1, 3, [white; 4], [0., 0.188, 0., 1.]);
-    let mut edges = [false; 4];
-    for ai in drive.opponents.iter().filter(|ai| ai.health().0 > 0) {
-        match drive.player.radar_signal(ai.position(), ai.vehicle()) {
-            RadarSignal::Contact { x, y, rgb } => rect(
-                53 + x,
-                55 + y,
-                2,
-                2,
-                [white; 4],
-                [
-                    rgb[0] as f32 / 255.,
-                    rgb[1] as f32 / 255.,
-                    rgb[2] as f32 / 255.,
-                    1.,
-                ],
-            ),
-            RadarSignal::Up => edges[0] = true,
-            RadarSignal::Down => edges[1] = true,
-            RadarSignal::Right => edges[2] = true,
-            RadarSignal::Left => edges[3] = true,
-        }
-    }
-    if drive.player.frame() % 2 == 0 {
-        let (active, _) = drive.contacts.health_stands();
-        for &(slot, pos) in &arena.scene.health_stands {
-            let [x, y] = drive.player.radar_offset(pos);
-            if active & (1 << slot) != 0 && (-36..36).contains(&x) && (-22..22).contains(&y) {
+    let color =
+        |[r, g, b]: [u8; 3], alpha| Color::srgba_u8(r, g, b, alpha).to_linear().to_f32_array();
+    rect(16, 32, 73, 45, [white; 4], color([52, 113, 17], 128));
+    rect(51, 55, 5, 1, [white; 4], color([0, 48, 0], 255));
+    rect(53, 54, 1, 3, [white; 4], color([0, 48, 0], 255));
+    // Radar signals are prepended to the PS1 ordering table.
+    for &mark in radar.marks.iter().rev() {
+        match mark {
+            RadarSignal::Contact { x, y, rgb } => {
+                rect(53 + x, 55 + y, 2, 2, [white; 4], color(rgb, 255))
+            }
+            RadarSignal::Stand { x, y } => {
                 for (dx, dy) in [(-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)] {
                     rect(
                         53 + x + dx,
@@ -1824,7 +1811,7 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, w
                         1,
                         1,
                         [white; 4],
-                        [1., 0.784, 1., 1.],
+                        color([255, 200, 255], 255),
                     );
                 }
             }
@@ -1834,7 +1821,7 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, w
         .into_iter()
         .enumerate()
     {
-        if edges[i] {
+        if radar.edges[i] {
             let f = arena.arrows[i];
             let [u, v] = f.uv[0];
             let w = i32::from(f.width) + 1;

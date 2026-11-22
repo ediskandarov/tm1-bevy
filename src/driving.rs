@@ -800,6 +800,7 @@ pub fn advance(
             &state.camera,
             state.helicopter_pose(),
         );
+        state.contacts.radar.display(state.radar);
         let prepared = state
             .contacts
             .begin_bout_step(&mut state.player, &mut state.opponents, 3);
