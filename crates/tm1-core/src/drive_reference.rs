@@ -4335,9 +4335,17 @@ fn compare_battle_controls(
         );
         sounds
     };
-    for tick in 1..=360 {
+    let ticks = if vehicle == Vehicle::YellowJacket {
+        1200
+    } else {
+        360
+    };
+    for tick in 1..=ticks {
         let input = Input {
-            accelerate: true,
+            accelerate: tick <= 360 || tick % 160 < 110,
+            reverse: tick > 360 && tick % 160 >= 120,
+            right: tick > 360 && (35..80).contains(&(tick % 160)),
+            hard_turn: tick > 360 && (60..74).contains(&(tick % 160)),
             fire_guns: !crush && tick > 10,
             missile: crush && tick == 1,
             left: (24..40).contains(&tick),
