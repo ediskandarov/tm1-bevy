@@ -984,6 +984,15 @@ impl VehicleCamera {
     }
 
     pub fn update(&mut self, player: &PlayerVehicle, snap: bool) {
+        self.update_pose(player, snap, true);
+    }
+
+    /// CarViewUpdate runs inside CarUpdate. UASetCameraPosition still runs during repair.
+    pub fn after_step(&mut self, player: &PlayerVehicle, updated: bool) {
+        self.update_pose(player, false, updated);
+    }
+
+    fn update_pose(&mut self, player: &PlayerVehicle, snap: bool, updated: bool) {
         unsafe extern "C" {
             fn tm1_update_car_view(
                 state: *const u8,
@@ -1000,7 +1009,7 @@ impl VehicleCamera {
         if leaving_fixed {
             self.mode = CarView::Chase;
         }
-        if !falling || self.fixed_pose.is_none() {
+        if (updated || leaving_fixed) && (!falling || self.fixed_pose.is_none()) {
             self.show_body = unsafe {
                 tm1_update_car_view(
                     player.state.as_ptr(),
@@ -1222,7 +1231,9 @@ unsafe extern "C" {
     fn tm1_level_won(scene: *const std::ffi::c_void) -> bool;
     fn tm1_reset_projectiles(scene: *mut std::ffi::c_void);
     fn tm1_scene_free(scene: *mut std::ffi::c_void);
-    fn tm1_bout_step(
+    fn tm1_bout_phase(
+        prepare: bool,
+        update_player: bool,
         scene: *mut std::ffi::c_void,
         player_state: *mut u8,
         opponents: *const *mut u8,
@@ -1238,7 +1249,7 @@ unsafe extern "C" {
         guns: *mut u8,
         sounds: *mut [i32; 5],
         audio: *mut std::ffi::c_void,
-    );
+    ) -> u8;
     #[cfg(test)]
     fn tm1_contacts(
         scene: *mut std::ffi::c_void,
@@ -1439,7 +1450,20 @@ pub fn project_fragment(
     ])
 }
 
+#[must_use]
+pub struct PreparedBout {
+    fields: u8,
+    update_player: bool,
+}
+
+impl PreparedBout {
+    pub fn updates_player(&self) -> bool {
+        self.update_player
+    }
+}
+
 pub struct CollisionScene {
+    duel_updated: [u8; 2],
     native: std::ptr::NonNull<std::ffi::c_void>,
     opponent_count: usize,
     battle: [i16; 3],
@@ -1491,6 +1515,7 @@ impl CollisionScene {
             battle: [0; 3],
             duel_returns: Vec::new(),
             duel_winner: None,
+            duel_updated: [0; 2],
             gun_requests: [0; 9],
             car_sounds: [[0; 5]; 9],
             audio: Vec::new(),
@@ -1705,6 +1730,10 @@ impl CollisionScene {
         .map(move |sound| (sound, [x, y, z]))
     }
 
+    /// Tracks which human actors ran CarUpdate during the last duel step.
+    pub fn duel_updated_players(&self) -> [bool; 2] {
+        self.duel_updated.map(|flag| flag != 0)
+    }
     /// RT advances missiles with the previous secondary camera before installing view zero.
     pub fn duel_events_before_primary_view(&self) -> usize {
         self.before_primary_view
@@ -1743,12 +1772,14 @@ impl CollisionScene {
                 turbo: *mut u8,
                 sounds: *mut [i32; 5],
                 audio: *mut std::ffi::c_void,
+                updated: *mut u8,
             ) -> usize;
         }
         assert_eq!(self.opponent_count, 0);
         assert!((1..=5).contains(&fields));
         self.audio.clear();
         self.before_primary_view = 0;
+        self.duel_updated = [0; 2];
         if self.duel_winner.is_some() {
             return self.duel_winner;
         }
@@ -1777,6 +1808,7 @@ impl CollisionScene {
                 self.turbo_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
                 (&raw mut self.audio).cast(),
+                self.duel_updated.as_mut_ptr(),
             );
         }
         second.frame = first.frame;
@@ -1805,9 +1837,52 @@ impl CollisionScene {
         pads: u32,
         fields: u8,
     ) {
+        let prepared = self.begin_bout_step(player, opponents, fields);
+        self.finish_bout_step(player, opponents, pads, prepared);
+    }
+
+    pub fn begin_bout_step(
+        &mut self,
+        player: &mut Taxi,
+        opponents: &mut [Opponent],
+        fields: u8,
+    ) -> PreparedBout {
         assert!((1..=5).contains(&fields));
-        assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
         self.audio.clear();
+        player.frame = player.frame.wrapping_add(1);
+        let update_player = self.bout_phase(player, opponents, 0, fields, None);
+        PreparedBout {
+            fields,
+            update_player,
+        }
+    }
+
+    pub fn finish_bout_step(
+        &mut self,
+        player: &mut Taxi,
+        opponents: &mut [Opponent],
+        pads: u32,
+        prepared: PreparedBout,
+    ) {
+        self.bout_phase(
+            player,
+            opponents,
+            pads,
+            prepared.fields,
+            Some(prepared.update_player),
+        );
+        player.cap_turbo_reserve();
+    }
+
+    fn bout_phase(
+        &mut self,
+        player: &mut Taxi,
+        opponents: &mut [Opponent],
+        pads: u32,
+        fields: u8,
+        update_player: Option<bool>,
+    ) -> bool {
+        assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
         let mut records = [std::ptr::null_mut(); 8];
         for (slot, car) in opponents.iter_mut().enumerate() {
             assert_eq!(
@@ -1816,13 +1891,14 @@ impl CollisionScene {
             );
             records[slot] = car.state.as_mut_ptr();
         }
-        player.frame = player.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_active_opponents(self.native.as_ptr(), opponents.len() as i32);
-            tm1_bout_step(
+            tm1_bout_phase(
+                update_player.is_none(),
+                update_player.unwrap_or(false),
                 self.native.as_ptr(),
                 player.state.as_mut_ptr(),
                 records.as_ptr(),
@@ -1838,9 +1914,8 @@ impl CollisionScene {
                 self.gun_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
                 (&raw mut self.audio).cast(),
-            );
+            ) != 0
         }
-        player.cap_turbo_reserve();
     }
     #[cfg(test)]
     fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {

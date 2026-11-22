@@ -269,6 +269,7 @@ pub struct Drive {
     pub radar: bool,
     pub list_cars: bool,
     view_input_held: bool,
+    helicopter_key_held: bool,
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
     pub listener: tm1_core::drive::SoundListener,
@@ -349,6 +350,10 @@ impl Drive {
             return;
         }
         use KeyCode::*;
+        if keys.pressed(KeyH) && !self.helicopter_key_held {
+            self.toggle_helicopter();
+        }
+        self.helicopter_key_held = keys.pressed(KeyH);
         // CheckVRMode shares one latch across the five controls, in this order.
         let selected = [KeyC, KeyZ, KeyV, KeyL, KeyB]
             .into_iter()
@@ -519,6 +524,7 @@ impl Drive {
             radar: true,
             list_cars: false,
             view_input_held: false,
+            helicopter_key_held: false,
             helicopter_unlocked: false,
             helicopter_active: false,
             rooftop_passage: Default::default(),
@@ -702,11 +708,6 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    let previous_view = drive.selected_view();
-    if drive.player.accepts_view_input() && keys.just_pressed(KeyCode::KeyH) {
-        drive.toggle_helicopter();
-        drive.update_rooftop_passage(previous_view);
-    }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE),
         missile: keys.pressed(KeyCode::KeyF),
@@ -799,15 +800,21 @@ pub fn advance(
             &state.camera,
             state.helicopter_pose(),
         );
-        let before = state.selected_view();
-        state.check_view_keys(&keys, pads);
-        state.update_rooftop_passage(before);
-        state
-            .player
-            .set_battle_view(state.selected_view(), state.camera.fixed_pose.is_some());
+        let prepared = state
+            .contacts
+            .begin_bout_step(&mut state.player, &mut state.opponents, 3);
+        let update_player = prepared.updates_player();
+        if update_player {
+            let before = state.selected_view();
+            state.check_view_keys(&keys, pads);
+            state.update_rooftop_passage(before);
+            state
+                .player
+                .set_battle_view(state.selected_view(), state.camera.fixed_pose.is_some());
+        }
         state
             .contacts
-            .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
+            .finish_bout_step(&mut state.player, &mut state.opponents, pads, prepared);
         battle_audio(
             &state.contacts,
             &state.listener,
@@ -828,7 +835,7 @@ pub fn advance(
         {
             heli.update(&state.player, 3, false);
         } else {
-            state.camera.update(&state.player, false);
+            state.camera.after_step(&state.player, update_player);
         }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);

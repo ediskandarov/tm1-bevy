@@ -1,5 +1,6 @@
 #include "tm1/arena_ground.h"
 #include "tm1/arena_guns.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -1136,16 +1137,14 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
     tm1_record_actor(step_audio, slot);
 }
 
-// Run one complete PlayGame actor sequence under the caller's core lock.
+// Release the bound scene between projectile/recharge processing and the actor pass
+// so CheckVRMode can use the post-impact car state.
 // The original routines can change other cars during collision and weapon updates.
-void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
+u8 tm1_bout_phase(bool prepare, bool update_player, struct CollisionScene* scene, u8* player_state, u8** opponents,
     s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio)
 {
     tm1_bind_step_audio(audio);
-    memset(sounds, 0, 9 * sizeof(*sounds));
-    memset(requests, 0, 9);
     gun_requests = requests;
-    *turbo = 0;
     PlayerCar player;
     AICar cars[8];
     memcpy(&player, player_state, sizeof(player));
@@ -1160,11 +1159,18 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     gUpdateRate = 60 / fields;
     tm1_use_scene(scene);
     tm1_load_battle(battle);
-    tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
-    for (int i = 0; i < count; i++)
-        tm1_contact_setup(GetAICs3D(i), &cars[i].motion, &cars[i].stats);
-    contact_phase(&player, cars, 2, fields);
-    if (!tm1_recharge_player(&player)) {
+    if (prepare) {
+        memset(sounds, 0, 9 * sizeof(*sounds));
+        memset(requests, 0, 9);
+        *turbo = 0;
+        tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
+        for (int i = 0; i < count; i++)
+            tm1_contact_setup(GetAICs3D(i), &cars[i].motion, &cars[i].stats);
+        contact_phase(&player, cars, 2, fields);
+        update_player = !tm1_recharge_player(&player);
+        goto store_frame;
+    }
+    if (update_player) {
         *seed = random_state;
         AICar* crushed = NULL;
         for (int i = 0; i < count && player.flags[27]; i++)
@@ -1206,6 +1212,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
+store_frame:
     tm1_store_battle(battle);
     tm1_bind_step_audio(NULL);
     gun_requests = NULL;
@@ -1217,13 +1224,14 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     arena_opponent = NULL;
     arena_player = NULL;
     trig = NULL;
+    return update_player;
 }
 
 
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
 size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio)
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio, u8 updated[2])
 {
     tm1_bind_step_audio(audio);
     memset(sounds, 0, 9 * sizeof(*sounds));
@@ -1245,7 +1253,8 @@ size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     size_t before_primary_view = contact_phase(cars, NULL, 2, fields);
     for (int i = 0; i < 2; i++) {
         PlayerCar* car = &cars[i];
-        if (!tm1_recharge_player(car)) {
+        updated[i] = !tm1_recharge_player(car);
+        if (updated[i]) {
             *seed = random_state;
             turbo_request = &turbo[i];
             tm1_drive_step((u8*)car, NULL, buttons, fields, frame, table, seed);

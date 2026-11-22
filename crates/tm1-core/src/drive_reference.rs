@@ -1311,40 +1311,45 @@ fn victory_blocks_late_bullet_damage_original() {
     }
 }
 
+fn setup_chase_camera(r: &mut Reference) -> VehicleCamera {
+    // Supply the one-player FOV and observe the last body draw request.
+    r.cpu.put(0x8010a690, &[8, 0, 224, 3, 60, 0, 2, 36]);
+    let flag = RENDER_SCRATCH;
+    for (entry, visible) in [(0x8015060c, 1), (0x801505c4, 0)] {
+        let code = [
+            0x3c080000 | ((flag + 0x8000) >> 16),
+            0x34090000 | visible,
+            0x03e00008,
+            0xad090000 | (flag & 0xffff),
+        ];
+        // The store sign-extends its 16-bit offset.
+        r.cpu.put(
+            entry,
+            &code
+                .into_iter()
+                .flat_map(u32::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+    }
+    for entry in [0x8010ad84, 0x8010add4, 0x80144be8] {
+        r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    r.cpu.put(PLAYER, &r.player.state);
+    r.cpu.call(0x80124474, &[PLAYER]);
+    let cam = VehicleCamera::new(&r.player, CarView::Chase);
+    put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
+    r.cpu.put(0x800ffd10, &[8, 0, 224, 3, 0, 0, 2, 36]); // No cheat input.
+    vec3_cpu(&mut r.cpu, PLAYER + 0xc, cam.offset);
+    put(&mut r.cpu, PLAYER + 4, cam.pitch as u32);
+    cam
+}
+
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn ordinary_camera_original() {
     for vehicle in Vehicle::ROSTER {
         let mut r = Reference::on_level(vehicle, false, Level::Arena);
-        // Supply the one-player FOV and observe the last body draw request.
-        r.cpu.put(0x8010a690, &[8, 0, 224, 3, 60, 0, 2, 36]);
-        let flag = RENDER_SCRATCH;
-        for (entry, visible) in [(0x8015060c, 1), (0x801505c4, 0)] {
-            let code = [
-                0x3c080000 | ((flag + 0x8000) >> 16),
-                0x34090000 | visible,
-                0x03e00008,
-                0xad090000 | (flag & 0xffff),
-            ];
-            // The store sign-extends its 16-bit offset.
-            r.cpu.put(
-                entry,
-                &code
-                    .into_iter()
-                    .flat_map(u32::to_le_bytes)
-                    .collect::<Vec<_>>(),
-            );
-        }
-        for entry in [0x8010ad84, 0x8010add4, 0x80144be8] {
-            r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
-        }
-        r.cpu.put(PLAYER, &r.player.state);
-        r.cpu.call(0x80124474, &[PLAYER]);
-        let mut cam = VehicleCamera::new(&r.player, CarView::Chase);
-        put(&mut r.cpu, PLAYER + 0xf4, cam.mode as u32);
-        r.cpu.put(0x800ffd10, &[8, 0, 224, 3, 0, 0, 2, 36]); // No cheat input.
-        vec3_cpu(&mut r.cpu, PLAYER + 0xc, cam.offset);
-        put(&mut r.cpu, PLAYER + 4, cam.pitch as u32);
+        let mut cam = setup_chase_camera(&mut r);
         for tick in 0..180 {
             let forward = matches!(tick, 12 | 48 | 75);
             let backward = matches!(tick, 95 | 110 | 143);
@@ -1375,7 +1380,7 @@ fn ordinary_camera_original() {
             let offset = std::array::from_fn(|i| r.cpu.word(PLAYER + 0xc + 4 * i as u32) as i32);
             assert_eq!(cam.offset, offset, "{vehicle:?} tick {tick}");
             assert_eq!(cam.pitch, r.cpu.word(PLAYER + 4) as i16 as i32);
-            assert_eq!(cam.show_body, r.cpu.word(flag) != 0);
+            assert_eq!(cam.show_body, r.cpu.word(RENDER_SCRATCH) != 0);
         }
     }
 }
@@ -3551,6 +3556,89 @@ fn warehouse_stands_match_retail() {
         let retail = r.cpu.call(0x80135c74, &[1]) | (r.cpu.call(0x80135c74, &[2]) << 1);
         assert_eq!(u32::from(r.scene.health_stands().0), retail, "tick {tick}");
         assert_eq!(retail, if tick == 4002 { 3 } else { 0 });
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_repair_holds_view_until_the_release_update() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/WH1.DMD").unwrap();
+    for cap in [80i32, 100] {
+        let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Warehouse);
+        r.player.state[1] = 1;
+        r.player.state[0xb6] = 1;
+        for (at, value) in [(0x178, cap - 4), (0x17c, 100), (0x18c, 2), (0x190, cap)] {
+            r.player.state[at..at + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        r.sync();
+        register_retail_stands(&mut r.cpu, &data);
+        let mut camera = setup_chase_camera(&mut r);
+        // Enter mid-transition so an extra CarViewUpdate is visible in XYZ and pitch.
+        camera.offset = [80, -600, 210];
+        camera.pitch = 90;
+        vec3_cpu(&mut r.cpu, PLAYER + 0xc, camera.offset);
+        put(&mut r.cpu, PLAYER + 4, camera.pitch as u32);
+        for tick in 1..=3 {
+            let held_at_stand = r.cpu.call(0x8014e20c, &[0]) != 0;
+            let opponents = std::slice::from_mut(&mut r.police);
+            let step = r.scene.begin_bout_step(&mut r.player, opponents, 3);
+            assert_eq!(step.updates_player(), !held_at_stand);
+            assert_eq!(step.updates_player(), tick == 3);
+            assert_eq!(r.player.health().0 as u32, r.cpu.word(PLAYER + 0x178));
+            if !held_at_stand {
+                r.cpu.put(PLAYER + 0xda, &[1]);
+                r.cpu.call_until(0x8014eff4, &[PLAYER], 0x8014f278);
+            }
+            if step.updates_player() {
+                camera.cycle(true);
+                r.player
+                    .set_battle_view(PlayerView::Car(camera.mode), false);
+            }
+            let updated = step.updates_player();
+            r.scene.finish_bout_step(&mut r.player, opponents, 0, step);
+            camera.after_step(&r.player, updated);
+            if !held_at_stand {
+                r.cpu.put(PLAYER + 0x138, &r.player.state[0x138..]);
+                r.cpu.call(0x80116bcc, &[PLAYER]); // CarViewUpdate
+            }
+            let offset = std::array::from_fn(|i| r.cpu.word(PLAYER + 0xc + 4 * i as u32) as i32);
+            assert_eq!(camera.offset, offset);
+            assert_eq!(camera.pitch, r.cpu.word(PLAYER + 4) as i16 as i32);
+            assert_eq!(camera.mode as u32, r.cpu.word(PLAYER + 0xf4));
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn duel_repair_only_holds_the_occupants_camera() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let level = Level::Warehouse;
+    let data = disc
+        .read(&format!("UA2PLAY/{}.DMD", level.duel_database().unwrap()))
+        .unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+    let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
+    let root = |kind| dmd.roots.iter().find(|r| r.1 == kind).unwrap().0;
+    for slot in 0..2 {
+        let mut scene =
+            CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, kinds, level, 1, Difficulty::Medium).unwrap();
+        let car = &mut cars[slot];
+        car.state[1] = 1;
+        car.state[0xb6] = 1;
+        let cap = car.health().1.min(car.word(0x190));
+        car.state[0x178..0x17c].copy_from_slice(&(cap - 2).to_le_bytes());
+        car.state[0x18c..0x190].copy_from_slice(&2i32.to_le_bytes());
+        for tick in 1..=2 {
+            scene.step_duel(&mut cars, [Input::default(); 2], 3);
+            let updated = scene.duel_updated_players();
+            assert!(updated[1 - slot]);
+            assert_eq!(updated[slot], tick == 2);
+        }
     }
 }
 

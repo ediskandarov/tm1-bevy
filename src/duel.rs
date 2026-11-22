@@ -515,8 +515,13 @@ pub fn advance(
             |slot| duel.cars[slot].vehicle(),
             |request| duel.sounds.push(request),
         );
-        for (camera, car) in duel.cameras.iter_mut().zip(&duel.cars) {
-            camera.update(car, false);
+        for ((camera, car), updated) in duel
+            .cameras
+            .iter_mut()
+            .zip(&duel.cars)
+            .zip(duel.scene.duel_updated_players())
+        {
+            camera.after_step(car, updated);
         }
         if let Some(slot) = duel.winner {
             duel.score[slot] = duel.score[slot].wrapping_add(1);
