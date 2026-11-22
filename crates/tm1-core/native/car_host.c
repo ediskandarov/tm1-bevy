@@ -1176,6 +1176,13 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         trig = tables;
         tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
         contact_phase(&player, cars, 1, fields);
+        if (!cheat_controls && player.unk9A) {
+            player.stats.cheatTimer = (s16)(player.stats.cheatTimer + 1);
+            if (player.stats.cheatTimer >= 31)
+                player.unk9A = 0;
+            else if (buttons == 0xc035)
+                player.unk9B = 0;
+        }
         if (cheat_controls && update_cheat_controls(&player, buttons)) {
             u8 driving = !cars[0].driving;
             for (int i = 0; i < count; i++)

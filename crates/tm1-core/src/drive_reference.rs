@@ -1382,6 +1382,96 @@ fn ordinary_camera_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn special_view_wrap_and_timeout_original() {
+    let mut r = Reference::new();
+    for layout in 0..4 {
+        r.player.set_pad_layout(layout);
+        r.cpu.put(PLAYER, &r.player.state);
+        for bit in 0..16 {
+            for companion in 0..16 {
+                let pads = (1 << bit) | (1 << companion);
+                r.cpu.call(0x800ffb98, &[2, pads]);
+                r.cpu.call(0x801125ac, &[PLAYER]);
+                assert_eq!(
+                    r.player.view_buttons(pads),
+                    [18, 17, 20, 23, 19]
+                        .map(|i| r.cpu.ram[(PLAYER as usize & 0x1fffff) + 0xc8 + i] != 0)
+                );
+            }
+        }
+        let fire = u32::from(r.player.keyboard_buttons(Input {
+            missile: true,
+            ..Default::default()
+        }));
+        for (forward, weapon, buttons, armed) in [
+            (true, 11, fire, 0),
+            (true, 11, 0, 0),
+            (true, 0, fire, 0),
+            (false, 11, fire, 0),
+            (false, 11, fire, 1),
+        ] {
+            r.player.cheat_controls = false;
+            r.player.state[0x460..0x464].copy_from_slice(&i32::to_le_bytes(weapon));
+            r.player.state[0x9a] = u8::from(!forward);
+            r.player.state[0x9b] = armed;
+            r.player.state[0x144..0x146].copy_from_slice(&19i16.to_le_bytes());
+            r.cpu.put(PLAYER, &r.player.state);
+            put(&mut r.cpu, PLAYER + 0xf4, if forward { 3 } else { 1 });
+            r.cpu.put(0x8018c33a, &[0]); // gStandMode
+            r.cpu.put(0x8018c3ac, &1u16.to_le_bytes());
+            r.cpu.call(0x800ffb98, &[2, buttons]);
+            r.cpu.call(0x801125ac, &[PLAYER]); // CarUpdateControlPad
+            r.cpu
+                .put(PLAYER + 0xd9, &[u8::from(!forward), u8::from(forward)]);
+            r.cpu.call_until(0x8014eff4, &[PLAYER], 0x8014f278);
+            r.player.wrap_special_view(forward, buttons);
+            assert_eq!(
+                r.player.word(0x98) as u32 >> 16,
+                r.cpu.word(PLAYER + 0x98) >> 16
+            );
+            assert_eq!(
+                r.player.word(0x144) as u16,
+                r.cpu.word(PLAYER + 0x144) as u16
+            );
+            assert_eq!(r.player.cheat_controls, r.cpu.ram[0x18c33a] != 0);
+        }
+    }
+    r.player.cheat_controls = false;
+    r.player.state[0x9a..0x9c].copy_from_slice(&[1, 1]);
+    r.player.state[0x144..0x146].fill(0);
+    r.cpu.put(PLAYER, &r.player.state);
+    // Enter CarUpdate's non-cheating branch with s1 pointing to the car.
+    put(&mut r.cpu, RENDER_SCRATCH, 0x00808821); // move s1,a0
+    put(
+        &mut r.cpu,
+        RENDER_SCRATCH + 4,
+        0x08000000 | ((0x801119ecu32 >> 2) & 0x03ffffff),
+    );
+    put(&mut r.cpu, RENDER_SCRATCH + 8, 0);
+    for tick in 1..=33 {
+        let pads = match tick {
+            4 => 0x1c035,
+            5 => 0xc035,
+            _ => 0,
+        };
+        r.cpu.call(0x800ffb98, &[2, pads]);
+        r.cpu.call_until(RENDER_SCRATCH, &[PLAYER], 0x80111a5c);
+        r.scene
+            .step_bout_with_pads(&mut r.player, std::slice::from_mut(&mut r.police), pads, 3);
+        assert_eq!(
+            r.player.word(0x98) as u32 >> 16,
+            r.cpu.word(PLAYER + 0x98) >> 16,
+            "tick {tick}"
+        );
+        assert_eq!(
+            r.player.word(0x144) as u16,
+            r.cpu.word(PLAYER + 0x144) as u16
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn split_screen_chase_cameras_match_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();

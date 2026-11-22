@@ -494,9 +494,17 @@ impl PlayerVehicle {
             tm1_pad_layout(self.initial_state.as_mut_ptr(), layout.into());
         }
     }
+    fn pad_mask(&self, mapping: usize) -> u16 {
+        const BITS: [u8; 15] = [0, 8, 11, 2, 0, 12, 14, 15, 13, 3, 1, 4, 6, 7, 5];
+        1 << BITS[self.state[0xc8 + mapping] as usize]
+    }
+    /// Forward view, reverse view, radar, remaining cars and mirror, in CheckVRMode priority order.
+    pub fn view_buttons(&self, pads: u32) -> [bool; 5] {
+        let down = |mapping| pads as u16 & self.pad_mask(mapping) != 0;
+        [26, 24, 27, 40, 28].map(|mapping| down(38) && down(mapping))
+    }
     /// Translate keyboard actions using the currently selected UA controller layout.
     pub fn keyboard_buttons(&self, input: Input) -> u16 {
-        const BITS: [u8; 15] = [0, 8, 11, 2, 0, 12, 14, 15, 13, 3, 1, 4, 6, 7, 5];
         [
             (input.accelerate, 29),
             (input.reverse, 25),
@@ -510,9 +518,21 @@ impl PlayerVehicle {
         ]
         .into_iter()
         .filter(|(pressed, _)| *pressed)
-        .fold(0, |bits, (_, i)| {
-            bits | 1 << BITS[self.state[0xc8 + i] as usize]
-        })
+        .fold(0, |bits, (_, i)| bits | self.pad_mask(i))
+    }
+    /// CheckVRMode samples the selected-weapon trigger before CarUpdate fires it.
+    pub fn wrap_special_view(&mut self, forward: bool, pads: u32) {
+        let trigger = self.pad_mask(35);
+        if self.word(0x460) != 11 || self.health().0 <= 0 || pads as u16 & trigger == 0 {
+            return;
+        }
+        self.state[0x9a] = u8::from(forward);
+        if forward {
+            self.state[0x144..0x146].fill(0);
+        } else if self.state[0x9b] != 0 {
+            self.cheat_controls = true;
+            self.state[0x9b] = 0;
+        }
     }
     pub fn cheat_controls(&self) -> bool {
         self.cheat_controls

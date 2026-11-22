@@ -344,7 +344,7 @@ impl Drive {
             _ => {}
         }
     }
-    fn check_view_keys(&mut self, keys: &ButtonInput<KeyCode>) {
+    fn check_view_keys(&mut self, keys: &ButtonInput<KeyCode>, pads: u32) {
         if !self.player.accepts_view_input() {
             return;
         }
@@ -352,11 +352,12 @@ impl Drive {
         // CheckVRMode shares one latch across the five controls, in this order.
         let selected = [KeyC, KeyZ, KeyV, KeyL, KeyB]
             .into_iter()
-            .find(|&k| keys.pressed(k));
+            .zip(self.player.view_buttons(pads))
+            .find_map(|(key, pad)| (keys.pressed(key) || pad).then_some(key));
         if !self.view_input_held {
             match selected {
-                Some(KeyC) => self.cycle_camera(true),
-                Some(KeyZ) => self.cycle_camera(false),
+                Some(KeyC) => self.cycle_camera(true, pads),
+                Some(KeyZ) => self.cycle_camera(false, pads),
                 Some(KeyV) => self.radar = !self.radar,
                 Some(KeyL) => self.list_cars = !self.list_cars,
                 Some(KeyB) if !self.helicopter_active => self.mirror = !self.mirror,
@@ -364,9 +365,23 @@ impl Drive {
             }
         }
         self.view_input_held = selected.is_some();
+        // CheckVRMode polls ctlpadSpecial(1, 0) after cycling the view.
+        self.helicopter_unlocked |= pads == 0x180b;
     }
-    fn cycle_camera(&mut self, forward: bool) {
+    fn cycle_camera(&mut self, forward: bool, pads: u32) {
         use tm1_core::drive::CarView;
+        let before = self.selected_view();
+        let fixed = self.camera.fixed_pose.is_some() && !self.helicopter_active;
+        let wraps = if forward {
+            fixed
+                || before == PlayerView::Helicopter
+                || (before == PlayerView::Car(CarView::Far) && !self.helicopter_available())
+        } else {
+            !fixed && before == PlayerView::Car(CarView::Cockpit)
+        };
+        if wraps {
+            self.player.wrap_special_view(forward, pads);
+        }
         if self.helicopter_active {
             self.helicopter_active = false;
             self.camera.mode = if forward {
@@ -760,7 +775,9 @@ pub fn advance(
         let mut pads = u32::from(
             state.player.keyboard_buttons(input) | if capture.demo { 0 } else { pad_bits },
         );
-        if state.player.cheat_controls() && !capture.demo {
+        if !capture.demo && keys.pressed(KeyCode::Digit8) {
+            pads = 0x180b;
+        } else if state.player.cheat_controls() && !capture.demo {
             // Each digit holds one original multi-button combination for a simulation step.
             for (key, mask) in [
                 (KeyCode::Digit1, 0x30c9),
@@ -783,7 +800,7 @@ pub fn advance(
             state.helicopter_pose(),
         );
         let before = state.selected_view();
-        state.check_view_keys(&keys);
+        state.check_view_keys(&keys, pads);
         state.update_rooftop_passage(before);
         state
             .player
@@ -890,7 +907,7 @@ mod tests {
                     cpu.put(PLAYER + offset, &[down]);
                 }
                 cpu.call_until(0x8014eff4, &[PLAYER], 0x8014f278);
-                drive.check_view_keys(&keys);
+                drive.check_view_keys(&keys, 0);
                 assert_eq!(
                     (
                         drive.camera.mode as u32,
@@ -909,6 +926,14 @@ mod tests {
                     "keys {bits:05b}"
                 );
             }
+        }
+        cpu.put(PLAYER + 0xd9, &[0; 7]);
+        for pads in [0x180a, 0x1180b, 0x180b, 0] {
+            cpu.call(0x800ffb98, &[2, pads]);
+            cpu.call(0x801125ac, &[PLAYER]);
+            cpu.call(0x8014eff4, &[PLAYER]);
+            drive.check_view_keys(&ButtonInput::default(), pads);
+            assert_eq!(drive.helicopter_unlocked, cpu.ram[0x18c364] != 0);
         }
     }
     #[test]
@@ -1263,9 +1288,16 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .reset_all();
         tick(&mut app, 50);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Digit8);
+        tick(&mut app, 50);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Digit8);
         {
             let mut drive = app.world_mut().resource_mut::<Drive>();
-            drive.helicopter_unlocked = true;
+            assert!(drive.helicopter_unlocked);
             drive.toggle_helicopter();
             assert!(!drive.mirror);
             assert!(drive.helicopter_pose().is_some());
