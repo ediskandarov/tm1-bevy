@@ -53,7 +53,7 @@ impl DuelBank {
         };
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
-            .map(|(i, id)| layers(id, i == 0, i <= 1))
+            .map(|(i, id)| layers(id, i == 0, i <= 1 || id == 38))
             .collect::<Result<_>>()?;
         Ok(Self {
             programs,

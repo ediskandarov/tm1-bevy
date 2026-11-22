@@ -783,6 +783,37 @@ pub struct SoundListener {
     matrix: [[i32; 3]; 3],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverSound {
+    Guns(bool),
+    Launch,
+    Motor,
+}
+
+fn hover_requests(
+    sources: [Option<[i32; 5]>; 2],
+    listener: &SoundListener,
+) -> impl Iterator<Item = (HoverSound, [i32; 3])> {
+    let closest = sources
+        .iter()
+        .flatten()
+        .map(|&[_, x, y, z, _]| [x, y, z])
+        .min_by_key(|&p| listener.sound_range(p));
+    sources
+        .into_iter()
+        .flatten()
+        .flat_map(|[_, x, y, z, flags]| {
+            let position = [x, y, z];
+            [
+                Some((HoverSound::Guns(flags & 2 != 0), position)),
+                (flags & 4 != 0).then_some((HoverSound::Launch, position)),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .chain(closest.map(|p| (HoverSound::Motor, p)))
+}
+
 impl SoundListener {
     pub fn new(car: &PlayerVehicle, camera: &VehicleCamera, helicopter: Option<[i32; 5]>) -> Self {
         let fixed = helicopter.or(camera.fixed_pose);
@@ -1265,7 +1296,7 @@ impl CollisionScene {
         (unsafe { tm1_ped_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
             .then_some(pose)
     }
-    pub fn merc_pose(&self, slot: usize) -> Option<[i32; 5]> {
+    fn merc_state(&self, slot: usize) -> Option<[i32; 5]> {
         if slot >= 2 {
             return None;
         }
@@ -1275,6 +1306,17 @@ impl CollisionScene {
         let mut pose = [0; 5];
         (unsafe { tm1_merc_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
             .then_some(pose)
+    }
+    pub fn merc_pose(&self, slot: usize) -> Option<[i32; 5]> {
+        self.merc_state(slot)
+            .map(|[branch, x, y, z, flags]| [branch, x, y, z, flags & 1])
+    }
+    pub fn hover_sounds(
+        &self,
+        listener: &SoundListener,
+    ) -> impl Iterator<Item = (HoverSound, [i32; 3])> {
+        let sources = [0, 1].map(|slot| self.merc_state(slot).filter(|pose| pose[4] & 1 != 0));
+        hover_requests(sources, listener)
     }
     pub fn damage_branch(&self, address: u32) -> u8 {
         unsafe extern "C" {

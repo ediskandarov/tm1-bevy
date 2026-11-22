@@ -11,7 +11,6 @@ use tm1_assets::{disc::Disc, sound::program};
 pub struct Sounds {
     sources: Vec<AudioSource>,
     turbo: Vec<PreparedTone>,
-    guns: Vec<EffectTone>,
     effects: Vec<Vec<EffectTone>>,
     rival_engines: Vec<Vec<EngineSample>>,
     voices: Vec<Handle<AudioSource>>,
@@ -159,7 +158,6 @@ impl Layer {
 #[derive(Resource)]
 pub struct VehicleSounds {
     turbo: Vec<Layer>,
-    guns: Vec<EffectTone>,
 }
 
 pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
@@ -190,8 +188,7 @@ impl Sounds {
             .drain(..)
             .map(|tone| tone.register(world))
             .collect();
-        let guns = std::mem::take(&mut self.guns);
-        world.insert_resource(VehicleSounds { turbo, guns });
+        world.insert_resource(VehicleSounds { turbo });
     }
 
     fn register(&mut self, assets: &mut Assets<AudioSource>) {
@@ -243,9 +240,12 @@ impl Sounds {
                 .into_iter()
                 .map(|tone| {
                     let priority = tone.priority;
-                    let (sample, _) = Sample::single(tone, false);
+                    let (sample, marker) = Sample::single(tone, false);
                     EffectTone {
-                        clip: pcm::StereoPcm::new(&sample.mix, None),
+                        clip: pcm::StereoPcm::new(
+                            &sample.mix,
+                            marker.filter(|_| id == 1 || prog == 38),
+                        ),
                         priority,
                     }
                 })
@@ -261,18 +261,6 @@ impl Sounds {
         Ok(Self {
             sources,
             effects,
-            guns: program(&bank, 12)?
-                .into_iter()
-                .map(|tone| {
-                    let priority = tone.priority;
-                    let clip = PreparedTone::new(tone, false, true)?.looping_clip;
-                    Ok(EffectTone {
-                        clip: clip
-                            .ok_or_else(|| anyhow::anyhow!("missing machine gun VAB loop point"))?,
-                        priority,
-                    })
-                })
-                .collect::<Result<_>>()?,
             turbo: program(&bank, TURBO_PROGRAM)?
                 .into_iter()
                 .map(|tone| PreparedTone::new(tone, false, true))
@@ -512,94 +500,51 @@ pub fn update(
                 .map(|key| (key, entity, shot.levels.clone()))
         })
         .collect();
-    use crate::driving::{ExclusiveVoice, VehicleSound};
-    for request in &drive.vehicle_sounds {
-        let (key, playing, levels, range) = match *request {
-            VehicleSound::Turbo(play) => (ExclusiveVoice::Turbo, play, None, 0),
-            VehicleSound::Guns {
-                car,
-                channels,
-                firing,
-                range,
-            } => (
-                ExclusiveVoice::MachineGuns(car),
-                firing,
-                Some(channels),
-                range,
-            ),
-        };
-        if !playing {
-            active.retain(|(group, entity, _)| {
-                if *group == key {
-                    commands.entity(*entity).despawn();
-                    ranked.retain(|v| v.entity != *entity);
-                }
-                *group != key
-            });
-            continue;
-        }
-        if let Some((_, _, control)) = active.iter().find(|(group, _, _)| *group == key) {
-            refresh_requested(&mut ranked, &active, key, range);
-            if let (Some(control), Some(channels)) = (control, levels) {
-                control.set(channels, 99);
-            }
-            continue;
-        }
-        if let Some(channels) = levels {
-            if channels == [0; 2] {
+    use crate::driving::{BattleRequest, ExclusiveVoice};
+    for request in &drive.sounds {
+        let sound = match request {
+            BattleRequest::Play(sound) => sound,
+            BattleRequest::Stop(key) => {
+                active.retain(|(group, entity, _)| {
+                    if group == key {
+                        commands.entity(*entity).despawn();
+                        ranked.retain(|v| v.entity != *entity);
+                    }
+                    group != key
+                });
                 continue;
             }
-            let control = pcm::Levels::new(channels, 99);
-            for tone in &vehicle_sounds.guns {
-                let entity = commands
-                    .spawn((
+            BattleRequest::Turbo => {
+                let key = ExclusiveVoice::Turbo;
+                if active.iter().any(|(group, _, _)| *group == key) {
+                    refresh_requested(&mut ranked, &active, key, 0);
+                    continue;
+                }
+                for tone in &vehicle_sounds.turbo {
+                    let mut voice = commands.spawn((
                         crate::campaign::StageEntity,
                         OneShot {
                             key: Some(key),
-                            levels: Some(control.clone()),
+                            levels: None,
                             order: sequence.next(),
                             priority: tone.priority,
                         },
-                        AudioPlayer(clips.add(tone.clip.with_levels(control.clone()))),
-                        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44)),
-                    ))
-                    .id();
-                active.push((key, entity, Some(control.clone())));
-                ranked.push(Candidate {
-                    entity,
-                    order: sequence.serial,
-                    priority: tone.priority,
-                    range,
-                    finishing: false,
-                    engine: false,
-                });
-            }
-        } else {
-            for tone in &vehicle_sounds.turbo {
-                let mut voice = commands.spawn((
-                    crate::campaign::StageEntity,
-                    OneShot {
-                        key: Some(key),
-                        levels: None,
-                        order: sequence.next(),
+                        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+                    ));
+                    tone.play(&mut voice);
+                    active.push((key, voice.id(), None));
+                    ranked.push(Candidate {
+                        entity: voice.id(),
+                        order: sequence.serial,
                         priority: tone.priority,
-                    },
-                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
-                ));
-                tone.play(&mut voice);
-                active.push((key, voice.id(), None));
-                ranked.push(Candidate {
-                    entity: voice.id(),
-                    order: sequence.serial,
-                    priority: tone.priority,
-                    range,
-                    finishing: false,
-                    engine: false,
-                });
+                        range: 0,
+                        finishing: false,
+                        engine: false,
+                    });
+                }
+                continue;
             }
-        }
-    }
-    for sound in &drive.sounds {
+        };
         if let Some(key) = sound.exclusive
             && let Some((_, _, Some(control))) = active.iter().find(|(group, _, _)| *group == key)
         {
@@ -679,6 +624,58 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn hover_guns_and_car_guns_stop_independently_in_queue_order() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::{BattleRequest, BattleSound, Drive, ExclusiveVoice};
+        let mut world = crate::contest::menu_world();
+        let stage = Stage::load(
+            &world.resource::<Campaign>().0,
+            Level::Rooftops,
+            Vehicle::RoadKill,
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        let car = ExclusiveVoice::MachineGuns(Vehicle::RoadKill);
+        let hover = ExclusiveVoice::HoverGuns;
+        let play = |key| {
+            BattleRequest::Play(BattleSound {
+                id: 1,
+                exclusive: Some(key),
+                volume_percent: 99,
+                range: 0,
+                channels: [33; 2],
+            })
+        };
+        let voices = |world: &mut World, key| {
+            let mut entities = world
+                .query::<(Entity, &OneShot, &AudioPlayer<pcm::StereoPcm>)>()
+                .iter(world)
+                .filter(|(_, v, _)| v.key == Some(key))
+                .map(|(e, _, _)| e)
+                .collect::<Vec<_>>();
+            entities.sort();
+            entities
+        };
+        world.resource_mut::<Drive>().sounds =
+            vec![play(car), play(hover), BattleRequest::Stop(hover)];
+        world.run_system_once(update).unwrap();
+        let player = voices(&mut world, car);
+        assert_eq!(player.len(), 2);
+        assert!(voices(&mut world, hover).is_empty());
+        world.resource_mut::<Drive>().sounds = vec![BattleRequest::Stop(hover), play(hover)];
+        world.run_system_once(update).unwrap();
+        let merc = voices(&mut world, hover);
+        assert_eq!(merc.len(), 2);
+        assert_eq!(voices(&mut world, car), player);
+        world.resource_mut::<Drive>().sounds = vec![play(hover), BattleRequest::Stop(car)];
+        world.run_system_once(update).unwrap();
+        assert_eq!(voices(&mut world, hover), merc);
+        assert!(voices(&mut world, car).is_empty());
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn campaign_explosions_preempt_engines_then_yield_finishing_voices() {
         use crate::campaign::{Campaign, Entry, Stage};
         use crate::driving::{BattleSound, Drive};
@@ -699,6 +696,7 @@ mod tests {
                 channels: [33; 2],
                 range: i * 10,
             })
+            .map(crate::driving::BattleRequest::Play)
             .collect();
         world.run_system_once(update).unwrap();
         let shots = |world: &mut World| {
@@ -726,7 +724,6 @@ mod tests {
         world.insert_resource(crate::smoke::Capture::new(None, true, false));
         world.run_system_once(crate::driving::advance).unwrap();
         world.resource_mut::<Drive>().sounds.clear();
-        world.resource_mut::<Drive>().vehicle_sounds.clear();
         world.run_system_once(update).unwrap();
         assert_eq!(engines(&mut world), 2);
         let finishing = shots(&mut world);
@@ -931,12 +928,14 @@ mod tests {
         )
         .unwrap();
         crate::campaign::replace(&mut world, stage);
-        let impact = |channels| BattleSound {
-            range: 0,
-            channels,
-            exclusive: Some(ExclusiveVoice::ScaledEffect(103)),
-            id: 3,
-            volume_percent: 84,
+        let impact = |channels| {
+            crate::driving::BattleRequest::Play(BattleSound {
+                range: 0,
+                channels,
+                exclusive: Some(ExclusiveVoice::ScaledEffect(103)),
+                id: 3,
+                volume_percent: 84,
+            })
         };
         let mut references: Vec<_> = world.resource::<Sounds>().effects[3]
             .iter()

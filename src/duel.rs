@@ -452,6 +452,19 @@ pub fn advance(
                 });
             }
         }
+        let listener = tm1_core::drive::SoundListener::new(&duel.cars[0], &duel.cameras[0], None);
+        for (sound, position) in duel.scene.hover_sounds(&listener) {
+            duel.sounds
+                .push(match crate::driving::hover_sample(sound, 16) {
+                    (key, Some(id)) => crate::sfx::duel::Request::Play {
+                        id,
+                        key: Some(key),
+                        volume: 1.,
+                        position,
+                    },
+                    (key, None) => crate::sfx::duel::Request::Stop(key),
+                });
+        }
         for (camera, car) in duel.cameras.iter_mut().zip(&duel.cars) {
             camera.update(car, false);
         }

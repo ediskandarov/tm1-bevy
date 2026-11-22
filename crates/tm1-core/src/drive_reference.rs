@@ -3966,6 +3966,64 @@ fn static_cop_encounters_match_disc() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn hover_weapon_and_buffered_motor_queue_matches_disc() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    // Supply the world-to-eye result directly; positional_sound_matches_retail checks VIEW.c.
+    cpu.put(0x8010461c, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    let listener = SoundListener {
+        eye: [0; 3],
+        matrix: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+    };
+    let table = cpu.call(0x801073bc, &[]);
+    for (id, program) in [(0x83, 38), (0x84, 12), (0x15, 19)] {
+        assert_eq!(cpu.ram[((table + 6 * id + 2) & 0x1fffff) as usize], program);
+    }
+    for (x0, x1) in [(500, -100), (100, -500), (500, -500)] {
+        for first in [0, 1, 3, 5, 7] {
+            for second in [0, 1, 3, 5, 7] {
+                cpu.call(0x80108a50, &[]);
+                put(&mut cpu, 0x8018bf7c, u32::MAX);
+                let sources = [(x0, first), (x1, second)]
+                    .map(|(x, flags)| (flags != 0).then_some([0, x, 0, 0, flags]));
+                for [_, x, y, z, flags] in sources.into_iter().flatten() {
+                    let (range, pan) = listener.range_and_x([x, y, z]);
+                    put(&mut cpu, 0x8018c4dc, range as u32);
+                    put(&mut cpu, 0x80196378, pan as u32);
+                    cpu.call(
+                        0x80148380,
+                        &[0, (flags as u32 >> 1) & 1, (flags as u32 >> 2) & 1],
+                    );
+                }
+                cpu.call(0x801089f0, &[]);
+                let port: Vec<_> = hover_requests(sources, &listener).collect();
+                assert_eq!((cpu.word(0x8018bf7c) as i32).max(0) as usize, port.len());
+                for (i, (sound, position)) in port.into_iter().enumerate() {
+                    let q = 0x801984e8 + i as u32 * 28;
+                    let (id, kind, mode) = match sound {
+                        HoverSound::Guns(on) => (0x84, if on { 2 } else { 3 }, 0),
+                        HoverSound::Motor => (0x83, 2, 0),
+                        HoverSound::Launch => (0x15, 2, 7),
+                    };
+                    assert_eq!(
+                        (cpu.word(q), cpu.word(q + 24), cpu.word(q + 12)),
+                        (id, kind, mode)
+                    );
+                    if kind == 2 {
+                        let (range, pan) = listener.range_and_x(position);
+                        assert_eq!(
+                            (cpu.word(q + 4), cpu.word(q + 8)),
+                            (range as u32, (-pan) as u32)
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn hover_mercenaries_match_disc() {
     for level in [
         Level::Warehouse,
@@ -4013,7 +4071,7 @@ fn hover_mercenaries_match_disc() {
             let mut hover_requests = Vec::new();
             r.cpu.call_observed(0x8014843c, &[], 0x80000080, |cpu| {
                 if cpu.pc() == 0x80148380 {
-                    hover_requests.push(cpu.r[4]);
+                    hover_requests.push((cpu.r[4], cpu.r[5], cpu.r[6]));
                 }
             });
             r.scene.phase(&mut r.player, &mut r.police, 4, 3);
@@ -4023,7 +4081,18 @@ fn hover_mercenaries_match_disc() {
                 let pose = r.scene.merc_pose(slot);
                 assert_eq!(cs != 0, pose.is_some());
                 if let Some([branch, x, y, z, hover]) = pose {
-                    assert_eq!(hover != 0, hover_requests.contains(&(cs + 0x5c)));
+                    let request = hover_requests
+                        .iter()
+                        .find(|(source, _, _)| *source == cs + 0x5c);
+                    assert_eq!(hover != 0, request.is_some());
+                    let expected = request.map_or(0, |(_, firing, launching)| {
+                        1 | (firing << 1) | (launching << 2)
+                    });
+                    assert_eq!(
+                        r.scene.merc_state(slot).unwrap()[4] as u32,
+                        expected,
+                        "{level:?} slot {slot} tick {t}"
+                    );
                     let sw = r.cpu.word(merc + 8);
                     assert_eq!(
                         branch,

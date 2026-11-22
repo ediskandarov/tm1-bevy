@@ -249,10 +249,6 @@ void arena_move_mercs(ArenaMerc* hovermerc, int level, const VECTOR3* player)
             }
         }
     sound:
-        merc->hover_sound = 1;
-        if (firing)
-            arena_effect(&merc->model.pos, 51);
-        if (launching)
-            arena_effect(&merc->model.pos, 52);
+        merc->hover_sound = 1 | (firing << 1) | (launching << 2);
     }
 }

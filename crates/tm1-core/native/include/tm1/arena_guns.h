@@ -32,7 +32,8 @@ typedef struct ArenaMerc {
     Cs model;
     DbSwitch* node;
     int timer, shots, phase, site, altitude;
-    u8 initial_branch, hover_sound;
+    u8 initial_branch;
+    u8 hover_sound; /* turnOnHoverCopSounds called, firing, launching (bits 0..2). */
 } ArenaMerc;
 void arena_move_mercs(ArenaMerc*, int, const VECTOR3*);
 void tm1_move_mercs(int, const VECTOR3*);
