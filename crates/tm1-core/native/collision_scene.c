@@ -329,14 +329,129 @@ void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owne
     if (id == 1 || id == 50)
         carTakeHit(id, dmg, dir, 0);
 }
-void InitMonsterSmash(Car* a, u8 player, Car* b, u8 other, s16 mode)
+void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unused_mode)
 {
-    // Neither selected vehicle is a monster truck.
-    (void)a;
-    (void)player;
-    (void)b;
-    (void)other;
-    (void)mode;
+    u8* fa;
+    CarStats* sa;
+    CarWeap* wa;
+    u8* fb;
+    CarStats* sb;
+    CarMotion* mb;
+    s16 idx;
+    s32 uaIdx;
+    Cs* cs;
+    s32 dmg;
+    s32 v;
+    s32 qs;
+
+    (void)unused_mode;
+    if (isPlayerA) {
+        fa = PLAYER_CAR(carA)->flags;
+        sa = &PLAYER_CAR(carA)->stats;
+        wa = &PLAYER_CAR(carA)->weap;
+    } else {
+        fa = AI_CAR(carA)->flags;
+        sa = &AI_CAR(carA)->stats;
+        wa = &AI_CAR(carA)->weap;
+    }
+
+    if (isPlayerB) {
+        fb = PLAYER_CAR(carB)->flags;
+        sb = &PLAYER_CAR(carB)->stats;
+        mb = &PLAYER_CAR(carB)->motion;
+        idx = PLAYER_CAR(carB)->playerIdx;
+        uaIdx = PLAYER_CAR(carB)->uaIndex;
+    } else {
+        fb = AI_CAR(carB)->flags;
+        sb = &AI_CAR(carB)->stats;
+        mb = &AI_CAR(carB)->motion;
+        idx = AI_CAR(carB)->playerIdx;
+        uaIdx = AI_CAR(carB)->uaIndex;
+    }
+
+    if (wa->ammo[WEAPON_SPECIAL] < 6) {
+        return;
+    }
+    if (fa[27]) {
+        return;
+    }
+
+    arena_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos, 10);
+    wa->ammo[WEAPON_SPECIAL] = wa->ammo[WEAPON_SPECIAL] - 6;
+    if (isPlayerB) {
+        cs = GetPlayerCs3D(idx);
+    } else {
+        cs = GetAICs3D(idx);
+    }
+    dmg = (s16)cs->unkC0;
+    carTakeHit(dmg, 12, NULL, 0);
+    fb[16] = 1;
+    sb->unk18 = 60;
+    mb->vel.vy = 0;
+    fa[27] = 1;
+    fb[28] = 1;
+    sa->unk30 = uaIdx;
+    if (sb->unk84 < sb->unk80) {
+        v = sb->unk80;
+    } else {
+        v = sb->unk84;
+    }
+    sa->unk2A = v;
+    sa->unk2A += sa->unk78 / 2;
+    sa->unk2C = sb->unk6C + sb->unk70;
+    if (sa->unk2C > 80) {
+        sa->unk2C = 80;
+    }
+}
+
+// CARUPD.c CheckMonsterSmash, for the player and the active arena opponent.
+void tm1_check_player_smash(PlayerCar* car, AICar* other)
+{
+    CarStats* st = &car->stats;
+    int best = 0x7fff;
+    car->flags[27] = 0;
+    if (other && st->unk30 == other->uaIndex) {
+        VECTOR3 p = GetAICs3D(0)->pos;
+        for (int i = 0; i < 4; i++) {
+            CarTire* tire = &car->tires[i];
+            int dx = p.vx - tire->unk38, dy = p.vy - tire->unk3C;
+            int d = arena_sqrt(dx * dx + dy * dy);
+            if (d < st->unk2A) {
+                car->flags[27] = 1;
+                tire->unk20 = st->unk2C - st->unk2C * d / st->unk2A / 2;
+                if (d < best)
+                    best = d;
+            } else {
+                tire->unk20 = 0;
+            }
+        }
+        if (car->flags[27] && best < st->unk2A / 2) {
+            VECTOR3 pos = car->motion.pos;
+            pos.vx += (arena_rand() & 63) - 32;
+            pos.vy += (arena_rand() & 63) - 32;
+            pos.vz -= (arena_rand() & 31) + 32;
+            if (pos.vz <= 0)
+                pos.vz = 1;
+            explodeCreateFragments(arena_rand() & 3, &pos);
+            switch (arena_rand() & 15) {
+            case 0:
+            case 1:
+            case 3:
+                do_smoke(&pos);
+                break;
+            case 2:
+                arena_effect(&pos, 2);
+                break;
+            }
+            if (other->stats.unk4C && !(GetFrameCount() & 3) && other->stats.unk40 > 0)
+                other->stats.unk40--;
+        }
+        if (!car->flags[27])
+            other->flags[28] = 0;
+    }
+    if (!car->flags[27])
+        for (int i = 0; i < 4; i++)
+            car->tires[i].unk20 = 0;
 }
 uint64_t tm1_hidden_pickups(CollisionScene* s)
 {

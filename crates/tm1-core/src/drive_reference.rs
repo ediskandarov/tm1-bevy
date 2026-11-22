@@ -284,7 +284,7 @@ fn police_update_original() {
 fn player_special_launch_original() {
     for vehicle in Vehicle::ROSTER
         .into_iter()
-        .filter(|&v| v != Vehicle::Outlaw)
+        .filter(|&v| !matches!(v, Vehicle::Outlaw | Vehicle::Hammerhead))
     {
         let mut r = Reference::with_vehicle(vehicle);
         for at in [0x80107f84, 0x80108034] {
@@ -426,14 +426,34 @@ fn fire_missile_impact_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn coupled_arena_original() {
-    let mut r = Reference::new();
+    compare_encounter(Vehicle::YellowJacket, 20);
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn hammerhead_crush_original() {
+    compare_encounter(Vehicle::Hammerhead, 20);
+    compare_encounter(Vehicle::Hammerhead, 5);
+}
+fn compare_encounter(vehicle: Vehicle, charge: i16) {
+    let mut r = Reference::with_vehicle(vehicle);
+    let crush = vehicle == Vehicle::Hammerhead;
+    let mut engaged = false;
+    put(&mut r.cpu, 0x8019edd8, vehicle as u32);
+    put(&mut r.cpu, 0x8019eddc, 50);
+    if crush {
+        r.player.state[0x47a..0x47c].copy_from_slice(&charge.to_le_bytes());
+        let [x, y, _] = r.player.position();
+        vec3(&mut r.police.state, 0x444, [x + 380, y + 380, 16]);
+        r.police.state[0x66 + 16] = 1;
+        r.police.state[0x20c + 0x18..0x20c + 0x1a].copy_from_slice(&1000i16.to_le_bytes());
+    }
     r.police.state[0x40] = 0;
     for entry in [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8] {
         r.cpu.call(entry, &[]);
     }
     for at in [
         0x801417d0, 0x801466b0, 0x80146930, 0x801073cc, 0x8014b208, 0x80108604, 0x80116bcc,
-        0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
+        0x80107f84, 0x801371cc, 0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -466,11 +486,12 @@ fn coupled_arena_original() {
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
-            fire_guns: tick > 10,
+            fire_guns: !crush && tick > 10,
+            missile: crush && tick == 1,
             left: (24..40).contains(&tick),
             ..Default::default()
         };
-        let fields = [3u8, 4, 5, 3][tick % 4];
+        let fields = if crush { 3 } else { [3u8, 4, 5, 3][tick % 4] };
         put(&mut r.cpu, 0x8017023c, tick as u32);
         r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
         r.cpu
@@ -489,7 +510,25 @@ fn coupled_arena_original() {
             eprintln!("first RNG mismatch at {tick}");
         }
         r.compare();
+        if crush {
+            let active = r.player.state[0xa0 + 27] != 0;
+            if tick == 1 || charge < 6 {
+                assert_eq!(r.player.weapon().1, charge);
+                assert!(!active);
+                if tick == 24 {
+                    return;
+                }
+            }
+            if !engaged && active {
+                assert_eq!(r.player.weapon().1, 14);
+                engaged = true;
+            } else if engaged && !active {
+                println!("Hammerhead completed the crush at step {tick}");
+                return;
+            }
+        }
     }
+    assert!(!crush, "expected to drive over the opponent and separate");
 }
 
 #[test]

@@ -16,7 +16,7 @@ fn supported_disc_arena_and_audio() {
     assert_eq!(db.roots.len(), 24);
     assert_eq!(vram.tim_count, 192);
     assert_eq!(vram.version, db.version);
-    for kind in [10, 20, 30, 50, 60, 80, 90] {
+    for kind in [10, 20, 30, 40, 50, 60, 80, 90] {
         let [intact, damaged, critical] = db.vehicle_bodies(kind).unwrap();
         assert_eq!(intact.object_ids, db.extract_kind(kind).unwrap().object_ids);
         assert_ne!(intact.object_ids, damaged.object_ids);

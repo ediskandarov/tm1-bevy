@@ -1,10 +1,10 @@
 # Playable arena status
 
-The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of seven vehicles and fights the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
+The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of eight vehicles and fights the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
 
 The player completed a manual keyboard playthrough, heard game sounds and reached the **Arena cleared** victory screen. Keyboard play is the accepted input configuration for this milestone.
 
-Sweet Tooth, Yellow Jacket, Darkside, Outlaw, Crimson Fury, Mr. Grimm and Pit Viper
+Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Mr. Grimm and Pit Viper
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. The default
@@ -18,10 +18,11 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Scenario | Observed result |
 | --- | --- |
 | Player dynamics | Three 360-step recordings, fixed three fields, repeating 3/4/5/3 fields, and a ramp. Full 0x4a4 bytes and RNG compared at each step. Ramp peak 164 with all four tires airborne. |
-| Seven player vehicles | For each vehicle the independently initialized 288-byte stat block and 360 mixed-timing movement steps match the disc executable. A separate firing scenario compares both car records, RNG and three steps of the special projectile trajectory for the six projectile-based specials. |
+| Eight player vehicles | For each vehicle the independently initialized 288-byte stat block and 360 mixed-timing movement steps match the disc executable. A separate firing scenario compares both car records, RNG and three steps of the special projectile trajectory for the six projectile-based specials. |
 | Taxi and police together | 360 consecutive steps through both original update calls. Accelerate, hold the gun after step ten, steer left on steps 24–39. Cycle 4/5/3/3 fields starting at step one. Both complete car records and RNG agree after every step. |
 | Contacts | Original car-to-car and wall fixtures contact at steps 13 and 73. Both car records, RNG and normalized contact identities compared. 9,381 original world point queries included 2,742 solid contacts. |
 | Body damage | The renderer selects one of three retail DMD branches for each car. The stage matches the retail damage-update routines for every positive HP value, descending and ascending, for both cars (420 comparisons). At 75% health the body changes to damaged and below 11% it changes to critical. |
+| Hammerhead crush | A moving Hammerhead reaches a stunned opponent at step 15, spends six charges and climbs over it. Both vehicle records and RNG match the disc executable through separation at step 19. With five charges the same approach leaves the crush inactive. |
 | Outlaw taser | Checked player firing at distances 647 and 648 and against a defeated opponent. Both car records, RNG and all sixteen arc points match the retail code on each of ten frames. A successful hit costs six charges and deals eight damage on the tenth frame. |
 | Weapons | A machine-gun round and a fire missile hit the police car. Compared projectile movement/lifetime, damage (one and seven points), car state and RNG. |
 | Input and round | Keyboard and virtual gamepad reach identical sampled state at different presentation rates. Focus loss, twenty seconds paused, gamepad removal/reconnection and restart checked. In a simulation run the police destroyed the unattended taxi after 741 idle steps; the round froze and restarted cleanly. |

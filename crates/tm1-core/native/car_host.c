@@ -201,6 +201,9 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     case 30:
         InitSemiTruck(&car.stats);
         break;
+    case UA_MONSTER_TRUCK:
+        InitMonsterTruck(&car.stats);
+        break;
     case UA_POLICE_CAR:
         InitPoliceCar(&car.stats);
         break;
@@ -228,7 +231,7 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     memcpy(state, &car, sizeof(car));
 }
 
-void tm1_drive_step(u8* state, u16 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
+void tm1_drive_step(u8* state, u8* opponent, u16 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
 {
     trig = table;
     random_state = *seed;
@@ -268,6 +271,14 @@ void tm1_drive_step(u8* state, u16 buttons, s16 fields, u32 frame, const s16* ta
     CheckBombDamage(&car, 1);
     CheckSpikeDamage(&car, 1);
     CheckPotHoles(&car, 1);
+    if (car.flags[27]) {
+        AICar target;
+        if (opponent)
+            memcpy(&target, opponent, sizeof(target));
+        tm1_check_player_smash(&car, opponent ? &target : NULL);
+        if (opponent)
+            memcpy(opponent, &target, sizeof(target));
+    }
     UpdateBounce(&car, 1);
     UpdateTirePositions(&car, 1);
     CarRotUpdate(&car, 1);

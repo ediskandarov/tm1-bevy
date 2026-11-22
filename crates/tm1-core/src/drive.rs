@@ -4,6 +4,7 @@ unsafe extern "C" {
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
     fn tm1_drive_step(
         state: *mut u8,
+        opponent: *mut u8,
         buttons: u16,
         fields: i16,
         frame: u32,
@@ -18,16 +19,18 @@ pub enum Vehicle {
     SweetTooth = 10,
     YellowJacket = 20,
     Darkside = 30,
+    Hammerhead = 40,
     Outlaw = 50,
     CrimsonFury = 60,
     MrGrimm = 80,
     PitViper = 90,
 }
 impl Vehicle {
-    pub const ROSTER: [Self; 7] = [
+    pub const ROSTER: [Self; 8] = [
         Self::SweetTooth,
         Self::YellowJacket,
         Self::Darkside,
+        Self::Hammerhead,
         Self::Outlaw,
         Self::CrimsonFury,
         Self::MrGrimm,
@@ -38,6 +41,7 @@ impl Vehicle {
             Self::SweetTooth => "sweet-tooth",
             Self::YellowJacket => "yellow-jacket",
             Self::Darkside => "darkside",
+            Self::Hammerhead => "hammerhead",
             Self::Outlaw => "outlaw",
             Self::CrimsonFury => "crimson-fury",
             Self::MrGrimm => "mr-grimm",
@@ -49,6 +53,7 @@ impl Vehicle {
             Self::SweetTooth => "Sweet Tooth",
             Self::YellowJacket => "Yellow Jacket",
             Self::Darkside => "Darkside",
+            Self::Hammerhead => "Hammerhead",
             Self::Outlaw => "Outlaw",
             Self::CrimsonFury => "Crimson Fury",
             Self::MrGrimm => "Mr. Grimm",
@@ -167,9 +172,15 @@ impl PlayerVehicle {
         i32::from_le_bytes(self.state[i..i + 4].try_into().unwrap())
     }
     pub fn step(&mut self, input: Input, fields: u8) {
-        self.step_in_scene(input, fields, std::ptr::null_mut())
+        self.step_in_scene(input, fields, std::ptr::null_mut(), None)
     }
-    fn step_in_scene(&mut self, input: Input, fields: u8, scene: *mut std::ffi::c_void) {
+    fn step_in_scene(
+        &mut self,
+        input: Input,
+        fields: u8,
+        scene: *mut std::ffi::c_void,
+        opponent: Option<&mut PoliceCar>,
+    ) {
         assert!((1..=5).contains(&fields));
         self.frame = self.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
@@ -177,6 +188,7 @@ impl PlayerVehicle {
             tm1_use_scene(scene);
             tm1_drive_step(
                 self.state.as_mut_ptr(),
+                opponent.map_or(std::ptr::null_mut(), |car| car.state.as_mut_ptr()),
                 input.ps1_buttons(),
                 fields.into(),
                 self.frame,
@@ -286,7 +298,7 @@ impl CollisionScene {
     }
     pub fn step(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, input: Input, fields: u8) {
         self.phase(player, opponent, 2, fields);
-        player.step_in_scene(input, fields, self.0.as_ptr());
+        player.step_in_scene(input, fields, self.0.as_ptr(), Some(opponent));
         self.phase(player, opponent, 1, fields);
         opponent.update(player, fields, false, self.0.as_ptr());
         self.phase(player, opponent, 0, fields);
@@ -413,7 +425,11 @@ impl PlayerVehicle {
             "Bomb",
             "Oil",
             "Spike",
-            "Special",
+            if self.vehicle == Vehicle::Hammerhead {
+                "Crush (ram)"
+            } else {
+                "Special"
+            },
         ];
         let slot = self.word(0x460) as usize;
         if slot >= names.len() {

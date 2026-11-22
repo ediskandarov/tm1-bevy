@@ -128,6 +128,42 @@ void InitSemiTruck(CarStats* stats)
     stats->unk24 = 0x258;
 }
 
+void InitMonsterTruck(CarStats* stats)
+{
+    stats->unk9C = 0xA;
+    stats->unkC4 = 2;
+    stats->unk88 = 0x5A;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x19;
+    stats->unk98 = stats->unk88 / 2;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x23;
+    stats->unkE4 = 4;
+    stats->unkE8 = 2;
+    stats->unk6C = 0x42;
+    stats->unk70 = 0x1B;
+    stats->unk74 = 0x56;
+    stats->unk7C = 0x52;
+    stats->unk80 = 0x40;
+    stats->unk84 = -0x50;
+    stats->unk110 = 0x23;
+    stats->unk112 = 0x1F;
+    stats->unk114 = -0x14;
+    stats->dropPower = 0;
+    stats->unk11A = 4;
+    stats->unk11C = 0x27;
+    stats->unk10C = 0x640;
+    stats->unk108 = 3;
+    stats->unk04 = 3;
+    stats->unk44 = 0x78;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x46;
+    stats->unk1E = 0x5A;
+    stats->unk5C = 0xA;
+    stats->unk24 = 0x258;
+    stats->monster = 1;
+}
+
 void InitLamborghini(CarStats* stats)
 {
     stats->unk9C = 0xD;

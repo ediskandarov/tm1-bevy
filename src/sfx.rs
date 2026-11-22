@@ -25,6 +25,7 @@ impl Sounds {
             SweetTooth => (1, 41),
             YellowJacket => (0, 43),
             Darkside => (2, 40),
+            Hammerhead => (3, 45),
             Outlaw => (7, 39),
             CrimsonFury => (4, 42),
             MrGrimm => (11, 47),

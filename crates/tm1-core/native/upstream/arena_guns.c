@@ -392,7 +392,7 @@ static ProjectileSpecial playerProjectileSpecial(s32 kind)
 }
 s32 arena_player_special_cost(s32 kind)
 {
-    return kind == UA_POLICE_CAR ? 6 : playerProjectileSpecial(kind).cost;
+    return (kind == UA_POLICE_CAR || kind == UA_MONSTER_TRUCK) ? 6 : playerProjectileSpecial(kind).cost;
 }
 static void firePlayerProjectileSpecial(PlayerCar* car)
 {
@@ -580,7 +580,10 @@ void arena_update_weapons(Car* car, u8 player)
         return;
     switch (pad->cur) {
     case WEAPON_SPECIAL:
-        if (player && p->uaIndex != UA_POLICE_CAR)
+        if (player && p->uaIndex == UA_MONSTER_TRUCK) {
+            pad->fireDelay = 20;
+            p->flags[9] = 1;
+        } else if (player && p->uaIndex != UA_POLICE_CAR)
             firePlayerProjectileSpecial(p);
         else
             firePoliceSpecial(pad, player ? p->flags : ai->flags, player);
