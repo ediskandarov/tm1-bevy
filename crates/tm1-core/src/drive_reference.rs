@@ -5922,27 +5922,59 @@ fn duel_level_entry_matches_both_retail_player_records() {
         put(&mut cpu, specifics + 4, 0);
         let database_seed = 0x2123 + index as u32;
         let level_seed = 0x6790 + index as u32;
-        cpu.random_state = database_seed;
-        cpu.call_until(0x8014b498, &[level as u32], 0x80109bdc);
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, kinds, level, database_seed, difficulty).unwrap();
-        assert_eq!(cars[1].seed, cpu.random_state);
-        for (slot, car) in cars.iter_mut().enumerate() {
-            car.set_pad_layout(((index + slot) % 4) as u8);
-        }
-        cpu.random_state = level_seed;
-        cpu.call_until(0x8014c100, &[level as u32], 0x80109bdc);
-        PlayerVehicle::initialize_duel_level(&mut cars, level_seed);
-        for (slot, car) in cars.iter().enumerate() {
-            let base = (PLAYER as usize & 0x1fffff) + slot * 0x4a4;
-            for (offset, byte) in car.state.iter().enumerate() {
-                assert_eq!(
-                    *byte,
-                    cpu.ram[base + offset],
-                    "{level:?} slot {slot} offset {offset:x}"
-                );
+        let mut previous = None;
+        for round in 0..2 {
+            cpu.put(0x8018c624, &[1, 1]); // GAME_STATE_2P_NEXT_ROUND resets both loadouts.
+            cpu.random_state = database_seed;
+            cpu.call_until(0x8014b498, &[level as u32], 0x80109bdc);
+            let mut cars = match previous.as_ref() {
+                Some(ended) => PlayerVehicle::duel_rematch(ended, database_seed),
+                None => PlayerVehicle::duel_players(&exe, kinds, level, database_seed, difficulty)
+                    .unwrap(),
+            };
+            assert_eq!(cars[1].seed, cpu.random_state);
+            for (slot, car) in cars.iter_mut().enumerate() {
+                car.set_pad_layout(((index + slot) % 4) as u8);
             }
-            assert_eq!(car.seed, cpu.random_state);
+            cpu.random_state = level_seed;
+            cpu.call_until(0x8014c100, &[level as u32], 0x80109bdc);
+            PlayerVehicle::initialize_duel_level(&mut cars, level_seed);
+            for (slot, car) in cars.iter().enumerate() {
+                let base = (PLAYER as usize & 0x1fffff) + slot * 0x4a4;
+                for (offset, byte) in car.state.iter().enumerate() {
+                    assert_eq!(
+                        *byte,
+                        cpu.ram[base + offset],
+                        "{level:?} slot {slot} offset {offset:x}"
+                    );
+                }
+                assert_eq!(car.seed, cpu.random_state);
+            }
+            if round == 0 {
+                for (slot, car) in cars.iter_mut().enumerate() {
+                    for tick in 0..45 {
+                        car.step(
+                            Input {
+                                accelerate: true,
+                                fire_guns: tick > 4,
+                                left: slot == 0,
+                                right: slot == 1,
+                                ..Default::default()
+                            },
+                            3,
+                        );
+                    }
+                    car.state[0x178..0x17c].copy_from_slice(
+                        &(if slot == index % 2 { 0i32 } else { 17 }).to_le_bytes(),
+                    );
+                    if level == Level::Rooftops && slot == index % 2 {
+                        // The falling car leaves the chase camera for a fixed view.
+                        car.set_battle_view(PlayerView::Car(CarView::Chase), true);
+                    }
+                    cpu.put(PLAYER + slot as u32 * 0x4a4, &car.state);
+                }
+                previous = Some(cars);
+            }
         }
     }
 }

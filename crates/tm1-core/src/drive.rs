@@ -391,6 +391,7 @@ impl Radar {
     }
 }
 pub type Taxi = PlayerVehicle;
+#[derive(Clone)]
 pub struct PlayerVehicle {
     cheat_controls: bool,
     difficulty: Difficulty,
@@ -465,6 +466,17 @@ impl PlayerVehicle {
         first.initial_seed = second.seed;
         first.seed = second.seed;
         Some([first, second])
+    }
+    /// The shell reloads the database into the existing player slots for a rematch.
+    pub fn duel_rematch(previous: &[Self; 2], seed: u32) -> [Self; 2] {
+        let mut cars = previous.clone();
+        for car in &mut cars {
+            car.frame = 0;
+            car.last_fields = 3;
+            car.used_starts = 0;
+        }
+        Self::initialize_duel_cars(&mut cars, seed);
+        cars
     }
     fn initialize(
         exe: &[u8],
@@ -564,6 +576,9 @@ impl PlayerVehicle {
             Helicopter::new(&mut cars[0]);
             seed = cars[0].seed;
         }
+        Self::initialize_duel_cars(cars, seed);
+    }
+    fn initialize_duel_cars(cars: &mut [Self; 2], mut seed: u32) {
         for car in cars.iter_mut() {
             car.seed = seed;
             car.initialize_level_car(true, true);
@@ -577,9 +592,6 @@ impl PlayerVehicle {
     fn initialize_level_car(&mut self, reset_weapons: bool, split: bool) {
         // uaInitDB assigns the player color, and SetCarCsInfo selects the chase view.
         self.state[0x146] = 1;
-        for at in [0xf4, 0xf8] {
-            self.state[at..at + 4].copy_from_slice(&(CarView::Chase as i32).to_le_bytes());
-        }
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(self.difficulty as i32);
@@ -592,6 +604,9 @@ impl PlayerVehicle {
                 3,
                 i32::from(split),
             );
+        }
+        for at in [0xf4, 0xf8] {
+            self.state[at..at + 4].copy_from_slice(&(CarView::Chase as i32).to_le_bytes());
         }
     }
     pub fn set_battle_view(&mut self, view: PlayerView, fixed: bool) {

@@ -827,6 +827,11 @@ void tm1_battle_player(u8* state, const s16* table, u32* seed, int reset_weapons
     gUpdateRate = 60 / fields;
     respawn_player(&car, 70, split);
     if (split) {
+        // SetCarCsInfo leaves the fixed view before InitLevel copies the split chase preset.
+        if ((u32)car.unkF4 >= 4) {
+            car.dTrans = car.vrPos[1];
+            setVector(&car.dRot, car.vrRot[1].vx, car.vrRot[1].vy, car.vrRot[1].vz);
+        }
         car.vrPos[1] = car.vrPos[5];
         setVector(&car.vrRot[1], car.vrRot[5].vx, car.vrRot[5].vy, car.vrRot[5].vz);
     }

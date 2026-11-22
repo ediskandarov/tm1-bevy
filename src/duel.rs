@@ -165,14 +165,17 @@ pub fn start(
         .unwrap_or_else(|| crate::campaign::round_ticks(world));
     let mut seed = pedestrian_seed;
     scene.start_pedestrians(level, &mut seed);
-    let mut cars = PlayerVehicle::duel_players(
-        &disc.read("SIPS_600.07")?,
-        kinds,
-        level,
-        seed,
-        difficulty,
-    )
-    .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?;
+    let mut cars = if let Some(previous) = world.get_resource::<Duel>().filter(|previous| {
+        previous.finished()
+            && previous.cars[0].level() == level
+            && previous.cars[0].difficulty() == difficulty
+            && previous.cars.each_ref().map(PlayerVehicle::vehicle) == kinds
+    }) {
+        PlayerVehicle::duel_rematch(&previous.cars, seed)
+    } else {
+        PlayerVehicle::duel_players(&disc.read("SIPS_600.07")?, kinds, level, seed, difficulty)
+            .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?
+    };
     let setup_seed = crate::campaign::round_ticks(world);
     PlayerVehicle::initialize_duel_level(&mut cars, setup_seed);
     let arena = campaign::arena_art(
@@ -811,6 +814,14 @@ mod tests {
             "driver did not fall"
         );
         assert!(world.resource::<Duel>().cars[0].health().0 <= 0);
+        let tire_positions = |car: &PlayerVehicle| {
+            std::array::from_fn::<[u8; 8], 4, _>(|i| {
+                let start = 0x270 + i * 0x44 + 0x38;
+                car.state()[start..start + 8].try_into().unwrap()
+            })
+        };
+        let last_tires = world.resource::<Duel>().cars.each_ref().map(tire_positions);
+        assert_ne!(last_tires[0], [[0; 8]; 4]);
         world.insert_resource(ButtonInput::<KeyCode>::default());
         world.run_system_once(pause_menu).unwrap();
         assert_eq!(
@@ -888,6 +899,7 @@ mod tests {
         );
         let round = world.resource::<Duel>();
         assert_eq!(round.score, [2, 4]);
+        assert_eq!(round.cars.each_ref().map(tire_positions), last_tires);
         let mut expected_seed = crate::campaign::round_ticks(&world);
         for _ in 0..12 {
             tm1_core::drive::bios_rand(&mut expected_seed);
