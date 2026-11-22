@@ -14,6 +14,8 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count, model_count;
+    DbSwitch* barricades[4];
+    u8 initial_barricades[4];
     DbSwitch* stands[10];
     u16 stand_slots, active_stands;
     int regen_timer;
@@ -131,6 +133,11 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
         if (!load(s, addr, 4, &n->sw.sub, 4) || n->sw.sel >= n->sw.nChild
             || !children(s, addr, 8, n->sw.child, n->sw.nChild, depth))
             return NULL;
+        if (n->h.kind == UA_BARRICADE && n->sw.sub >= 1 && n->sw.sub <= 4) {
+            int slot = n->sw.sub - 1;
+            s->barricades[slot] = &n->sw;
+            s->initial_barricades[slot] = n->sw.sel;
+        }
         if (n->h.kind == 920 && n->sw.sub >= 1 && n->sw.sub <= 10 && n->sw.nChild == 2) {
             int slot = n->sw.sub - 1;
             s->stands[slot] = &n->sw;
@@ -387,6 +394,9 @@ void tm1_reset_projectiles(CollisionScene* s)
     tm1_new_life(s);
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
+    for (int i = 0; i < 4; i++)
+        if (s->barricades[i])
+            s->barricades[i]->sel = s->initial_barricades[i];
     s->active_stands = s->stand_slots;
     s->regen_timer = -1;
     for (int i = 0; i < 10; i++)
@@ -701,9 +711,20 @@ void carGetPickup(Car* c, u8 player, s32 tag, s32 sub)
 }
 void UAeffectBarricade(s32 tag, s32 sub, s32 bearing)
 {
-    (void)tag;
-    (void)sub;
-    (void)bearing;
+    if (!current || tag != UA_BARRICADE || sub < 1 || sub > 4 || (u32)bearing > 1)
+        return;
+    DbSwitch* node = current->barricades[sub - 1];
+    if (node && bearing + 1 < node->nChild)
+        node->sel = bearing + 1;
+}
+
+u32 tm1_barricade_states(const CollisionScene* scene)
+{
+    u32 states = 0;
+    for (int i = 0; i < 4; i++)
+        if (scene->barricades[i])
+            states |= (u32)scene->barricades[i]->sel << (8 * i);
+    return states;
 }
 void arena_effect(VECTOR3* pos, s32 kind)
 {

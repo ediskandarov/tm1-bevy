@@ -2241,3 +2241,59 @@ fn radar_signals_original() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn barricade_impacts_match_retail_switches() {
+    unsafe extern "C" {
+        fn UAeffectBarricade(tag: i32, sub: i32, bearing: i32);
+    }
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let level = Level::Freeway;
+    let data = disc
+        .read(&format!(
+            "UADMD/{}.DMD",
+            level.database(Vehicle::YellowJacket)
+        ))
+        .unwrap();
+    let world = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .extract_kind(1)
+        .unwrap();
+    let mut r = Reference::on_level(Vehicle::YellowJacket, true, level);
+    for slot in 0..4 {
+        let branches = world
+            .polygons
+            .iter()
+            .filter_map(|p| p.barricade)
+            .filter(|(s, _)| usize::from(*s) == slot)
+            .fold(0u8, |mask, (_, branch)| mask | (1 << branch));
+        assert_eq!(branches, 0b111);
+        // Register the original switch record in retail RAM through UA_SW.c.
+        let header = [9, 0, 0xbc, 2, slot as u8 + 1, 0, 3];
+        let offset = (0..data.len() - 8)
+            .step_by(4)
+            .find(|&i| data[i] == header[0] && data[i + 2..i + 7] == header[2..])
+            .expect("missing barricade switch");
+        let addr = 0x800188b8 + offset as u32;
+        r.cpu.call(0x80140f54, &[addr, 700]);
+        assert_eq!(r.cpu.word(0x8019cfe4 + 4 * slot as u32), addr);
+        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        for bearing in [1, 2, 0, -1, 1] {
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                UAeffectBarricade(700, slot as i32 + 1, bearing);
+                tm1_use_scene(std::ptr::null_mut());
+            }
+            r.cpu
+                .call(0x801468bc, &[700, slot as u32 + 1, bearing as u32]);
+            assert_eq!(
+                r.scene.barricade_branches()[slot],
+                r.cpu.ram[((addr + 7) & 0x1fffff) as usize],
+                "{level:?} slot {slot} bearing {bearing}"
+            );
+        }
+    }
+    r.scene.reset_projectiles();
+    assert_eq!(r.scene.barricade_branches(), [0; 4]);
+}
