@@ -890,8 +890,8 @@ void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16*
         if (kind != UA_NONE) arena_ai_weapon_profile(&car);
         car.weap.ammo[WEAPON_SPECIAL] = 20;
         car.weap.ammo[0] = car.weap.totalAmmo = 2;
-        car.weap.maxAmmo = kind == UA_BOSS_CAR ? 60 : 28;
-        car.weap.unk48 = arena_player_special_cost(kind);
+        car.weap.maxAmmo = kind == UA_NONE ? 10 : (kind == UA_BOSS_CAR ? 60 : 28);
+        car.weap.unk48 = kind == UA_NONE ? 20 : arena_player_special_cost(kind);
         car.flags[25] = 1;
         car.weap.cur = WEAPON_SPECIAL;
         car.weap.unk46 = 2;

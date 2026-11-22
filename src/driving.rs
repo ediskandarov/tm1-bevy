@@ -309,12 +309,15 @@ impl Drive {
             .map(|heli| heli.pose)
     }
     fn helicopter_available(&self) -> bool {
+        self.helicopter_unlocked && self.helicopter.is_some()
+    }
+    fn stage_helicopter(player: &mut PlayerVehicle) -> Option<tm1_core::drive::Helicopter> {
         use tm1_core::drive::Level;
-        self.helicopter_unlocked
-            && matches!(
-                self.player.level(),
-                Level::Arena | Level::Rooftops | Level::Arena5
-            )
+        matches!(
+            player.level(),
+            Level::Arena | Level::Rooftops | Level::Arena5
+        )
+        .then(|| tm1_core::drive::Helicopter::new(player))
     }
     fn selected_view(&self) -> PlayerView {
         if self.helicopter_active {
@@ -415,9 +418,7 @@ impl Drive {
         self.helicopter_active = !self.helicopter_active;
         if self.helicopter_active {
             self.mirror = false;
-            let heli = self
-                .helicopter
-                .get_or_insert_with(|| tm1_core::drive::Helicopter::new(&mut self.player));
+            let heli = self.helicopter.as_mut().unwrap();
             heli.update(&self.player, 3, true);
         } else {
             self.camera.update(&self.player, true);
@@ -482,6 +483,9 @@ impl Drive {
         let skipped = selected && self.lost_life.unwrap() < Duration::from_millis(500);
         if elapsed >= Duration::from_millis(1500) || skipped {
             self.pause_sound = skipped.then_some(true);
+            if let Some(heli) = &mut self.helicopter {
+                heli.respawn(&mut self.player);
+            }
             self.contacts.respawn_player(&mut self.player);
             if self.helicopter_active
                 && let Some(heli) = &mut self.helicopter
@@ -514,6 +518,7 @@ impl Drive {
         opponent_kinds: &[Vehicle],
     ) -> Self {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
+        let helicopter = Self::stage_helicopter(&mut player);
         let camera = tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase);
         Self {
             battle_seed: player.rng_state(),
@@ -541,7 +546,7 @@ impl Drive {
             helicopter_unlocked: false,
             helicopter_active: false,
             rooftop_passage: Default::default(),
-            helicopter: None,
+            helicopter,
             audio_restart_count: 0,
             was_focused: false,
             victory_fields: 0,
@@ -608,7 +613,6 @@ pub fn advance(
         state.player.set_pad_layout(state.settings.layout);
         state.camera.update(&state.player, true);
         drive.rooftop_passage = Default::default();
-        drive.helicopter = None;
         drive.helicopter_active = false;
         drive.victory_fields = 0;
         drive.boss_input_released = false;
@@ -622,6 +626,7 @@ pub fn advance(
             .filter(|&kind| kind != Vehicle::Minion)
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
+        drive.helicopter = Drive::stage_helicopter(&mut drive.player);
         let seed = drive.battle_seed;
         drive.begin_battle(seed);
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);

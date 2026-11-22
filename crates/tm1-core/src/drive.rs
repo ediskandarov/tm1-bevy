@@ -1099,24 +1099,36 @@ impl Helicopter {
             state: [0; 0x560],
             pose: [0; 5],
         };
+        heli.state[6..8].copy_from_slice(&(player.used_starts.count_ones() as i16).to_le_bytes());
+        heli.initialize(player);
+        heli
+    }
+    pub fn respawn(&mut self, player: &mut PlayerVehicle) {
+        // InitTriggerPoint chooses the next route using the previous stats.unk68 link.
+        // AICarInit also keeps the roster slot and the last direction and distance to the player.
+        self.state[..6].fill(0);
+        self.state[8..0x2c].fill(0);
+        self.state[0x38..0x274].fill(0);
+        self.state[0x278..].fill(0);
+        self.initialize(player);
+    }
+    fn initialize(&mut self, player: &mut PlayerVehicle) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
-            let mut seed = player.initial_seed;
             tm1_ai_step(
                 std::ptr::null_mut(),
-                heli.state.as_mut_ptr(),
+                self.state.as_mut_ptr(),
                 player.state.as_mut_ptr(),
                 player.trig.as_ptr(),
-                &mut seed,
+                &mut player.seed,
                 -1,
-                &mut 0,
-                3,
+                &mut player.used_starts,
+                player.last_fields.into(),
                 player.frame,
             );
         }
-        heli
     }
     pub fn update(&mut self, player: &PlayerVehicle, fields: u8, enter: bool) {
         assert!((1..=5).contains(&fields));

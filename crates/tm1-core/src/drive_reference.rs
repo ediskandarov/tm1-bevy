@@ -1557,6 +1557,15 @@ fn split_screen_chase_cameras_match_original() {
     }
 }
 
+fn init_retail_helicopter(cpu: &mut Cpu) {
+    const HELI: u32 = 0x801a22b8;
+    cpu.call(0x80124d34, &[HELI, u32::MAX, 1]);
+    let trigger = cpu.call(0x8011c2d0, &[HELI, 0]);
+    put(cpu, HELI + 0x20c + 0x64, trigger);
+    cpu.call(0x80120f60, &[HELI]);
+    cpu.put(HELI + 1, &[0]);
+}
+
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn helicopter_camera_original() {
@@ -1569,14 +1578,12 @@ fn helicopter_camera_original() {
         let mut r = Reference::on_level(Vehicle::YellowJacket, false, level);
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         r.cpu.call(points, &[]);
-        r.cpu.random_state = r.player.initial_seed;
+        r.player.used_starts = 0; // The retail point table above is freshly initialized.
+        r.cpu.random_state = r.player.seed;
         put(&mut r.cpu, 0x8018c378, level as u32 + 1);
         let mut heli = Helicopter::new(&mut r.player);
-        r.cpu.call(0x80124d34, &[HELI, u32::MAX, 1]);
-        let trigger = r.cpu.call(0x8011c2d0, &[HELI, 0]);
-        put(&mut r.cpu, HELI + 0x20c + 0x64, trigger);
-        r.cpu.call(0x80120f60, &[HELI]);
-        r.cpu.put(HELI + 1, &[0]);
+        init_retail_helicopter(&mut r.cpu);
+        assert_eq!(r.player.seed, r.cpu.random_state);
         for entry in [0x8015060c, 0x801505c4, 0x8010ad84] {
             r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -1609,7 +1616,21 @@ fn helicopter_camera_original() {
             r.cpu
                 .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
             put(&mut r.cpu, 0x8017023c, r.player.frame);
-            if matches!(tick, 0 | 113) {
+            if tick == 146 {
+                // InitUALevel initializes the existing helicopter actor on each new life.
+                r.cpu.random_state = r.player.seed;
+                heli.respawn(&mut r.player);
+                init_retail_helicopter(&mut r.cpu);
+                assert_eq!(r.player.seed, r.cpu.random_state);
+                for (offset, &byte) in heli.state.iter().enumerate() {
+                    assert_eq!(
+                        byte,
+                        r.cpu.ram[(HELI as usize & 0x1fffff) + offset],
+                        "{level:?} new life helicopter offset {offset:x}"
+                    );
+                }
+            }
+            if matches!(tick, 0 | 113 | 146) {
                 heli.update(&r.player, fields, true);
                 r.cpu.call(0x8014f3b4, &[]);
                 let previous =
@@ -3683,7 +3704,7 @@ fn minion_initial_record_matches_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn rooftop_boss_handoff_matches_retail_after_three_reserved_starts() {
+fn rooftop_boss_handoff_matches_retail_after_helicopter_initialization() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
     let level = Level::Rooftops;
@@ -3733,6 +3754,18 @@ fn rooftop_boss_handoff_matches_retail_after_three_reserved_starts() {
             }
             assert_eq!(player.seed, cpu.random_state);
             assert_eq!(player.used_starts.count_ones(), 3);
+            cpu.put(0x801a22b8 + 6, &3i16.to_le_bytes());
+            init_retail_helicopter(&mut cpu);
+            let heli = Helicopter::new(&mut player);
+            for offset in (0..heli.state.len()).step_by(4) {
+                assert_eq!(
+                    heli.state[offset..offset + 4],
+                    cpu.word(0x801a22b8 + offset as u32).to_le_bytes(),
+                    "helicopter offset {offset:x}"
+                );
+            }
+            assert_eq!(player.seed, cpu.random_state);
+            assert_eq!(player.used_starts.count_ones(), 4);
             player.step(Input::default(), fields);
             cpu.put(0x80170238, &i16::from(fields).to_le_bytes());
             cpu.put(0x8017023a, &(60 / i16::from(fields)).to_le_bytes());
@@ -3746,7 +3779,7 @@ fn rooftop_boss_handoff_matches_retail_after_three_reserved_starts() {
             cpu.put(PLAYER, &player.state);
             cpu.call(0x80150d04, &[]);
             let boss = Opponent::spawn_minion(&mut player);
-            assert_eq!(player.used_starts.count_ones(), 4);
+            assert_eq!(player.used_starts.count_ones(), 5);
             for (address, record) in [
                 (PLAYER, &player.state[..]),
                 (POLICE + 3 * 0x560, &boss.state[..]),
