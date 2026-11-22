@@ -587,7 +587,7 @@ pub fn advance(
                     face,
                     20,
                     79 + base,
-                    &car.vehicle().name().replace('.', "").to_uppercase(),
+                    fonts.car_name(car.vehicle().card_index()),
                 );
                 for (x, label, count) in [
                     (220, "WINS", duel.score[slot]),

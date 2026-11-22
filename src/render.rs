@@ -754,11 +754,7 @@ pub fn hud_letters(
 }
 
 fn rival_name(fonts: &tm1_assets::screen::Fonts, car: tm1_core::drive::Vehicle) -> &str {
-    let card = tm1_core::drive::Vehicle::CARD_ORDER
-        .iter()
-        .position(|&v| v == car)
-        .unwrap_or(12);
-    fonts.car_sign(card)
+    fonts.car_sign(car.card_index())
 }
 
 fn draw_rival_list(
@@ -2137,11 +2133,14 @@ mod tests {
             .into_iter()
             .chain([Vehicle::Minion])
             .collect();
-        for (card, &vehicle) in roster.iter().enumerate() {
+        for &vehicle in &roster {
             let name = cpu.call(0x80150cb4, &[vehicle as u32]);
             let name = std::ffi::CStr::from_bytes_until_nul(&cpu.ram[(name & 0x1fffff) as usize..])
                 .unwrap();
-            assert_eq!(fonts.car_name(card).as_bytes(), name.to_bytes());
+            assert_eq!(
+                fonts.car_name(vehicle.card_index()).as_bytes(),
+                name.to_bytes()
+            );
         }
         for start in [0, 5] {
             let cars = &roster[start..start + 8];

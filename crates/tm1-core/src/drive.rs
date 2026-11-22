@@ -196,6 +196,13 @@ impl Vehicle {
         Self::Hammerhead,
         Self::RoadKill,
     ];
+    pub fn card_index(self) -> usize {
+        Self::CARD_ORDER
+            .iter()
+            .position(|&vehicle| vehicle == self)
+            .unwrap_or(Self::CARD_ORDER.len())
+    }
+
     fn radar_color(self) -> [u8; 3] {
         use Vehicle::*;
         match self {
