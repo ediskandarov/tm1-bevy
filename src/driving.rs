@@ -456,7 +456,8 @@ pub fn advance(
             let id = match (kind, life) {
                 (26, 2) => state.recharge_sound(),
                 (36, 2) => state.recharge_sound() + 1,
-                (0, 2) => 1,
+                (0 | 51, 2) => 1,
+                (52, 2) => 4,
                 (11, 2) => 6,
                 (10, 2) => 5,
                 (kind @ 18..=25, 2) => (kind - 6) as usize,
@@ -476,6 +477,15 @@ pub fn advance(
                 },
                 full_range: matches!(kind, 29 | 30 | 33 | 37),
             });
+        }
+        for slot in 0..2 {
+            if let Some([_, x, y, z, 1]) = state.contacts.merc_pose(slot) {
+                state.sounds.push(BattleSound {
+                    id: state.recharge_sound() + 3,
+                    position: [x, y, z],
+                    full_range: false,
+                });
+            }
         }
         if state.player.health().0 > 0 && state.opponents.iter().all(|car| car.health().0 <= 0) {
             state.advance_victory_delay(3);

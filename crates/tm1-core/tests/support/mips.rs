@@ -102,6 +102,12 @@ impl Cpu {
                         .position(|&b| b == 0)
                         .expect("unterminated BIOS strlen") as u32
                 }
+                0x2a => {
+                    let dst = (self.r[4] & 0x1fffff) as usize;
+                    let src = (self.r[5] & 0x1fffff) as usize;
+                    self.ram.copy_within(src..src + self.r[6] as usize, dst);
+                    self.r[4]
+                }
                 0x2f => {
                     self.random_state = self
                         .random_state

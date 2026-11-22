@@ -17,6 +17,14 @@ typedef struct Bullet {
 void s_create_bullet(s32 owner, VECTOR3* dir, VECTOR3* pos, s32 kind, s32 damage, s32 life, s32 arg6);
 Bullet *arena_bullets(void);
 void create_bullet(s32, VECTOR3*, VECTOR3*, s32);
+typedef struct ArenaMerc {
+    Cs model;
+    DbSwitch* node;
+    int timer, shots, phase, site, altitude;
+    u8 initial_branch, hover_sound;
+} ArenaMerc;
+void arena_move_mercs(ArenaMerc*, int, const VECTOR3*);
+void tm1_move_mercs(int, const VECTOR3*);
 void arena_flash(VECTOR3*);
 void arena_cop_missile(int, int, const VECTOR3*);
 void tm1_move_static_cops(const VECTOR3*);

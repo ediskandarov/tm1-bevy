@@ -50,6 +50,7 @@ pub struct Arena {
     scene: Scene,
     sky: Option<Scene>,
     missile_models: [Option<Scene>; 2],
+    merc_models: [Vec<Scene>; 2],
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     flame_frames: [SpriteFrame; 10],
@@ -84,6 +85,7 @@ impl Arena {
         vehicle: [Scene; 3],
         opponents: Vec<[Scene; 3]>,
         missile_models: [Option<Scene>; 2],
+        merc_models: [Vec<Scene>; 2],
         explosion_frames: [SpriteFrame; 16],
         flame_frames: [SpriteFrame; 10],
         burn_frames: [SpriteFrame; 8],
@@ -111,6 +113,7 @@ impl Arena {
             .iter()
             .chain(sky.iter().flat_map(|s| &s.polygons))
             .chain(missile_models.iter().flatten().flat_map(|s| &s.polygons))
+            .chain(merc_models.iter().flatten().flat_map(|s| &s.polygons))
         {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
@@ -167,6 +170,7 @@ impl Arena {
             scene,
             sky,
             missile_models,
+            merc_models,
             vehicle_start,
             body_ranges,
             explosion_frames,
@@ -963,6 +967,15 @@ fn draw_view(
             hidden_world[polygons.clone()].fill(true);
         }
     }
+    let billboard_point = |center: Vec3, extent: Option<[f32; 2]>, corner: usize| {
+        if let Some([w, h]) = extent {
+            center
+                + right * if corner & 1 == 0 { -w } else { w }
+                + up * if corner < 2 { h } else { -h }
+        } else {
+            center
+        }
+    };
     for i in visible {
         if i < arena.vehicle_start && hidden_world[i] {
             continue;
@@ -1014,11 +1027,7 @@ fn draw_view(
         };
         for &i_vertex in indices {
             let v = &p.vertices[i_vertex];
-            let mut point = transform(i, v.position);
-            if let Some([w, h]) = p.billboard {
-                point += right * if i_vertex & 1 == 0 { -w } else { w }
-                    + up * if i_vertex < 2 { h } else { -h };
-            }
+            let point = billboard_point(transform(i, v.position), p.billboard, i_vertex);
             batch.push(point, arena.uv(slot, v.uv.into()), v.color);
         }
     }
@@ -1053,12 +1062,32 @@ fn draw_view(
     }
     let mut poses = [[0; 13]; 10];
     let count = drive.contacts.missile_poses(&mut poses);
-    for pose in &poses[..count] {
+    let missiles = poses[..count].iter().filter_map(|pose| {
+        Some((
+            arena.missile_models[usize::from(pose[0] == 312)].as_ref()?,
+            *pose,
+        ))
+    });
+    let mercs = arena
+        .merc_models
+        .iter()
+        .enumerate()
+        .filter_map(|(slot, frames)| {
+            let [branch, x, y, z, _] = drive.contacts.merc_pose(slot)?;
+            Some((
+                frames.get(branch as usize)?,
+                [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
+            ))
+        });
+    for (model, pose) in missiles.chain(mercs) {
         let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
-        let Some(model) = &arena.missile_models[usize::from(pose[0] == 312)] else {
-            continue;
-        };
         for p in &model.polygons {
+            if p.animation
+                .iter()
+                .any(|a| a.selected(drive.player.frame()) != a.child)
+            {
+                continue;
+            }
             let batch = if p.semi_transparent && p.texture.is_some_and(|t| (t.page >> 5) & 3 == 1) {
                 &mut additive
             } else if p.semi_transparent {
@@ -1075,7 +1104,7 @@ fn draw_view(
                         .sum()
                 });
                 batch.push(
-                    origin + world(rotated),
+                    billboard_point(origin + world(rotated), p.billboard, i),
                     arena.uv(slot, v.uv.into()),
                     v.color,
                 );
@@ -1103,6 +1132,7 @@ fn draw_view(
                 }
                 31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
                 32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
+                44..=50 => (&arena.burn_frames[(kind - 44 + 2 - ttl) as usize], 8),
                 38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
                 35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
@@ -1194,7 +1224,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 8 | 26..=43 => continue,
+            3 | 8 | 26..=52 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };

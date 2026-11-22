@@ -153,7 +153,7 @@ impl Transform {
 #[derive(Clone, Copy)]
 struct BodySelection {
     switch: Option<(u32, u8)>,
-    headlights_kind: u16,
+    headlights_kind: Option<u16>,
     headlights: bool,
 }
 
@@ -425,10 +425,48 @@ impl<'a> Dmd<'a> {
             };
             selection = Some(BodySelection {
                 switch,
-                headlights_kind: kind + 4,
+                headlights_kind: Some(kind + 4),
                 headlights,
             });
         }
+        let scene = self.extract_root(root_id, selection)?;
+        ensure!(
+            !scene.polygons.is_empty(),
+            "selected root has no supported polygons"
+        );
+        Ok(scene)
+    }
+    /// TARGETS.c init_merc selects child zero, optionally through a translation.
+    pub fn merc_frames(&self, kind: u16) -> Result<Vec<Scene>> {
+        let Some(&(root, _)) = self.roots.iter().find(|r| r.1 == kind) else {
+            return Ok(Vec::new());
+        };
+        let p = self.offset(root)?;
+        ensure!(
+            self.data[p] == 1 && bytes(self.data, p + 20, 1)?[0] > 0,
+            "missing mercenary group"
+        );
+        let mut node = u32le(self.data, p + 24)?;
+        let p = self.offset(node)?;
+        if self.data[p] == 4 {
+            node = u32le(self.data, p + 20)?;
+        }
+        let p = self.offset(node)?;
+        ensure!(self.data[p] == 9, "missing mercenary switch");
+        (0..bytes(self.data, p + 6, 1)?[0])
+            .map(|branch| {
+                self.extract_root(
+                    root,
+                    Some(BodySelection {
+                        switch: Some((node, branch)),
+                        headlights_kind: None,
+                        headlights: true,
+                    }),
+                )
+            })
+            .collect()
+    }
+    fn extract_root(&self, root_id: u32, selection: Option<BodySelection>) -> Result<Scene> {
         let mut scene = Scene {
             version: self.version,
             root_id,
@@ -447,10 +485,6 @@ impl<'a> Dmd<'a> {
             &mut Vec::new(),
             &mut scene,
         )?;
-        ensure!(
-            !scene.polygons.is_empty(),
-            "selected root has no supported polygons"
-        );
         Ok(scene)
     }
     fn visit(
@@ -492,15 +526,18 @@ impl<'a> Dmd<'a> {
                 if d[p + 21] & 2 == 0 {
                     let kind = u16le(d, p + 2)?;
                     let sub = u16le(d, p + 22)?;
-                    let count =
-                        match selection {
-                            Some(body)
-                                if body.headlights_kind == kind && (1..=3).contains(&sub) =>
-                            {
-                                if body.headlights { 2 } else { 0 }
+                    let count = match selection {
+                        Some(body)
+                            if body.headlights_kind == Some(kind) && (1..=3).contains(&sub) =>
+                        {
+                            if body.headlights {
+                                2
+                            } else {
+                                0
                             }
-                            _ => usize::from(d[p + 20]),
-                        };
+                        }
+                        _ => usize::from(d[p + 20]),
+                    };
                     list(count, p + 24)?;
                 }
             }

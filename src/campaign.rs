@@ -134,6 +134,7 @@ impl Stage {
                     .then(|| dmd.extract_kind(312))
                     .transpose()?,
             ],
+            [dmd.merc_frames(750)?, dmd.merc_frames(752)?],
             dmd.explosion_frames()?,
             dmd.flame_frames()?,
             dmd.burn_frames()?,

@@ -26,6 +26,7 @@ typedef struct StaticCop {
 } StaticCop;
 
 typedef struct CollisionScene {
+    ArenaMerc mercs[2];
     StaticCop cops[25];
     int cop_cycle;
     ArenaTarget targets[50];
@@ -361,6 +362,31 @@ void tm1_scene_free(CollisionScene* s)
     free(s->visiting);
     free(s);
 }
+static void reset_merc(ArenaMerc* merc, int slot)
+{
+    merc->timer = 200 * (slot + 1);
+    merc->hover_sound = 0;
+    merc->phase = merc->shots = merc->altitude = 0;
+    merc->site = -1;
+    merc->node->sel = merc->initial_branch;
+    merc->model.pos = (VECTOR3){0};
+}
+void tm1_move_mercs(int level, const VECTOR3* player)
+{
+    arena_move_mercs(current->mercs, level, player);
+}
+int tm1_merc_pose(const CollisionScene* scene, int slot, int* out)
+{
+    const ArenaMerc* merc = &scene->mercs[slot];
+    if (!merc->node)
+        return 0;
+    out[0] = merc->node->sel;
+    out[1] = merc->model.pos.vx;
+    out[2] = merc->model.pos.vy;
+    out[3] = merc->model.pos.vz;
+    out[4] = merc->hover_sound;
+    return 1;
+}
 CollisionScene* tm1_scene_load(
     const u8* data, size_t size, u32 base, u32 world, u32 taxi, const u32* opponents, size_t count)
 {
@@ -397,6 +423,32 @@ CollisionScene* tm1_scene_load(
         u32 root;
         if (!load(s, base, 24 + 4 * i, &root, sizeof(root)))
             goto invalid;
+        DbNodeHdr hdr;
+        if (!load(s, root, 0, &hdr, 4))
+            goto invalid;
+        if (hdr.op == DB_OP_GROUP && (hdr.kind == UA_BAZ_COP || hdr.kind == UA_HOVER_COP)) {
+            int slot = hdr.kind == UA_HOVER_COP;
+            ArenaMerc* merc = &s->mercs[slot];
+            DbNode* model = decode(s, root, 0);
+            if (!model || !model->grp.nChild)
+                goto invalid;
+            DbNode* sw = model->grp.child[0];
+            if (sw->h.op == DB_OP_TRANS && sw->trans.nChild)
+                sw = sw->trans.child[0];
+            if (sw->h.op != DB_OP_SWITCH)
+                goto invalid;
+            merc->node = &sw->sw;
+            merc->initial_branch = sw->sw.sel;
+            reset_merc(merc, slot);
+            Cs* cs = &merc->model;
+            cs->epNode = model;
+            cs->drawMode = cs->unk0C = 1;
+            cs->unkC0 = 100 + slot;
+            for (int axis = 0; axis < 3; axis++)
+                cs->mat.m[axis][axis] = cs->wmat.m[axis][axis] = 4096;
+            cs->next = s->first_car;
+            s->first_car = cs;
+        }
         for (size_t j = 0; j <= count; j++) {
             if (root != (j ? opponents[j - 1] : taxi))
                 continue;
@@ -560,6 +612,9 @@ void tm1_reset_projectiles(CollisionScene* s)
                 model.node->sw.sel = model.initial;
         }
     }
+    for (int i = 0; i < 2; i++)
+        if (s->mercs[i].node)
+            reset_merc(&s->mercs[i], i);
     for (int i = 0; i < 25; i++) {
         StaticCop* cop = &s->cops[i];
         if (cop->node) {
@@ -685,6 +740,14 @@ int arena_hit_target(const VECTOR3* p, int owner, int radius)
             && (abs(p->vz - t->pos.vz) >> 3) < radius + 5)
             return 500 + i;
     }
+    for (int i = 0; i < 2; i++) {
+        ArenaMerc* merc = &current->mercs[i];
+        VECTOR3* pos = &merc->model.pos;
+        if (merc->node && (abs(p->vx - pos->vx) >> 3) < radius + 4
+            && (abs(p->vy - pos->vy) >> 3) < radius + 4
+            && (abs(p->vz - pos->vz) >> 3) < radius + 4)
+            return 100 + i;
+    }
     return 0;
 }
 
@@ -778,6 +841,26 @@ int tm1_damage_branch(const CollisionScene* s, u32 addr)
 
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
+    if (id == 100 || id == 101 || ((id <= 0 || id == 8) && (tag == UA_BAZ_COP || tag == UA_HOVER_COP))) {
+        int slot = id == 101 || ((id <= 0 || id == 8) && tag == UA_HOVER_COP);
+        ArenaMerc* merc = &current->mercs[slot];
+        if (merc->node) {
+            VECTOR3* pos = &merc->model.pos;
+            arena_effect(pos, 36);
+            merc->node->sel = 4;
+            do_smoke(pos);
+            arena_effect(pos, 44 + arena_rand() % 7);
+            arena_effect(pos, 31);
+            arena_effect(pos, 28);
+            pos->vz = 0;
+            arena_effect(pos, 35);
+            merc->phase = 0;
+            merc->timer = 500 + arena_rand() % 250;
+            pos->vz = 1000;
+            merc->site = -1;
+        }
+        return;
+    }
     if ((id <= 0 || id == 8) && tag >= 753 && tag <= 755 && sub >= 1 && sub <= 25) {
         StaticCop* cop = &current->cops[sub - 1];
         arena_effect(&cop->pos, 36);
@@ -1149,6 +1232,7 @@ void arena_effect(VECTOR3* pos, s32 kind)
     case 2: e[4] = 7; break;
     case 8:
     case 34: e[4] = 88; break;
+    case 44: case 45: case 46: case 47: case 48: case 49: case 50: e[4] = 2; break;
     case 38: case 39: case 40: case 41: case 42: case 43: e[4] = 3; break;
     case 35: e[4] = 104; break;
     case 31: e[4] = 24; break;

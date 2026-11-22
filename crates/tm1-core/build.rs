@@ -14,6 +14,7 @@ fn main() {
         .file("native/upstream/car_collision.c")
         .file("native/upstream/arena_damage.c")
         .file("native/collision_scene.c")
+        .file("native/upstream/arena_mercs.c")
         .file("native/upstream/ai_driving.c")
         .include("native/include")
         .flag_if_supported("-std=c99")

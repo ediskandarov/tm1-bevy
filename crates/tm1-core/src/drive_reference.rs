@@ -100,6 +100,12 @@ impl Reference {
                 tm1_pickup_address(scene.native.as_ptr(), i as i32)
             });
         }
+        for &(root, kind) in &roots {
+            if matches!(kind, 750 | 752) {
+                cpu.call(0x80148fb8, &[kind as u32, root]);
+            }
+        }
+        cpu.put(0x80148380, &[8, 0, 224, 3, 0, 0, 0, 0]); // hover audio
         cpu.call(0x80102b48, &[0x800e1000]);
         cpu.call(0x80103a4c, &[0x800e3000]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
@@ -1954,7 +1960,9 @@ fn compare_battle_controls(
         }
         let mut head = 0;
         for (_, kind) in roots {
-            let cs = if kind == vehicle as u16 {
+            let cs = if matches!(kind, 750 | 752) {
+                r.cpu.word(0x801f83fc + u32::from(kind == 752) * 28 + 4)
+            } else if kind == vehicle as u16 {
                 TAXI_CS
             } else if let Some(i) = kinds.iter().position(|v| *v as u16 == kind) {
                 slots[i]
@@ -2020,6 +2028,7 @@ fn compare_battle_controls(
         r.cpu.call(0x80135784, &[]);
         r.cpu.call(0x80135e10, &[]);
         if level != Level::Arena {
+            r.cpu.call(0x8014843c, &[]);
             r.cpu.call(0x8014aaa0, &[]);
         }
         r.cpu.call(0x80120728, &[]);
@@ -2580,10 +2589,8 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
         fn arena_hit_target(pos: *const i32, owner: i32, radius: i32) -> i32;
         fn bulDispatchDamage(id: i32, tag: i32, sub: i32, damage: i32, dir: *const i32, owner: i32);
     }
-    // Isolate the arena targets from cars, pedestrians, mercenaries and audio.
-    for addr in [
-        0x8014f914, 0x8014f94c, 0x80149140, 0x8014a4c4, 0x801085d0, 0x80108604,
-    ] {
+    // Isolate the arena targets from cars, pedestrians and audio.
+    for addr in [0x8014f914, 0x8014f94c, 0x8014a4c4, 0x801085d0, 0x80108604] {
         r.cpu.put(addr, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
     }
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
@@ -2859,4 +2866,87 @@ fn static_cop_encounters_match_disc() {
         }
     }
     assert_eq!(kinds.into_iter().collect::<Vec<_>>(), [753, 754, 755]);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn hover_mercenaries_match_disc() {
+    for level in [
+        Level::Warehouse,
+        Level::Freeway,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Rooftops,
+    ] {
+        let mut r = Reference::on_level(Vehicle::YellowJacket, true, level);
+        put(&mut r.cpu, 0x8018c3b4, level as u32);
+        for at in [0x801085d0, 0x80108604] {
+            r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        for i in 0..10 {
+            let m = 0x801a9c10 + 0x3e8 * i;
+            put(&mut r.cpu, m + 0x34, (-12i32) as u32);
+            put(&mut r.cpu, m + 0x24, 0x800d0000 + 0x110 * i);
+            put(&mut r.cpu, m + 0x100, 0x800d1000 + 0x110 * i);
+            r.cpu.put(m + 0x30, &[i as u8]);
+        }
+        r.sync();
+        let mut phases = [
+            std::collections::BTreeSet::new(),
+            std::collections::BTreeSet::new(),
+        ];
+        for t in 0..2200 {
+            let target = if t < 1000 {
+                [9000, 6500, 600]
+            } else {
+                [-6500, 1100, 800]
+            };
+            vec3(&mut r.player.state, 0x388, target);
+            vec3_cpu(&mut r.cpu, PLAYER + 0x388, target);
+            if t == 900 {
+                for slot in 0..2 {
+                    if r.scene.merc_pose(slot).is_none() {
+                        continue;
+                    }
+                    let kind = [750, 752][slot];
+                    r.cpu.call(0x80148e6c, &[kind, 1]);
+                    r.scene
+                        .phase(&mut r.player, &mut r.police, 5 + slot as u8, 3);
+                }
+            }
+            let mut hover_requests = Vec::new();
+            r.cpu.call_observed(0x8014843c, &[], 0x80000080, |cpu| {
+                if cpu.pc() == 0x80148380 {
+                    hover_requests.push(cpu.r[4]);
+                }
+            });
+            r.scene.phase(&mut r.player, &mut r.police, 4, 3);
+            for (slot, seen) in phases.iter_mut().enumerate() {
+                let merc = 0x801f83fc + 28 * slot as u32;
+                let cs = r.cpu.word(merc + 4);
+                let pose = r.scene.merc_pose(slot);
+                assert_eq!(cs != 0, pose.is_some());
+                if let Some([branch, x, y, z, hover]) = pose {
+                    assert_eq!(hover != 0, hover_requests.contains(&(cs + 0x5c)));
+                    let sw = r.cpu.word(merc + 8);
+                    assert_eq!(
+                        branch,
+                        r.cpu.ram[(sw as usize & 0x1fffff) + 7] as i32,
+                        "{level:?} {slot} {t}"
+                    );
+                    assert_eq!(
+                        [x, y, z],
+                        [0, 4, 8].map(|d| r.cpu.word(cs + 0x5c + d) as i32),
+                        "{level:?} {slot} {t}"
+                    );
+                    seen.insert(branch);
+                }
+            }
+            assert_eq!(r.player.seed, r.cpu.random_state, "{level:?} tick {t} RNG");
+            compare_projectiles(&r, Vehicle::YellowJacket, t);
+        }
+        for seen in phases.iter().filter(|p| !p.is_empty()) {
+            assert_eq!(seen.iter().copied().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+        }
+    }
 }

@@ -952,6 +952,17 @@ impl CollisionScene {
         }
         unsafe { tm1_continue_static_cop_cycle(self.native.as_ptr(), previous.native.as_ptr()) }
     }
+    pub fn merc_pose(&self, slot: usize) -> Option<[i32; 5]> {
+        if slot >= 2 {
+            return None;
+        }
+        unsafe extern "C" {
+            fn tm1_merc_pose(scene: *const std::ffi::c_void, slot: i32, out: *mut i32) -> i32;
+        }
+        let mut pose = [0; 5];
+        (unsafe { tm1_merc_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
+            .then_some(pose)
+    }
     pub fn damage_branch(&self, address: u32) -> u8 {
         unsafe extern "C" {
             fn tm1_damage_branch(scene: *const std::ffi::c_void, address: u32) -> i32;
