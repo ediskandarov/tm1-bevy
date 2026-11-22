@@ -17,7 +17,7 @@ impl Sounds {
     pub fn load(
         disc: &Disc,
         vehicle: tm1_core::drive::Vehicle,
-        opponent: tm1_core::drive::Vehicle,
+        opponents: &[tm1_core::drive::Vehicle],
     ) -> Result<Self> {
         let bank = disc.read("SND/UACORE.VAB")?;
         let mut sources = Vec::new();
@@ -40,24 +40,10 @@ impl Sounds {
             PitViper => (9, 46),
         };
         let (engine, special) = programs(vehicle);
-        let (_, opponent_special) = programs(opponent);
-        for (id, prog) in [
-            engine,
-            12,
-            13,
-            29,
-            19,
-            special,
-            21,
-            16,
-            15,
-            18,
-            17,
-            21,
-            opponent_special,
-        ]
-        .into_iter()
-        .enumerate()
+        for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
+            .into_iter()
+            .chain(opponents.iter().map(|&car| programs(car).1))
+            .enumerate()
         {
             let tones = program(&bank, prog)?;
             let mut mix = Vec::<[f32; 2]>::new();

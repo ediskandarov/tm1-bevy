@@ -59,3 +59,7 @@ void arena_regenerate_pickups(void);
 void arena_move_fragments(void);
 
 void arena_ai_weapon_profile(AICar* car);
+
+void tm1_load_battle(const s16*);
+void tm1_store_battle(s16*);
+s16 GetNumAICars(void);

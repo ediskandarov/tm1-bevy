@@ -2063,3 +2063,35 @@ void tm1_ai_restore_battle(AICar* car)
     numAICarsInBattle = car->unk41 != 0;
     aiCarsInBattle[0] = car->playerIdx;
 }
+
+void UpdateNumAICarsInBattle(void)
+{
+    s16 i;
+    AICar* car;
+
+    for (i = 0; i < numAICarsInBattle; i++) {
+        car = GetAICarInfo(aiCarsInBattle[i]);
+        if (car->stats.unk40 <= 0) {
+            AICarOutOfBattle(car);
+            return;
+        }
+    }
+}
+
+s16 GetNumAICarsInBattle(void)
+{
+    return numAICarsInBattle;
+}
+
+void tm1_load_battle(const s16* battle)
+{
+    numAICarsInBattle = battle[0];
+    aiCarsInBattle[0] = battle[1];
+    aiCarsInBattle[1] = battle[2];
+}
+void tm1_store_battle(s16* battle)
+{
+    battle[0] = numAICarsInBattle;
+    battle[1] = aiCarsInBattle[0];
+    battle[2] = aiCarsInBattle[1];
+}

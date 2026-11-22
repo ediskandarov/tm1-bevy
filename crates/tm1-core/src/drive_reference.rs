@@ -83,7 +83,7 @@ impl Reference {
         }
         for i in 0..50 {
             put(&mut cpu, 0x8019ce2c + 4 * i, unsafe {
-                tm1_pickup_address(scene.0.as_ptr(), i as i32)
+                tm1_pickup_address(scene.native.as_ptr(), i as i32)
             });
         }
         cpu.call(0x80102b48, &[0x800e1000]);
@@ -116,28 +116,31 @@ impl Reference {
             (TAXI_CS, &self.player.state[..], 0x380, 0x138, 1),
             (POLICE_CS, &self.police.state[..], 0x43c, 0x20c, 50),
         ] {
-            let word = |at: usize| i32::from_le_bytes(state[at..at + 4].try_into().unwrap());
-            cpu.put(cs + 0x14, &state[m + 0x50..m + 0x70]);
-            cpu.put(cs + 0x5c, &state[m + 8..m + 20]);
-            for (offset, v) in [(8, 1), (12, 1), (0xc0, id), (0x74, 5)] {
-                put(cpu, cs + offset, v);
-            }
-            for i in 0..5 {
-                let x = if i == 4 {
-                    0
-                } else if i == 1 || i == 2 {
-                    word(st + 0x74) / 2
-                } else {
-                    -word(st + 0x74) / 2
-                };
-                let y = if i == 2 || i == 3 {
-                    word(st + 0x84)
-                } else {
-                    word(st + 0x80)
-                };
-                for (j, v) in [x, y, 24 - word(st + 0x6c)].into_iter().enumerate() {
-                    cpu.put(cs + 0x78 + 8 * i + 2 * j as u32, &(v as i16).to_le_bytes());
-                }
+            Self::sync_model(cpu, cs, state, m, st, id);
+        }
+    }
+    fn sync_model(cpu: &mut Cpu, cs: u32, state: &[u8], m: usize, st: usize, id: u32) {
+        let word = |at: usize| i32::from_le_bytes(state[at..at + 4].try_into().unwrap());
+        cpu.put(cs + 0x14, &state[m + 0x50..m + 0x70]);
+        cpu.put(cs + 0x5c, &state[m + 8..m + 20]);
+        for (offset, v) in [(8, 1), (12, 1), (0xc0, id), (0x74, 5)] {
+            put(cpu, cs + offset, v);
+        }
+        for i in 0..5 {
+            let x = if i == 4 {
+                0
+            } else if i == 1 || i == 2 {
+                word(st + 0x74) / 2
+            } else {
+                -word(st + 0x74) / 2
+            };
+            let y = if i == 2 || i == 3 {
+                word(st + 0x84)
+            } else {
+                word(st + 0x80)
+            };
+            for (j, v) in [x, y, 24 - word(st + 0x6c)].into_iter().enumerate() {
+                cpu.put(cs + 0x78 + 8 * i + 2 * j as u32, &(v as i16).to_le_bytes());
             }
         }
     }
@@ -299,6 +302,116 @@ fn group_battle_selection_original() {
         }
     }
 }
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_group_hit_ids_original() {
+    use std::ffi::c_void;
+    unsafe extern "C" {
+        fn GetPlayerCs3D(i: i16) -> *mut c_void;
+        fn GetAICs3D(i: i16) -> *mut c_void;
+        fn tm1_contact_setup(cs: *mut c_void, motion: *const i32, stats: *const i32);
+        fn HdPntTest(skip0: i32, skip1: i32, pt: *const i32, hit: &mut i32) -> *mut c_void;
+        fn uaIsCarMatID(id: i16, player: &mut i8, slot: &mut u16) -> i32;
+    }
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/WH1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    cpu.put(0x800188b8, &data);
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    let kinds = [20, 30, 100, 60];
+    let ids = [1, 50, 51, 52];
+    let scene =
+        CollisionScene::for_opponents(&data, root(1), root(20), &[root(30), root(100), root(60)])
+            .unwrap();
+    put(&mut cpu, 0x8018c4b0, WORLD);
+    put(&mut cpu, WORLD + 0x104, root(1));
+    put(&mut cpu, WORLD + 0xc0, 8);
+    cpu.call(0x80103a4c, &[0x800e3000]);
+    let model = |i: usize| 0x800e6000 + i as u32 * 0x200;
+    let mut head = 0;
+    for &(node, kind) in &roots {
+        if let Some(i) = kinds.iter().position(|v| *v == kind) {
+            let cs = model(i);
+            for (off, value) in [
+                (0x104, node),
+                (0x108, head),
+                (0xc0, ids[i]),
+                (8, 1),
+                (12, 1),
+            ] {
+                put(&mut cpu, cs + off, value);
+            }
+            head = cs;
+        }
+    }
+    put(&mut cpu, 0x8018bf14, head);
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        tm1_use_scene(scene.native.as_ptr());
+    }
+    struct Unbind;
+    impl Drop for Unbind {
+        fn drop(&mut self) {
+            unsafe {
+                tm1_use_scene(std::ptr::null_mut());
+            }
+        }
+    }
+    let _unbind = Unbind;
+    for overlap in [false, true] {
+        for (i, id) in ids.into_iter().enumerate() {
+            let x = if overlap { 0 } else { i as i32 * 2500 };
+            let mut motion = [0i32; 80];
+            motion[2] = x;
+            motion[4] = 12000;
+            put(&mut cpu, model(i) + 0x5c, x as u32);
+            put(&mut cpu, model(i) + 0x64, 12000);
+            let mut player = -1;
+            let mut slot = 99;
+            unsafe {
+                let cs = if i == 0 {
+                    GetPlayerCs3D(0)
+                } else {
+                    GetAICs3D((i - 1) as i16)
+                };
+                tm1_contact_setup(cs, motion.as_ptr(), [0i32; 72].as_ptr());
+                assert_eq!(uaIsCarMatID(id as i16, &mut player, &mut slot), 1);
+            }
+            assert_eq!(
+                (player, slot),
+                (i8::from(i == 0), i.saturating_sub(1) as u16)
+            );
+        }
+        for x in [0, 2500, 5000, 7500, 10000] {
+            let p = [x, 0, 12000];
+            for (j, v) in p.into_iter().enumerate() {
+                put(&mut cpu, 0x800e7200 + 4 * j as u32, v as u32);
+            }
+            for skip0 in [0, 1, 50, 51, 52] {
+                for skip1 in [0, 1, 50, 51, 52] {
+                    cpu.call(0x801038b0, &[skip0, skip1, 0x800e7200, 0x800e7240]);
+                    let mut id = -1;
+                    unsafe {
+                        HdPntTest(skip0 as i32, skip1 as i32, p.as_ptr(), &mut id);
+                    }
+                    assert_eq!(id, cpu.word(0x800e7240) as i32);
+                    if !overlap && x < 10000 {
+                        let car = ids[(x / 2500) as usize];
+                        assert_eq!(
+                            id,
+                            if [skip0, skip1].contains(&car) {
+                                0
+                            } else {
+                                car as i32
+                            }
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
 fn vec3(state: &mut [u8], at: usize, xyz: [i32; 3]) {
     for (i, v) in xyz.into_iter().enumerate() {
         state[at + 4 * i..at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
@@ -326,7 +439,7 @@ fn bullet_impact_original() {
             fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
         }
         unsafe {
-            tm1_use_scene(r.scene.0.as_ptr());
+            tm1_use_scene(r.scene.native.as_ptr());
             create_bullet(1, dir.as_ptr(), pos.as_ptr(), 1);
             tm1_use_scene(std::ptr::null_mut());
         }
@@ -439,7 +552,8 @@ fn police_update_original() {
         r.player.frame = tick;
         r.sync();
         r.cpu.call(0x8011950c, &[POLICE]);
-        r.police.update(&mut r.player, 3, None, r.scene.0.as_ptr());
+        r.police
+            .update(&mut r.player, 3, None, r.scene.native.as_ptr());
         r.compare();
     }
 }
@@ -791,12 +905,7 @@ fn hammerhead_crush_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn warehouse_encounter_original() {
-    for player in [
-        Vehicle::YellowJacket,
-        Vehicle::Outlaw,
-        Vehicle::Spectre,
-        Vehicle::PitViper,
-    ] {
+    for player in Vehicle::ROSTER {
         println!("Warehouse retail encounter with {player:?}");
         compare_encounter(player, 20, Level::Warehouse);
     }
@@ -804,7 +913,7 @@ fn warehouse_encounter_original() {
 fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     let mut r = Reference::on_level(vehicle, true, level);
     r.cpu.call(0x80137268, &[]);
-    let crush = vehicle == Vehicle::Hammerhead;
+    let crush = level == Level::Arena && vehicle == Vehicle::Hammerhead;
     let mut engaged = false;
     put(&mut r.cpu, 0x8019edd8, vehicle as u32);
     put(&mut r.cpu, 0x8019eddc, r.police.vehicle as u32);
@@ -865,6 +974,58 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         }
     }
     r.sync();
+    let mut lineup = Vec::new();
+    let mut slots = vec![POLICE_CS];
+    if level == Level::Warehouse {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+        let kinds = vehicle.warehouse_opponents();
+        let root = |v| roots.iter().find(|r| r.1 == v).unwrap().0;
+        r.scene = CollisionScene::for_opponents(
+            &data,
+            root(1),
+            root(vehicle as u16),
+            &kinds.iter().map(|v| root(*v as u16)).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        r.player.reset();
+        lineup = Opponent::spawn_bout(&mut r.player, &kinds);
+        r.cpu.random_state = r.player.seed;
+        slots = vec![POLICE_CS, 0x800e6000, 0x800e6200];
+        r.cpu.put(0x8018c336, &4u16.to_le_bytes());
+        r.cpu.put(0x8018c338, &3u16.to_le_bytes());
+        for (i, car) in lineup.iter().enumerate() {
+            let n = i as u32;
+            let cs = slots[i];
+            r.cpu.put(POLICE + 0x560 * n, &car.state);
+            Reference::sync_model(&mut r.cpu, cs, &car.state, 0x43c, 0x20c, 50 + n);
+            for (addr, value) in [
+                (cs + 0x104, root(car.vehicle as u16)),
+                (0x8019f788 + 4 * n, cs),
+                (0x8019ee10 + 4 * n, cs),
+                (0x8019ed8c + 4 * n, 1),
+                (0x8019eddc + 4 * n, car.vehicle as u32),
+            ] {
+                put(&mut r.cpu, addr, value);
+            }
+            r.cpu.put(0x801a22a8 + 2 * n, &(i as u16 + 1).to_le_bytes());
+            r.cpu.put(0x8019edbe + 2 * n, &(i as u16).to_le_bytes());
+        }
+        let mut head = 0;
+        for (_, kind) in roots {
+            let cs = if kind == vehicle as u16 {
+                TAXI_CS
+            } else if let Some(i) = kinds.iter().position(|v| *v as u16 == kind) {
+                slots[i]
+            } else {
+                continue;
+            };
+            put(&mut r.cpu, cs + 0x108, head);
+            head = cs;
+        }
+        put(&mut r.cpu, 0x8018bf14, head);
+    }
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -889,13 +1050,32 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);
-        r.cpu.call(0x8014ee14, &[POLICE_CS, POLICE]);
-        r.cpu.call(0x80135784, &[]);
-        r.scene.step(&mut r.player, &mut r.police, input, fields);
-        if r.player.rng_state() != r.cpu.random_state {
-            eprintln!("first RNG mismatch at {tick}");
+        for (i, &cs) in slots.iter().enumerate() {
+            r.cpu.call(0x8014ee14, &[cs, POLICE + 0x560 * i as u32]);
         }
-        r.compare();
+        r.cpu.call(0x8011c080, &[]);
+        r.cpu.call(0x80135784, &[]);
+        if lineup.is_empty() {
+            r.scene.step(&mut r.player, &mut r.police, input, fields);
+            r.compare();
+        } else {
+            r.scene.step_bout(&mut r.player, &mut lineup, input, fields);
+            for (addr, state) in std::iter::once((PLAYER, &r.player.state[..])).chain(
+                lineup
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ai)| (POLICE + 0x560 * i as u32, &ai.state[..])),
+            ) {
+                for (j, &v) in state.iter().enumerate() {
+                    assert_eq!(
+                        v,
+                        r.cpu.ram[(addr as usize & 0x1fffff) + j],
+                        "tick {tick} car {addr:x} byte {j:x}"
+                    );
+                }
+            }
+            assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
         if crush {
             let active = r.player.state[0xa0 + 27] != 0;
             if tick == 1 || charge < 6 {

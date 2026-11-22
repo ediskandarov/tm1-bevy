@@ -354,8 +354,7 @@ PlayerCar* GetPlayerInfo(s16 idx)
 }
 AICar* GetAICarInfo(s16 idx)
 {
-    (void)idx;
-    return arena_opponent;
+    return &arena_opponent[idx - arena_opponent->playerIdx];
 }
 void GetPlayerPosition(s16 idx, VECTOR3* out)
 {
@@ -461,6 +460,41 @@ void VectorNormal(VECTOR* in, VECTOR* out)
     out->vy = y * factor >> shift;
     out->vz = z * factor >> shift;
 }
+static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields)
+{
+    CarMotion* m = is_player ? &player->motion : &ai->motion;
+    CarCollision* col = is_player ? &player->collision : &ai->collision;
+    if (is_player == 2) {
+        tm1_age_effects();
+        arena_move_missiles();
+        arena_move_drops();
+        arena_move_flames();
+        arena_move_tasers();
+        arena_move_bullets();
+        arena_move_fragments();
+        arena_animate_flames();
+    } else {
+        if (is_player && player->stats.unk38) {
+            CheckHitDetection(is_player ? (Car*)player : (Car*)ai, is_player);
+        }
+        if ((s16)col->unk16 >= 3) {
+            m->lastRot = m->rot;
+            m->lastPos = m->pos;
+            m->unkA8 = m->rot2;
+            m->lastMat = m->mat2;
+        }
+        if (is_player) {
+            arena_update_weapons((Car*)player, 1);
+            player->flags[2] = fields * 760 / 100 * 32 < m->vel.vy
+                && CalcMaxRotBeforeDrift((Car*)player, 1) < abs(m->rotDelta.vz)
+                && !player->flags[13];
+        }
+    }
+    if (is_player != 2)
+        tm1_contact_setup(
+            is_player ? GetPlayerCs3D(0) : GetAICs3D(ai->playerIdx), m, is_player ? &player->stats : &ai->stats);
+}
+
 void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, u8 is_player,
     const s16* tables, u32* seed, s16 fields, u32 frame)
 {
@@ -478,37 +512,7 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     tm1_use_scene(scene);
     tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
     tm1_contact_setup(GetAICs3D(0), &ai.motion, &ai.stats);
-    CarMotion* m = is_player ? &player.motion : &ai.motion;
-    CarCollision* col = is_player ? &player.collision : &ai.collision;
-    if (is_player == 2) {
-        tm1_age_effects();
-        arena_move_missiles();
-        arena_move_drops();
-        arena_move_flames();
-        arena_move_tasers();
-        arena_move_bullets();
-        arena_move_fragments();
-        arena_animate_flames();
-    } else {
-        if (is_player && player.stats.unk38) {
-            CheckHitDetection(is_player ? (Car*)&player : (Car*)&ai, is_player);
-        }
-        if ((s16)col->unk16 >= 3) {
-            m->lastRot = m->rot;
-            m->lastPos = m->pos;
-            m->unkA8 = m->rot2;
-            m->lastMat = m->mat2;
-        }
-        if (is_player) {
-            arena_update_weapons((Car*)&player, 1);
-            player.flags[2] = fields * 760 / 100 * 32 < m->vel.vy
-                && CalcMaxRotBeforeDrift((Car*)&player, 1) < abs(m->rotDelta.vz)
-                && !player.flags[13];
-        }
-    }
-    if (is_player != 2)
-        tm1_contact_setup(
-            is_player ? GetPlayerCs3D(0) : GetAICs3D(0), m, is_player ? &player.stats : &ai.stats);
+    contact_phase(&player, &ai, is_player, fields);
     if (!is_player)
         arena_regenerate_pickups();
     memcpy(player_state, &player, sizeof(player));
@@ -517,5 +521,56 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     tm1_use_scene(NULL);
     arena_player = NULL;
     arena_opponent = NULL;
+    trig = NULL;
+}
+
+
+// Run one complete PlayGame actor sequence under the caller's core lock.
+// The original routines can change other cars during collision and weapon updates.
+void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
+    s16 count, s16* battle, u16 buttons, s16 fields, u32 frame, const s16* tables, u32* seed)
+{
+    PlayerCar player;
+    AICar cars[8];
+    memcpy(&player, player_state, sizeof(player));
+    for (int i = 0; i < count; i++)
+        memcpy(&cars[i], opponents[i], sizeof(cars[i]));
+    arena_player = &player;
+    arena_opponent = cars;
+    trig = tables;
+    random_state = *seed;
+    gFrameCount = frame;
+    gFieldsLastFrame = fields;
+    gUpdateRate = 60 / fields;
+    tm1_use_scene(scene);
+    tm1_load_battle(battle);
+    tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
+    for (int i = 0; i < count; i++)
+        tm1_contact_setup(GetAICs3D(i), &cars[i].motion, &cars[i].stats);
+    contact_phase(&player, cars, 2, fields);
+    *seed = random_state;
+    AICar* crushed = NULL;
+    for (int i = 0; i < count && player.flags[27]; i++)
+        if (cars[i].uaIndex == player.stats.unk30)
+            crushed = &cars[i];
+    tm1_drive_step((u8*)&player, (u8*)crushed, buttons, fields, frame, tables, seed);
+    trig = tables;
+    tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
+    contact_phase(&player, cars, 1, fields);
+    arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
+    for (int i = 0; i < count; i++) {
+        AICarUpdate(&cars[i]);
+        contact_phase(&player, &cars[i], 0, fields);
+    }
+    UpdateNumAICarsInBattle();
+    arena_regenerate_pickups();
+    tm1_store_battle(battle);
+    *seed = random_state;
+    memcpy(player_state, &player, sizeof(player));
+    for (int i = 0; i < count; i++)
+        memcpy(opponents[i], &cars[i], sizeof(cars[i]));
+    tm1_use_scene(NULL);
+    arena_opponent = NULL;
+    arena_player = NULL;
     trig = NULL;
 }

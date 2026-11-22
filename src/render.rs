@@ -17,10 +17,7 @@ use tm1_assets::{
 use bevy::camera::visibility::RenderLayers;
 
 #[derive(Component)]
-pub enum VehicleMesh {
-    Player,
-    Opponent,
-}
+pub struct VehicleMesh(usize);
 #[derive(Component)]
 pub struct BodyStage(usize);
 #[derive(Component)]
@@ -39,8 +36,7 @@ pub struct Arena {
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     vehicle_start: usize,
-    body_ranges: [[std::ops::Range<usize>; 3]; 2],
-    opponent_start: usize,
+    body_ranges: Vec<[std::ops::Range<usize>; 3]>,
     overview: bool,
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
@@ -60,21 +56,23 @@ impl Arena {
         mut scene: Scene,
         sky: Option<Scene>,
         vehicle: [Scene; 3],
-        opponent: [Scene; 3],
+        opponents: Vec<[Scene; 3]>,
         missile_models: [Scene; 2],
         explosion_frames: [SpriteFrame; 16],
         contrail_frames: [SpriteFrame; 8],
         vram: Vram,
     ) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
-        let body_ranges = [vehicle, opponent].map(|variants| {
-            variants.map(|variant| {
-                let start = scene.polygons.len();
-                scene.polygons.extend(variant.polygons);
-                start..scene.polygons.len()
+        let body_ranges = std::iter::once(vehicle)
+            .chain(opponents)
+            .map(|variants| {
+                variants.map(|variant| {
+                    let start = scene.polygons.len();
+                    scene.polygons.extend(variant.polygons);
+                    start..scene.polygons.len()
+                })
             })
-        });
-        let opponent_start = body_ranges[1][0].start;
+            .collect();
         let mut tiles = BTreeMap::new();
         tiles.insert((None, false), 0);
         for p in scene
@@ -123,7 +121,6 @@ impl Arena {
             sky,
             missile_models,
             vehicle_start,
-            opponent_start,
             body_ranges,
             explosion_frames,
             contrail_frames,
@@ -238,11 +235,7 @@ pub fn setup(
                 }
             }
             commands.spawn((
-                if car == 0 {
-                    VehicleMesh::Player
-                } else {
-                    VehicleMesh::Opponent
-                },
+                VehicleMesh(car),
                 BodyStage(stage),
                 if stage == 0 {
                     Visibility::Inherited
@@ -330,7 +323,7 @@ pub fn hud(
     transform.scale = Vec3::splat(scale);
     let state = if drive.player.health().0 <= 0 {
         "WRECKED   R · Restart"
-    } else if drive.opponent.health().0 <= 0 {
+    } else if drive.cleared() {
         "ARENA CLEARED   R · Restart"
     } else if drive.paused {
         "PAUSED   P · Resume"
@@ -338,11 +331,24 @@ pub fn hud(
         ""
     };
     let (weapon, ammo) = drive.player.weapon();
+    let remaining = if drive.opponents.len() > 1 {
+        format!(
+            "     Rivals  {}/{}",
+            drive
+                .opponents
+                .iter()
+                .filter(|ai| ai.health().0 > 0)
+                .count(),
+            drive.opponents.len()
+        )
+    } else {
+        String::new()
+    };
     let message = format!(
-        "{}  {}      {}  {}
+        "{}  {}      {}  {}{remaining}
 {}  × {}     {}",
-        drive.opponent.vehicle().name(),
-        drive.opponent.health().0.max(0),
+        drive.nearest_opponent().vehicle().name(),
+        drive.nearest_opponent().health().0.max(0),
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
         weapon,
@@ -410,15 +416,21 @@ pub fn update(
     let angle = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
     let vehicle_rotation = Quat::from_rotation_y(-angle);
     let matrix = drive.player.rotation();
-    let opponent_origin = world(drive.opponent.position().map(|v| v as f32));
-    let opponent_matrix = drive.opponent.rotation();
+    let poses: Vec<_> = std::iter::once((origin, matrix, drive.player.body_stage()))
+        .chain(drive.opponents.iter().map(|ai| {
+            (
+                world(ai.position().map(|v| v as f32)),
+                ai.rotation(),
+                ai.body_stage(),
+            )
+        }))
+        .collect();
     let transform = |index: usize, p: [f32; 3]| {
         if index >= arena.vehicle_start {
-            let (origin, matrix) = if index >= arena.opponent_start {
-                (opponent_origin, opponent_matrix)
-            } else {
-                (origin, matrix)
-            };
+            let car = arena
+                .body_ranges
+                .partition_point(|ranges| ranges[2].end <= index);
+            let (origin, matrix, _) = poses[car];
             origin
                 + world(std::array::from_fn(|i| {
                     (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
@@ -444,12 +456,8 @@ pub fn update(
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
     }
-    let active = [drive.player.body_stage(), drive.opponent.body_stage()];
     for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
-        let (selected, origin, matrix) = match vehicle {
-            VehicleMesh::Player => (active[0], origin, matrix),
-            VehicleMesh::Opponent => (active[1], opponent_origin, opponent_matrix),
-        };
+        let (origin, matrix, selected) = poses[vehicle.0];
         if stage.0 != selected {
             *visibility = Visibility::Hidden;
             continue;
@@ -478,9 +486,13 @@ pub fn update(
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
     let mut additive = Batch::default();
-    let visible = (0..arena.vehicle_start)
-        .chain(arena.body_ranges[0][active[0]].clone())
-        .chain(arena.body_ranges[1][active[1]].clone());
+    let visible = (0..arena.vehicle_start).chain(
+        arena
+            .body_ranges
+            .iter()
+            .zip(&poses)
+            .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
+    );
     for i in visible {
         let p = &arena.scene.polygons[i];
         if p.animation
@@ -697,7 +709,7 @@ pub fn update(
         }
     };
     let (hp, max_hp) = drive.player.health();
-    let (op, op_max) = drive.opponent.health();
+    let (op, op_max) = drive.nearest_opponent().health();
     for (row, value, tint) in [
         (
             0,

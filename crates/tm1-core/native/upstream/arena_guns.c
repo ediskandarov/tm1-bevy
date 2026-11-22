@@ -11,7 +11,7 @@ s32 CAR_HD(VECTOR3* pt, s32 owner, s32 flag)
 
     np = 1;
     i = 0;
-    nai = 1;
+    nai = GetNumAICars();
     for (i = 0; i < np; i++) {
         cs = GetPlayerCs3D(i);
         if (cs->unkC0 != owner) {
@@ -416,30 +416,38 @@ static void fireProjectileSpecial(int kind, int owner, CarStats* stats, CarMotio
             d.vz -= 16;
         s_create_bullet(owner, &dir, &d, special.projectile, special.damage, special.life, 0);
         pad->ammo[WEAPON_SPECIAL] -= special.cost;
-        arena_effect(&d, owner < 50 ? 10 : 18);
+        arena_effect(&d, owner < 50 ? 10 : 18 + owner - 50);
     }
     pad->fireDelay = special.delay;
     flags[9] = 1;
 }
 
-static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player)
+static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player, int slot)
 {
     ArenaTaser* tasers = arena_tasers();
     if (weapon->ammo[WEAPON_SPECIAL] >= 6) {
         for (int i = 0; i < 3; i++) {
             if (tasers[i].life > 0)
                 continue;
-            Cs* owner = player ? GetPlayerCs3D(0) : GetAICs3D(0);
-            Cs* other = player ? GetAICs3D(0) : GetPlayerCs3D(0);
-            VECTOR3* origin = player ? &GetPlayerInfo(0)->motion.pos : &GetAICarInfo(0)->motion.pos;
-            int distance = abs(BIGGER(origin->vx - other->pos.vx,
-                BIGGER(origin->vy - other->pos.vy, origin->vz - other->pos.vz)));
-            int in_range = (distance >> 3) < 81 && (!player || GetAICarInfo(0)->stats.unk40 > 0);
+            Cs* owner = player ? GetPlayerCs3D(slot) : GetAICs3D(slot);
+            VECTOR3* origin = player ? &GetPlayerInfo(slot)->motion.pos : &GetAICarInfo(slot)->motion.pos;
+            int best = 81;
+            tasers[i].target = -1;
+            for (int j = -1; j < GetNumAICars(); j++) {
+                Cs* other = j < 0 ? GetPlayerCs3D(0) : GetAICs3D(j);
+                if (other == owner || (j >= 0 && GetAICarInfo(j)->stats.unk40 <= 0))
+                    continue;
+                int distance = abs(BIGGER(origin->vx - other->pos.vx,
+                    BIGGER(origin->vy - other->pos.vy, origin->vz - other->pos.vz))) >> 3;
+                if (distance < best) {
+                    best = distance;
+                    tasers[i].target = other->unkC0;
+                }
+            }
             tasers[i].life = 10;
             tasers[i].owner = owner->unkC0;
-            tasers[i].target = in_range ? other->unkC0 : -1;
             weapon->ammo[WEAPON_SPECIAL] -= player ? 6 : 3;
-            arena_effect(origin, player ? 10 : 18);
+            arena_effect(origin, player ? 10 : 18 + slot);
             break;
         }
     }
@@ -454,12 +462,12 @@ void arena_move_tasers(void)
         if (!tasers[i].visible)
             continue;
         VECTOR3 origin
-            = tasers[i].owner == 1 ? GetPlayerInfo(0)->motion.pos : GetAICarInfo(0)->motion.pos,
+            = tasers[i].owner == 1 ? GetPlayerInfo(0)->motion.pos : GetAICarInfo(tasers[i].owner - 50)->motion.pos,
             end;
         if (tasers[i].target == 1)
             end = GetPlayerInfo(0)->motion.pos;
-        else if (tasers[i].target == 50)
-            end = GetAICarInfo(0)->motion.pos;
+        else if (tasers[i].target >= 50)
+            end = GetAICarInfo(tasers[i].target - 50)->motion.pos;
         else {
             end.vx = origin.vx + (rsin(tasers[i].life * 400 + 1024) >> 4);
             end.vy = origin.vy + (rsin(tasers[i].life * 400) >> 4);
@@ -512,7 +520,12 @@ static void launchDrop(
     d->life = 400;
     d->kind = pad->cur;
     d->idx = owner;
-    d->type = d->kind == WEAPON_OIL ? HIT_OIL : (d->kind == WEAPON_BOMB ? HIT_BOMB : HIT_CATAPULT);
+    switch (d->kind) {
+    case WEAPON_OIL: d->type = HIT_OIL; break;
+    case WEAPON_BOMB: d->type = HIT_BOMB; break;
+    case WEAPON_SPIKE: d->type = HIT_SPIKE; break;
+    default: d->type = HIT_CATAPULT; break;
+    }
     d->power = tires[2].unk22 < tires[3].unk22 ? tires[2].unk22 : tires[3].unk22;
     VECTOR3 local = { (s16)stats->dropPower, 0, 0 };
     mathMulTransVec(&motion->mat2, &local, &d->pos);
@@ -537,6 +550,8 @@ void arena_move_drops(void)
         int hit = CAR_HD(&d->pos, d->life >= 360 ? d->idx : 0, 2);
         d->pos.vz -= 30;
         if (hit && hit != 8) {
+            if (d->kind == WEAPON_SPIKE)
+                do_smoke(&d->pos);
             if (d->kind == WEAPON_BOMB) {
                 arena_effect(&d->pos, 2);
             } else
@@ -549,7 +564,9 @@ void arena_move_drops(void)
             if (d->kind != WEAPON_OIL)
                 d->life = 0;
             VECTOR3 v = { 0, 0, 100 };
-            if (d->kind == WEAPON_BOMB)
+            if (d->kind == WEAPON_SPIKE)
+                bulDispatchDamage(hit, 0, 0, 8, &v, -d->kind);
+            else if (d->kind == WEAPON_BOMB)
                 bulDispatchDamage(hit, 0, 0, 15, &v, -d->kind);
             bulDispatchDamage(hit, 0, 0, d->type, &v, -d->kind);
         }
@@ -596,7 +613,7 @@ void arena_update_weapons(Car* car, u8 player)
             if (pad->ammo[WEAPON_SPECIAL] >= 5) {
                 arena_launch_flame(player ? GetPlayerCs3D(p->playerIdx) : GetAICs3D(ai->playerIdx), 1);
                 pad->ammo[WEAPON_SPECIAL] -= 5;
-                arena_effect(&motion->pos, player ? 10 : 18);
+                arena_effect(&motion->pos, player ? 10 : 18 + ai->playerIdx);
             }
             pad->fireDelay = 20;
             flags[9] = 1;
@@ -604,7 +621,7 @@ void arena_update_weapons(Car* car, u8 player)
             pad->fireDelay = 20;
             flags[9] = 1;
         } else if (kind == UA_POLICE_CAR)
-            firePoliceSpecial(pad, flags, player);
+            firePoliceSpecial(pad, flags, player, player ? p->playerIdx : ai->playerIdx);
         else
             fireProjectileSpecial(kind, owner, stats, motion, pad, flags);
         break;
@@ -616,10 +633,10 @@ void arena_update_weapons(Car* car, u8 player)
     case WEAPON_SINGING_MISSILE:
     case WEAPON_REAR_MISSILE:
         arena_launch_missile(
-            stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player);
+            stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player ? 1 : 50 + ai->playerIdx);
         break;
     case WEAPON_FLAMETHROWER: {
-        Cs* cs = player ? GetPlayerCs3D(0) : GetAICs3D(0);
+        Cs* cs = player ? GetPlayerCs3D(0) : GetAICs3D(ai->playerIdx);
         arena_effect(&cs->pos, 11);
         if (arena_launch_flame(cs, 0)) {
             pad->fireDelay = 20;
@@ -628,10 +645,11 @@ void arena_update_weapons(Car* car, u8 player)
         break;
     }
     case WEAPON_OIL:
+    case WEAPON_SPIKE:
     case WEAPON_CATAPULT:
     case WEAPON_BOMB:
         launchDrop(stats, player ? &p->motion : &ai->motion, player ? p->tires : ai->tires, pad,
-            player ? p->flags : ai->flags, player ? 1 : 50);
+            player ? p->flags : ai->flags, player ? 1 : 50 + ai->playerIdx);
         break;
     }
 }

@@ -329,17 +329,25 @@ impl Opponent {
     pub fn spawn_lineup<const N: usize>(player: &mut Taxi, vehicles: [Vehicle; N]) -> [Self; N] {
         assert!(N <= 8);
         let mut used = 0;
-        let mut slot = 0i16;
-        vehicles.map(|vehicle| {
-            let mut car = Self {
-                vehicle,
-                state: [0; 0x560],
-            };
-            car.state[6..8].copy_from_slice(&slot.to_le_bytes());
-            car.update(player, 3, Some(&mut used), std::ptr::null_mut());
-            slot += 1;
-            car
-        })
+        std::array::from_fn(|slot| Self::spawn_slot(player, vehicles[slot], slot, &mut used))
+    }
+    pub fn spawn_bout(player: &mut Taxi, vehicles: &[Vehicle]) -> Vec<Self> {
+        assert!((1..=8).contains(&vehicles.len()));
+        let mut used = 0;
+        vehicles
+            .iter()
+            .enumerate()
+            .map(|(slot, &vehicle)| Self::spawn_slot(player, vehicle, slot, &mut used))
+            .collect()
+    }
+    fn spawn_slot(player: &mut Taxi, vehicle: Vehicle, slot: usize, used: &mut u16) -> Self {
+        let mut car = Self {
+            vehicle,
+            state: [0; 0x560],
+        };
+        car.state[6..8].copy_from_slice(&(slot as i16).to_le_bytes());
+        car.update(player, 3, Some(used), std::ptr::null_mut());
+        car
     }
     pub fn step(&mut self, player: &mut Taxi, fields: u8) {
         assert!((1..=5).contains(&fields));
@@ -391,10 +399,24 @@ unsafe extern "C" {
         base: u32,
         world: u32,
         taxi: u32,
-        police: u32,
+        opponents: *const u32,
+        count: usize,
     ) -> *mut std::ffi::c_void;
     fn tm1_reset_projectiles(scene: *mut std::ffi::c_void);
     fn tm1_scene_free(scene: *mut std::ffi::c_void);
+    fn tm1_bout_step(
+        scene: *mut std::ffi::c_void,
+        player_state: *mut u8,
+        opponents: *const *mut u8,
+        count: i16,
+        battle: *mut i16,
+        buttons: u16,
+        fields: i16,
+        frame: u32,
+        tables: *const i16,
+        seed: *mut u32,
+    );
+    #[cfg(test)]
     fn tm1_contacts(
         scene: *mut std::ffi::c_void,
         player: *mut u8,
@@ -406,38 +428,90 @@ unsafe extern "C" {
         frame: u32,
     );
 }
-pub struct CollisionScene(std::ptr::NonNull<std::ffi::c_void>);
+pub struct CollisionScene {
+    native: std::ptr::NonNull<std::ffi::c_void>,
+    opponent_count: usize,
+    battle: [i16; 3],
+}
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
 unsafe impl Send for CollisionScene {}
 unsafe impl Sync for CollisionScene {}
 impl CollisionScene {
     pub fn from_dmd(data: &[u8], world: u32, taxi: u32, police: u32) -> Option<Self> {
+        Self::for_opponents(data, world, taxi, &[police])
+    }
+    pub fn for_opponents(data: &[u8], world: u32, taxi: u32, opponents: &[u32]) -> Option<Self> {
         let base = u32::from_le_bytes(data.get(12..16)?.try_into().ok()?);
         std::ptr::NonNull::new(unsafe {
-            tm1_scene_load(data.as_ptr(), data.len(), base, world, taxi, police)
+            tm1_scene_load(
+                data.as_ptr(),
+                data.len(),
+                base,
+                world,
+                taxi,
+                opponents.as_ptr(),
+                opponents.len(),
+            )
         })
-        .map(Self)
+        .map(|native| Self {
+            native,
+            opponent_count: opponents.len(),
+            battle: [0; 3],
+        })
     }
     pub fn reset_projectiles(&mut self) {
+        self.battle = [0; 3];
         unsafe {
-            tm1_reset_projectiles(self.0.as_ptr());
+            tm1_reset_projectiles(self.native.as_ptr());
         }
     }
     pub fn step(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, input: Input, fields: u8) {
-        self.phase(player, opponent, 2, fields);
-        player.step_in_scene(input, fields, self.0.as_ptr(), Some(opponent));
-        self.phase(player, opponent, 1, fields);
-        opponent.update(player, fields, None, self.0.as_ptr());
-        self.phase(player, opponent, 0, fields);
+        self.step_bout(player, std::slice::from_mut(opponent), input, fields);
     }
+    pub fn step_bout(
+        &mut self,
+        player: &mut Taxi,
+        opponents: &mut [Opponent],
+        input: Input,
+        fields: u8,
+    ) {
+        assert!((1..=5).contains(&fields));
+        assert_eq!(opponents.len(), self.opponent_count);
+        let mut records = [std::ptr::null_mut(); 8];
+        for (slot, car) in opponents.iter_mut().enumerate() {
+            assert_eq!(
+                i16::from_le_bytes([car.state[6], car.state[7]]),
+                slot as i16
+            );
+            records[slot] = car.state.as_mut_ptr();
+        }
+        player.frame = player.frame.wrapping_add(1);
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_level(player.level as i32);
+            tm1_bout_step(
+                self.native.as_ptr(),
+                player.state.as_mut_ptr(),
+                records.as_ptr(),
+                opponents.len() as i16,
+                self.battle.as_mut_ptr(),
+                input.ps1_buttons(),
+                fields.into(),
+                player.frame,
+                player.trig.as_ptr(),
+                &mut player.seed,
+            );
+        }
+    }
+    #[cfg(test)]
     fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {
         assert!((1..=5).contains(&fields));
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_level(player.level as i32);
             tm1_contacts(
-                self.0.as_ptr(),
+                self.native.as_ptr(),
                 player.state.as_mut_ptr(),
                 opponent.state.as_mut_ptr(),
                 phase,
@@ -451,7 +525,7 @@ impl CollisionScene {
 }
 impl Drop for CollisionScene {
     fn drop(&mut self) {
-        unsafe { tm1_scene_free(self.0.as_ptr()) }
+        unsafe { tm1_scene_free(self.native.as_ptr()) }
     }
 }
 
@@ -463,7 +537,11 @@ impl CollisionScene {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         let mut result = [0; 4];
         unsafe {
-            tm1_world_point(self.0.as_ptr(), point.as_mut_ptr(), result.as_mut_ptr());
+            tm1_world_point(
+                self.native.as_ptr(),
+                point.as_mut_ptr(),
+                result.as_mut_ptr(),
+            );
         }
         result
     }
@@ -471,31 +549,31 @@ impl CollisionScene {
         unsafe extern "C" {
             fn tm1_flame_particles(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;
         }
-        unsafe { tm1_flame_particles(self.0.as_ptr(), particles.as_mut_ptr()) }
+        unsafe { tm1_flame_particles(self.native.as_ptr(), particles.as_mut_ptr()) }
     }
     pub fn contrail_faces(&self, out: &mut [[i32; 14]; 180]) -> usize {
         unsafe extern "C" {
             fn tm1_contrail_faces(scene: *mut std::ffi::c_void, out: *mut [i32; 14]) -> usize;
         }
-        unsafe { tm1_contrail_faces(self.0.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_contrail_faces(self.native.as_ptr(), out.as_mut_ptr()) }
     }
     pub fn missile_poses(&self, out: &mut [[i32; 13]; 10]) -> usize {
         unsafe extern "C" {
             fn tm1_missile_poses(scene: *mut std::ffi::c_void, out: *mut [i32; 13]) -> usize;
         }
-        unsafe { tm1_missile_poses(self.0.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_missile_poses(self.native.as_ptr(), out.as_mut_ptr()) }
     }
     pub fn taser_arcs(&self, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
         unsafe extern "C" {
             fn tm1_taser_arcs(scene: *mut std::ffi::c_void, arcs: *mut [[i32; 3]; 16]) -> usize;
         }
-        unsafe { tm1_taser_arcs(self.0.as_ptr(), arcs.as_mut_ptr()) }
+        unsafe { tm1_taser_arcs(self.native.as_ptr(), arcs.as_mut_ptr()) }
     }
     pub fn bullet_segments(&self, segments: &mut [[[i32; 3]; 2]; 40]) -> usize {
         unsafe extern "C" {
             fn tm1_bullet_segments(scene: *mut std::ffi::c_void, out: *mut [[i32; 3]; 2]) -> usize;
         }
-        unsafe { tm1_bullet_segments(self.0.as_ptr(), segments.as_mut_ptr()) }
+        unsafe { tm1_bullet_segments(self.native.as_ptr(), segments.as_mut_ptr()) }
     }
 }
 
@@ -525,7 +603,7 @@ impl CollisionScene {
         unsafe extern "C" {
             fn tm1_effects(scene: *mut std::ffi::c_void, out: *mut [i32; 5]) -> usize;
         }
-        unsafe { tm1_effects(self.0.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_effects(self.native.as_ptr(), out.as_mut_ptr()) }
     }
 }
 impl PlayerVehicle {
@@ -554,7 +632,7 @@ impl CollisionScene {
         unsafe extern "C" {
             fn tm1_hidden_pickups(scene: *mut std::ffi::c_void) -> u64;
         }
-        unsafe { tm1_hidden_pickups(self.0.as_ptr()) }
+        unsafe { tm1_hidden_pickups(self.native.as_ptr()) }
     }
 }
 

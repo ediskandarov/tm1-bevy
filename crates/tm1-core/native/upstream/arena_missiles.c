@@ -121,7 +121,7 @@ static void car_lockon(u8 who, int rear, VECTOR3** out)
         return;
     }
     p = &GetPlayerCs3D((s16)(who - 1))->pos;
-    n = 1;
+    n = GetNumAICars();
     *out = 0;
     for (i = 0; i < n; i++) {
         cs = GetAICs3D(i);
@@ -248,7 +248,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
             start_trail(m, kind == UA_CORVETTE ? 0xcdcdff : 0x808080);
             if (i == 0) {
                 pad->ammo[WEAPON_SPECIAL] -= cost;
-                arena_effect(&m->pos, owner < 50 ? 10 : 18);
+                arena_effect(&m->pos, owner < 50 ? 10 : 18 + owner - 50);
             }
         }
     }
@@ -257,8 +257,9 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
 }
 
 // Fire slot from FireMissiles, basic_missile_launch and create_FIRE_missile.
-void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags, u8 player)
+void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags, u8 owner)
 {
+    int player = owner < 50;
     int idx = find_free_missile(0);
     if (idx < 0)
         return;
@@ -282,7 +283,7 @@ void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* 
     m->life = 30;
     m->unk38 = 150;
     m->damage = damage[slot];
-    m->unk50 = player ? 1 : 50;
+    m->unk50 = owner;
     m->unk3C = slot == WEAPON_HOMING_MISSILE ? 50 : 10;
     m->unk48 = slot;
     m->unk56 = stats->unk6C > 24 ? stats->unk6C - 24 : 0;

@@ -11,7 +11,9 @@ typedef struct CollisionScene {
     DbNode** nodes;
     u8* visiting;
     size_t slots;
-    Cs world, taxi, police;
+    Cs world, taxi, opponents[8];
+    Cs* first_car;
+    int opponent_count;
     Bullet bullets[40];
     Missile missiles[10];
     DropWeap drops[12];
@@ -168,6 +170,7 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
     s->visiting[slot] = 0;
     return n;
 }
+static CollisionScene* current;
 void tm1_scene_free(CollisionScene* s)
 {
     if (!s)
@@ -190,8 +193,10 @@ void tm1_scene_free(CollisionScene* s)
     free(s);
 }
 CollisionScene* tm1_scene_load(
-    const u8* data, size_t size, u32 base, u32 world, u32 taxi, u32 police)
+    const u8* data, size_t size, u32 base, u32 world, u32 taxi, const u32* opponents, size_t count)
 {
+    if (!count || count > 8)
+        return NULL;
     CollisionScene* s = calloc(1, sizeof(*s));
     if (!s)
         return NULL;
@@ -202,7 +207,7 @@ CollisionScene* tm1_scene_load(
     s->nodes = calloc(s->slots, sizeof(DbNode*));
     s->visiting = calloc(s->slots, 1);
     if (!s->nodes || !s->visiting || !(s->world.epNode = decode(s, world, 0))
-        || !(s->taxi.epNode = decode(s, taxi, 0)) || !(s->police.epNode = decode(s, police, 0))) {
+        || !(s->taxi.epNode = decode(s, taxi, 0))) {
         tm1_scene_free(s);
         return NULL;
     }
@@ -212,17 +217,41 @@ CollisionScene* tm1_scene_load(
         s->missiles[i].life = -15;
         s->missile_cs[i].unkC0 = 200 + i;
     }
-    s->bytes = NULL;
+    s->opponent_count = count;
     s->world.unkC0 = 8;
     s->taxi.unkC0 = 1;
-    s->police.unkC0 = 50;
-    s->taxi.unk0C = s->police.unk0C = 1;
-    s->taxi.drawMode = s->police.drawMode = 1;
-    s->police.next = &s->taxi;
+    u32 roots;
+    if (!load(s, base, 20, &roots, sizeof(roots)) || roots > (size - 24) / 4)
+        goto invalid;
+    // DB reads roots in directory order. csAddToCsList prepends each model.
+    for (u32 i = 0; i < roots; i++) {
+        u32 root;
+        if (!load(s, base, 24 + 4 * i, &root, sizeof(root)))
+            goto invalid;
+        for (size_t j = 0; j <= count; j++) {
+            if (root != (j ? opponents[j - 1] : taxi))
+                continue;
+            Cs* cs = j ? &s->opponents[j - 1] : &s->taxi;
+            if (cs->drawMode || !(cs->epNode = decode(s, root, 0)))
+                goto invalid;
+            cs->unkC0 = j ? 49 + j : 1;
+            cs->unk0C = cs->drawMode = 1;
+            cs->next = s->first_car;
+            s->first_car = cs;
+        }
+    }
+    if (!s->taxi.drawMode)
+        goto invalid;
+    for (size_t i = 0; i < count; i++)
+        if (!s->opponents[i].drawMode)
+            goto invalid;
+    s->bytes = NULL;
     return s;
+invalid:
+    tm1_scene_free(s);
+    return NULL;
 }
 
-static CollisionScene* current;
 Bullet* arena_bullets(void)
 {
     return current ? current->bullets : NULL;
@@ -314,9 +343,13 @@ Cs* csGetWorldCs(void)
 {
     return &current->world;
 }
+s16 GetNumAICars(void)
+{
+    return current ? current->opponent_count : 0;
+}
 Cs* csGetCsList(void)
 {
-    return &current->police;
+    return current->first_car;
 }
 Cs* GetPlayerCs3D(s16 i)
 {
@@ -325,14 +358,22 @@ Cs* GetPlayerCs3D(s16 i)
 }
 Cs* GetAICs3D(s16 i)
 {
-    (void)i;
-    return &current->police;
+    return &current->opponents[i];
 }
 u8 uaIsCarCS(Cs* cs, u8* player, s16* idx)
 {
-    *idx = 0;
-    *player = (cs == &current->taxi);
-    return *player || cs == &current->police;
+    if (cs == &current->taxi) {
+        *idx = 0;
+        *player = 1;
+        return 1;
+    }
+    for (s16 slot = 0; slot < current->opponent_count; slot++)
+        if (cs == &current->opponents[slot]) {
+            *idx = slot;
+            *player = 0;
+            return 1;
+        }
+    return 0;
 }
 s16 uaGetCarMatID(s16 idx, u8 player)
 {
@@ -352,16 +393,19 @@ void tm1_contact_setup(Cs* cs, const CarMotion* motion, const CarStats* stats)
 
 s32 uaIsCarMatID(s16 id, s8* player, u16* idx)
 {
-    *player = id == current->taxi.unkC0;
-    *idx = 0;
-    return *player || id == current->police.unkC0;
+    if (id == 1 || (id >= 50 && id < 50 + current->opponent_count)) {
+        *player = id == 1;
+        *idx = *player ? 0 : id - 50;
+        return 1;
+    }
+    return 0;
 }
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
     (void)tag;
     (void)sub;
     (void)owner;
-    if (id == 1 || id == 50)
+    if (id == 1 || (id >= 50 && id < 50 + current->opponent_count))
         carTakeHit(id, dmg, dir, 0);
 }
 void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unused_mode)
@@ -411,7 +455,7 @@ void InitMonsterSmash(Car* carA, u8 isPlayerA, Car* carB, u8 isPlayerB, s16 unus
         return;
     }
 
-    arena_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos, isPlayerA ? 10 : 18);
+    arena_effect(isPlayerA ? &PLAYER_CAR(carA)->motion.pos : &AI_CAR(carA)->motion.pos, isPlayerA ? 10 : 18 + AI_CAR(carA)->playerIdx);
     wa->ammo[WEAPON_SPECIAL] = wa->ammo[WEAPON_SPECIAL] - 6;
     if (isPlayerB) {
         cs = GetPlayerCs3D(idx);
@@ -446,7 +490,7 @@ void tm1_check_player_smash(PlayerCar* car, AICar* other)
     int best = 0x7fff;
     car->flags[27] = 0;
     if (other && st->unk30 == other->uaIndex) {
-        VECTOR3 p = GetAICs3D(0)->pos;
+        VECTOR3 p = GetAICs3D(other->playerIdx)->pos;
         for (int i = 0; i < 4; i++) {
             CarTire* tire = &car->tires[i];
             int dx = p.vx - tire->unk38, dy = p.vy - tire->unk3C;

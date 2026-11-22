@@ -1,12 +1,12 @@
 # Twisted Metal on Bevy
 
 The macOS build runs the arena driving prototype on Metal. It reads the JP
-disc, simulates the selected player vehicle and a computer-controlled opponent, and renders a chase view.
+disc, simulates the selected player vehicle and its computer-controlled opponents, and renders a chase view.
 The arena includes machine guns, missiles, pickups, contact damage, sound, music and round restart.
 Initial decision date: 2026-11-22.
 
 The goal is to port the full original game. The first playable milestone is
-the arena encounter. Warehouse is playable against the first of its three original opponent cards. Arena draws one opponent using the retail selection rules and a reproducible starting seed. All twelve regular vehicles are selectable on either stage. With
+the arena encounter. Warehouse is playable against all three original opponents simultaneously. Arena draws one opponent using the retail selection rules and a reproducible starting seed. All twelve regular vehicles are selectable on either stage. With
 `TM1_CUE` set to the path of the JP disc cue, run:
 
 ```sh

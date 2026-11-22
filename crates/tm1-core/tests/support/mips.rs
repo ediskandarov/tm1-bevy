@@ -79,7 +79,8 @@ impl Cpu {
         self.pc = address;
         self.next = address + 4;
         self.load = None;
-        for _ in 0..100_000 {
+        // A full Warehouse projectile pass can traverse four car hierarchies.
+        for _ in 0..1_000_000 {
             if self.pc == stop {
                 return self.r[2];
             }

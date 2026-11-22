@@ -5,7 +5,7 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
-    pub opponent: Opponent,
+    pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
     pub sounds: Vec<(usize, [i32; 3])>,
     remainder: Duration,
@@ -14,14 +14,32 @@ pub struct Drive {
     was_focused: bool,
 }
 impl Drive {
+    pub fn cleared(&self) -> bool {
+        self.opponents.iter().all(|ai| ai.health().0 <= 0)
+    }
+    pub fn nearest_opponent(&self) -> &Opponent {
+        let origin = self.player.position();
+        self.opponents
+            .iter()
+            .min_by_key(|ai| {
+                let d = ai
+                    .position()
+                    .into_iter()
+                    .zip(origin)
+                    .map(|(a, b)| (i64::from(a) - i64::from(b)).pow(2))
+                    .sum::<i64>();
+                (ai.health().0 <= 0, d)
+            })
+            .unwrap()
+    }
     pub fn new(
         mut player: PlayerVehicle,
         contacts: CollisionScene,
-        opponent_kind: Vehicle,
+        opponent_kinds: &[Vehicle],
     ) -> Self {
-        let opponent = Opponent::for_vehicle(&mut player, opponent_kind);
+        let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
         Self {
-            opponent,
+            opponents,
             contacts,
             player,
             sounds: Vec::new(),
@@ -55,8 +73,8 @@ pub fn advance(
         drive.contacts.reset_projectiles();
         drive.paused = false;
         drive.player.reset();
-        let opponent_kind = drive.opponent.vehicle();
-        drive.opponent = Opponent::for_vehicle(&mut drive.player, opponent_kind);
+        let kinds: Vec<_> = drive.opponents.iter().map(Opponent::vehicle).collect();
+        drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
@@ -68,7 +86,7 @@ pub fn advance(
     }
     let status = if drive.player.health().0 <= 0 {
         "Wrecked • R to restart"
-    } else if drive.opponent.health().0 <= 0 {
+    } else if drive.cleared() {
         "Arena cleared • R to restart"
     } else if drive.paused {
         "Paused • P to resume"
@@ -82,14 +100,14 @@ pub fn advance(
         "TM1 • {status}   |   {} {}   {} {}   |   Fire missiles {}",
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
-        drive.opponent.vehicle().name(),
-        drive.opponent.health().0.max(0),
+        drive.nearest_opponent().vehicle().name(),
+        drive.nearest_opponent().health().0.max(0),
         drive.player.missiles()
     );
     if window.title != title {
         window.title = title;
     }
-    if drive.player.health().0 <= 0 || drive.opponent.health().0 <= 0 {
+    if drive.player.health().0 <= 0 || drive.cleared() {
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -140,7 +158,7 @@ pub fn advance(
         };
         state
             .contacts
-            .step(&mut state.player, &mut state.opponent, input, 3);
+            .step_bout(&mut state.player, &mut state.opponents, input, 3);
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
@@ -151,7 +169,7 @@ pub fn advance(
                 (0, 2) => 1,
                 (11, 2) => 6,
                 (10, 2) => 5,
-                (18, 2) => 12,
+                (kind @ 18..=25, 2) => (kind - 6) as usize,
                 (1, 2) => 2,
                 (2, 7) => 3,
                 (12, 2) => 4,
@@ -161,7 +179,7 @@ pub fn advance(
             state.sounds.push((id, [x, y, z]));
         }
         drive.remainder -= STEP;
-        if drive.player.health().0 <= 0 || drive.opponent.health().0 <= 0 {
+        if drive.player.health().0 <= 0 || drive.cleared() {
             break;
         }
     }
@@ -181,6 +199,73 @@ mod tests {
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn warehouse_group_restarts_and_replays() {
+        use tm1_core::drive::Level;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+        let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
+        let vehicle = Vehicle::YellowJacket;
+        let kinds = vehicle.warehouse_opponents();
+        let scene = CollisionScene::for_opponents(
+            &data,
+            root(1),
+            root(vehicle as u16),
+            &kinds.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        let player = PlayerVehicle::on_level(&exe, vehicle, Level::Warehouse).unwrap();
+        let mut app = App::new();
+        app.insert_resource(Drive::new(player, scene, &kinds))
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, advance);
+        app.world_mut().spawn(Window {
+            focused: true,
+            ..default()
+        });
+        tick(&mut app, 1);
+        let snapshot = |app: &App| {
+            let drive = app.world().resource::<Drive>();
+            (
+                drive.player.frame(),
+                drive.player.rng_state(),
+                drive.player.health(),
+                drive
+                    .opponents
+                    .iter()
+                    .map(|ai| (ai.vehicle(), ai.position(), ai.health()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let start = snapshot(&app);
+        let run = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyW);
+            for _ in 0..180 {
+                tick(app, 50);
+            }
+        };
+        run(&mut app);
+        let played = snapshot(&app);
+        assert_eq!(played.0, 180);
+        assert_eq!(played.3.len(), 3);
+        for (before, after) in start.3.iter().zip(&played.3) {
+            assert_ne!(before.1, after.1);
+        }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyR);
+        tick(&mut app, 50);
+        assert_eq!(start, snapshot(&app));
+        run(&mut app);
+        assert_eq!(played, snapshot(&app));
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn presentation_clock_pause_focus_and_controller_reconnect() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
@@ -193,7 +278,7 @@ mod tests {
             app.insert_resource(Drive::new(
                 PlayerVehicle::from_executable(&exe).unwrap(),
                 scene,
-                Vehicle::Outlaw,
+                &[Vehicle::Outlaw],
             ))
             .insert_resource(crate::smoke::Capture::new(None, false, false))
             .init_resource::<ButtonInput<KeyCode>>()
@@ -213,8 +298,8 @@ mod tests {
             let d = app.world().resource::<Drive>();
             (
                 d.player.state().to_vec(),
-                d.opponent.position(),
-                d.opponent.health(),
+                d.opponents[0].position(),
+                d.opponents[0].health(),
                 d.player.rng_state(),
                 d.contacts.hidden_pickups(),
             )
