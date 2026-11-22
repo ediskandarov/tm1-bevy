@@ -672,6 +672,26 @@ fn vec3_cpu(cpu: &mut Cpu, at: u32, xyz: [i32; 3]) {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn windshield_damage_original() {
+    let mut r = Reference::new();
+    for pct in -1..=101 {
+        let (tier, holes) = PlayerVehicle::windshield_damage(pct);
+        assert_eq!(u32::from(tier), r.cpu.call(0x8014279c, &[pct as u32, 1]));
+        assert_eq!(holes as u32, r.cpu.word(0x8018c5e4));
+    }
+    for seed in [1, 0x12345678, u32::MAX] {
+        r.player.seed = seed;
+        r.cpu.random_state = seed;
+        r.cpu.call(0x80146008, &[]);
+        for (i, [x, y]) in r.player.windshield_holes().into_iter().enumerate() {
+            let coord = r.cpu.word(0x8019d444 + 0x69c + i as u32 * 20 + 8);
+            assert_eq!([x, y], [coord as i16 as i32, (coord >> 16) as i16 as i32]);
+        }
+        assert_eq!(r.player.seed, r.cpu.random_state);
+    }
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn vehicle_and_wall_contact_original() {
     for opponent in [true, false] {
         let mut r = Reference::new();

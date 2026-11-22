@@ -122,6 +122,7 @@ impl Stage {
             dmd.explosion_frames()?,
             dmd.flame_frames()?,
             dmd.contrail_frames()?,
+            dmd.dashboard_icons()?,
             dmd.radar_arrows()?,
             textures,
         )?;

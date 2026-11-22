@@ -5,6 +5,7 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
+    pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
     pub helicopter_unlocked: bool,
     helicopter_active: bool,
@@ -119,19 +120,16 @@ impl Drive {
         }
     }
     pub fn nearest_opponent(&self) -> &Opponent {
-        let origin = self.player.position();
+        let [x, y, _] = self.player.position();
         self.opponents
             .iter()
-            .min_by_key(|ai| {
-                let d = ai
-                    .position()
-                    .into_iter()
-                    .zip(origin)
-                    .map(|(a, b)| (i64::from(a) - i64::from(b)).pow(2))
-                    .sum::<i64>();
-                (ai.health().0 <= 0, d)
+            .filter_map(|ai| {
+                let [ax, ay, _] = ai.position();
+                let dist = x.abs_diff(ax) + y.abs_diff(ay);
+                (ai.health().0 > 0 && dist < 0x7fff).then_some((dist, ai))
             })
-            .unwrap()
+            .min_by_key(|(dist, _)| *dist)
+            .map_or(&self.opponents[0], |(_, ai)| ai)
     }
     pub fn new(
         mut player: PlayerVehicle,
@@ -140,6 +138,7 @@ impl Drive {
     ) -> Self {
         let opponents = Opponent::spawn_bout(&mut player, opponent_kinds);
         Self {
+            windshield_holes: player.windshield_holes(),
             opponents,
             contacts,
             deck: Default::default(),
@@ -203,6 +202,7 @@ pub fn advance(
             .filter(|&kind| kind != Vehicle::Minion)
             .collect();
         drive.opponents = Opponent::spawn_bout(&mut drive.player, &kinds);
+        drive.windshield_holes = drive.player.windshield_holes();
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;

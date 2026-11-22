@@ -1031,11 +1031,56 @@ impl PlayerVehicle {
     pub fn health(&self) -> (i32, i32) {
         (self.word(0x178), self.word(0x17c))
     }
+    pub fn dashboard_weapon(&self) -> (usize, i16, i16) {
+        let slot = self.word(0x460) as usize;
+        let ammo = |i: usize| {
+            i16::from_le_bytes(self.state[0x464 + 2 * i..0x466 + 2 * i].try_into().unwrap())
+        };
+        let special = ammo(11) / i16::from(self.state[0x4a0].max(1));
+        (
+            slot,
+            match slot {
+                0..=10 => ammo(slot),
+                11 => special,
+                _ => 0,
+            },
+            special,
+        )
+    }
+    pub fn turbo_charge(&self) -> i32 {
+        let tens = i16::from_le_bytes(self.state[0x49e..0x4a0].try_into().unwrap());
+        (i32::from(tens) * 10 + self.word(0x230) / 18).clamp(0, 99)
+    }
+    pub fn gun_overheated(&self) -> bool {
+        self.state[0x490] != 0
+    }
+    pub fn windshield_damage(pct: i32) -> (u8, usize) {
+        match pct {
+            ..10 => (0, 6),
+            10..30 => (1, 3),
+            30..50 => (2, 2),
+            _ => (3, 0),
+        }
+    }
+    pub fn windshield_holes(&mut self) -> [[i32; 2]; 6] {
+        std::array::from_fn(|_| {
+            [
+                (self.random() % 295) as i32 + 20,
+                (self.random() % 105) as i32 + 50,
+            ]
+        })
+    }
     pub fn gun_heat(&self) -> i16 {
         i16::from_le_bytes(self.state[0x48e..0x490].try_into().unwrap())
     }
 }
 impl Opponent {
+    pub fn is_active(&self) -> bool {
+        self.state[0x41] != 0
+    }
+    pub fn health_tier(&self) -> u8 {
+        self.state[2]
+    }
     pub fn body_stage(&self) -> usize {
         body_stage(self.health(), self.state[0x213] as i8)
     }

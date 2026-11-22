@@ -127,7 +127,7 @@ fn main() -> Result<()> {
         )?)
     };
     eprintln!(
-        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, Tab overview, V radar."
+        "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, Tab overview, V radar, L rivals."
     );
     let mut app = App::new();
     app.insert_resource(capture)
@@ -174,6 +174,7 @@ fn main() -> Result<()> {
                 render::controls,
                 render::update,
                 render::cockpit,
+                render::hud_letters,
                 render::hud,
                 render::boss_intro,
             )

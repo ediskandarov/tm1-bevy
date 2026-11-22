@@ -30,7 +30,9 @@ pub fn background(data: &[u8]) -> Result<Vec<u8>> {
 pub struct Fonts {
     pixels: Vec<[u8; 4]>,
     width: usize,
-    metrics: [Vec<Glyph>; 3],
+    signs: Vec<[u8; 4]>,
+    sign_width: usize,
+    metrics: [Vec<Glyph>; 4],
 }
 #[derive(Clone, Copy)]
 struct Glyph {
@@ -45,60 +47,70 @@ pub enum Face {
     Text,
     Password,
     Speed,
+    Sign,
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
         let exe = disc.read("SIPS_600.07")?;
-        let tim = disc.read("UATIM/UAFONT1.TIM")?;
-        ensure!(
-            u32le(&tim, 0)? == 16 && u32le(&tim, 4)? == 8,
-            "expected indexed font TIM"
-        );
-        let palette = bytes(&tim, 8, u32le(&tim, 8)? as usize)?;
-        let colors = bytes(palette, 12, 32)?;
-        let offset = 8 + palette.len();
-        let bitmap = bytes(&tim, offset, u32le(&tim, offset)? as usize)?;
-        let width = usize::from(u16le(bitmap, 8)?) * 4;
-        let height = usize::from(u16le(bitmap, 10)?);
-        let pixels = bytes(bitmap, 12, width * height / 2)?
-            .iter()
-            .flat_map(|b| [b & 15, b >> 4])
-            .map(|i| {
-                let at = usize::from(i) * 2;
-                rgb555(u16::from_le_bytes([colors[at], colors[at + 1]]))
-            })
-            .collect();
-        let metrics = |address: u32, count: usize| -> Result<Vec<Glyph>> {
-            let at = 2048
-                + address
-                    .checked_sub(u32le(&exe, 24)?)
-                    .ok_or_else(|| anyhow::anyhow!("invalid executable base"))?
-                    as usize;
-            bytes(&exe, at, count * 6)?
-                .chunks_exact(6)
-                .map(|g| {
-                    let glyph = Glyph {
-                        u: g[0].into(),
-                        v: g[1].into(),
-                        w: g[2].into(),
-                        h: g[3].into(),
-                        y: i16::from_le_bytes([g[4], g[5]]).into(),
-                    };
-                    ensure!(
-                        glyph.u + glyph.w <= width && glyph.v + glyph.h <= height,
-                        "glyph outside font TIM"
-                    );
-                    Ok(glyph)
+        let bitmap = |path: &str| -> Result<(Vec<[u8; 4]>, usize, usize)> {
+            let tim = disc.read(path)?;
+            ensure!(
+                u32le(&tim, 0)? == 16 && u32le(&tim, 4)? == 8,
+                "expected indexed font TIM"
+            );
+            let palette = bytes(&tim, 8, u32le(&tim, 8)? as usize)?;
+            let colors = bytes(palette, 12, 32)?;
+            let offset = 8 + palette.len();
+            let bitmap = bytes(&tim, offset, u32le(&tim, offset)? as usize)?;
+            let width = usize::from(u16le(bitmap, 8)?) * 4;
+            let height = usize::from(u16le(bitmap, 10)?);
+            let pixels = bytes(bitmap, 12, width * height / 2)?
+                .iter()
+                .flat_map(|b| [b & 15, b >> 4])
+                .map(|i| {
+                    let at = usize::from(i) * 2;
+                    rgb555(u16::from_le_bytes([colors[at], colors[at + 1]]))
                 })
-                .collect()
+                .collect();
+            Ok((pixels, width, height))
         };
+        let (pixels, width, height) = bitmap("UATIM/UAFONT1.TIM")?;
+        let (signs, sign_width, sign_height) = bitmap("TIM/CPFONT.TIM")?;
+        let metrics =
+            |address: u32, count: usize, width: usize, height: usize| -> Result<Vec<Glyph>> {
+                let at = 2048
+                    + address
+                        .checked_sub(u32le(&exe, 24)?)
+                        .ok_or_else(|| anyhow::anyhow!("invalid executable base"))?
+                        as usize;
+                bytes(&exe, at, count * 6)?
+                    .chunks_exact(6)
+                    .map(|g| {
+                        let glyph = Glyph {
+                            u: g[0].into(),
+                            v: g[1].into(),
+                            w: g[2].into(),
+                            h: g[3].into(),
+                            y: i16::from_le_bytes([g[4], g[5]]).into(),
+                        };
+                        ensure!(
+                            glyph.u + glyph.w <= width && glyph.v + glyph.h <= height,
+                            "glyph outside font TIM"
+                        );
+                        Ok(glyph)
+                    })
+                    .collect()
+            };
         Ok(Self {
             pixels,
             width,
+            signs,
+            sign_width,
             metrics: [
-                metrics(0x801709b8, 77)?,
-                metrics(0x801707e8, 77)?,
-                metrics(0x80170b88, 48)?,
+                metrics(0x801709b8, 77, width, height)?,
+                metrics(0x801707e8, 77, width, height)?,
+                metrics(0x80170b88, 48, width, height)?,
+                metrics(0x80170bc4, 77, sign_width, sign_height)?,
             ],
         })
     }
@@ -127,19 +139,34 @@ impl Fonts {
             Face::Text => -1,
             Face::Password => 7,
             Face::Speed => 3,
+            Face::Sign => 0,
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        let width: i32 = text.bytes().map(advance).sum();
-        self.at(frame, face, 159 - (width >> 1), y, text);
+        let width: i32 = text
+            .bytes()
+            .map(|c| if c == 8 { -1 } else { advance(c) })
+            .sum();
+        let center = if matches!(face, Face::Sign) { 146 } else { 159 };
+        self.at(frame, face, center - (width >> 1), y, text);
     }
     pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
         let (spacing, tint) = match face {
             Face::Text => (-1, [115, 84, 35]),
             Face::Password => (7, [50, 50, 50]),
             Face::Speed => (3, [100, 0, 30]),
+            Face::Sign => (0, [36, 150, 36]),
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
+        let (pixels, width) = if matches!(face, Face::Sign) {
+            (&self.signs, self.sign_width)
+        } else {
+            (&self.pixels, self.width)
+        };
         for c in text.bytes() {
+            if c == 8 {
+                x -= 1;
+                continue;
+            }
             let g = self.glyph(face, c);
             if c != b' ' {
                 for dy in 0..g.h {
@@ -152,7 +179,7 @@ impl Fonts {
                         if !(0..WIDTH as i32).contains(&col) {
                             continue;
                         }
-                        let pixel = self.pixels[(g.v + dy) * self.width + g.u + dx];
+                        let pixel = pixels[(g.v + dy) * width + g.u + dx];
                         if pixel[3] != 0 {
                             let at = 4 * (row as usize * WIDTH + col as usize);
                             for i in 0..3 {

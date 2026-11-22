@@ -20,6 +20,29 @@ pub struct SpriteFrame {
     pub uv: [[u8; 2]; 4],
     pub width: u8,
 }
+pub struct DashboardIcons {
+    pub weapons: [SpriteFrame; 12],
+    pub labels: [SpriteFrame; 5],
+    pub digits: [SpriteFrame; 10],
+    pub turbo_digits: [SpriteFrame; 10],
+    pub life: SpriteFrame,
+    pub hole: SpriteFrame,
+}
+impl DashboardIcons {
+    pub fn frames(&self) -> impl Iterator<Item = (&SpriteFrame, bool)> {
+        self.weapons
+            .iter()
+            .chain([&self.life, &self.hole])
+            .map(|f| (f, true))
+            .chain(
+                self.labels
+                    .iter()
+                    .chain(&self.digits)
+                    .chain(&self.turbo_digits)
+                    .map(|f| (f, false)),
+            )
+    }
+}
 /// One branch of a looping HIER animation, with its initial DMD clock.
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationFrame {
@@ -192,9 +215,33 @@ impl<'a> Dmd<'a> {
         Ok([icon(1290)?, icon(1292)?, icon(1291)?, icon(1293)?])
     }
     fn sprite_frames<const N: usize>(&self, kind: u16, additive: bool) -> Result<[SpriteFrame; N]> {
-        let p = self.sprite_object(kind)?;
+        let p = self.sprite_node(0, kind)?;
+        self.read_sprite_frames(p, additive, N)
+    }
+    pub fn dashboard_icons(&self) -> Result<DashboardIcons> {
+        let group = self.sprite_node(1, 1260)?;
         ensure!(
-            u32le(self.data, p + 16)? as usize == N,
+            bytes(self.data, group + 20, 1)?[0] >= 8,
+            "incomplete dashboard group"
+        );
+        let child = |i: usize| self.offset(u32le(self.data, group + 24 + i * 4)?);
+        Ok(DashboardIcons {
+            weapons: self.read_sprite_frames(child(0)?, false, 13)?,
+            labels: self.read_sprite_frames(child(2)?, false, 5)?,
+            digits: self.read_sprite_frames(child(3)?, false, 10)?,
+            turbo_digits: self.read_sprite_frames(child(4)?, false, 10)?,
+            life: self.read_sprite_frames::<1>(child(6)?, false, 1)?[0],
+            hole: self.read_sprite_frames::<1>(child(7)?, false, 4)?[0],
+        })
+    }
+    fn read_sprite_frames<const N: usize>(
+        &self,
+        p: usize,
+        additive: bool,
+        available: usize,
+    ) -> Result<[SpriteFrame; N]> {
+        ensure!(
+            self.data[p] == 0 && u32le(self.data, p + 16)? as usize == available && N <= available,
             "invalid sprite frame count"
         );
         let mut poly = self.offset(u32le(self.data, p + 12)?)?;
@@ -230,7 +277,7 @@ impl<'a> Dmd<'a> {
             .map_err(|_| anyhow::anyhow!("invalid sprite frames"))
     }
     pub fn cockpit_rectangles(&self) -> Result<[[i32; 4]; 7]> {
-        let p = self.sprite_object(1240)?;
+        let p = self.sprite_node(0, 1240)?;
         ensure!(
             u32le(self.data, p + 16)? == 7,
             "unexpected dashboard panel count"
@@ -257,7 +304,7 @@ impl<'a> Dmd<'a> {
         }
         Ok(rects)
     }
-    fn sprite_object(&self, kind: u16) -> Result<usize> {
+    fn sprite_node(&self, op: u8, kind: u16) -> Result<usize> {
         let mut pending: Vec<_> = self
             .roots
             .iter()
@@ -270,12 +317,12 @@ impl<'a> Dmd<'a> {
                 continue;
             }
             let p = self.offset(ptr)?;
+            if self.data[p] == op && u16le(self.data, p + 2)? == kind {
+                return Ok(p);
+            }
             let (count_at, children_at) = match self.data[p] {
                 1 => (20, 24),
                 4 => (18, 20),
-                0 if u16le(self.data, p + 2)? == kind => {
-                    return Ok(p);
-                }
                 _ => continue,
             };
             let count = bytes(self.data, p + count_at, 1)?[0] as usize;

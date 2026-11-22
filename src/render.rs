@@ -42,6 +42,8 @@ pub struct Arena {
     body_ranges: Vec<[std::ops::Range<usize>; 3]>,
     overview: bool,
     radar: bool,
+    list_cars: bool,
+    icons: tm1_assets::scene::DashboardIcons,
     arrows: [SpriteFrame; 4],
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
@@ -68,6 +70,7 @@ impl Arena {
         explosion_frames: [SpriteFrame; 16],
         flame_frames: [SpriteFrame; 10],
         contrail_frames: [SpriteFrame; 8],
+        icons: tm1_assets::scene::DashboardIcons,
         arrows: [SpriteFrame; 4],
         vram: Vram,
     ) -> Result<Self> {
@@ -93,14 +96,16 @@ impl Arena {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
         }
-        for frame in explosion_frames
+        for (frame, semi) in explosion_frames
             .iter()
             .chain(&flame_frames)
             .chain(&contrail_frames)
             .chain(&arrows)
+            .map(|f| (f, true))
+            .chain(icons.frames())
         {
             let next = tiles.len();
-            tiles.entry((Some(frame.texture), true)).or_insert(next);
+            tiles.entry((Some(frame.texture), semi)).or_insert(next);
         }
         let width = COLUMNS * TILE;
         let height = tiles.len().div_ceil(COLUMNS) * TILE;
@@ -143,6 +148,8 @@ impl Arena {
             contrail_frames,
             overview: false,
             radar: true,
+            list_cars: false,
+            icons,
             arrows,
             pixels,
             atlas_size: [width, height],
@@ -195,11 +202,19 @@ pub fn setup(
         RenderAssetUsages::default(),
     );
     cockpit_image.sampler = ImageSampler::nearest();
+    let mut lettering = cockpit_image.clone();
+    lettering.data = Some(vec![0; 320 * 240 * 4]);
+    commands.spawn((
+        crate::campaign::StageEntity,
+        HudLetters::default(),
+        Sprite::from_image(images.add(lettering)),
+        Transform::from_xyz(0., 0., 0.5),
+    ));
+
     commands.spawn((
         crate::campaign::StageEntity,
         CockpitOverlay {
             degrees: 0,
-            speed: None,
             frame: None,
         },
         Sprite::from_image(images.add(cockpit_image)),
@@ -411,7 +426,6 @@ pub struct HudLabel;
 #[derive(Component)]
 pub struct CockpitOverlay {
     degrees: i32,
-    speed: Option<i32>,
     frame: Option<u32>,
 }
 
@@ -442,20 +456,74 @@ pub fn cockpit(
     }
     state.frame = Some(drive.player.frame());
     let angle = drive.player.cockpit_steering_angle(state.degrees);
-    let speed = drive.player.speed_mph(3).abs() % 1000;
-    if angle != state.degrees || state.speed != Some(speed) {
-        state.speed = Some(speed);
+    if angle != state.degrees {
         state.degrees = angle;
         if let Some(mut image) = images.get_mut(&sprite.image) {
-            let mut pixels = arena.cockpit.frame(angle);
-            arena.fonts.at(
-                &mut pixels,
-                tm1_assets::screen::Face::Speed,
-                102,
-                214,
-                &format!("{speed:3}"),
-            );
-            image.data = Some(pixels);
+            image.data = Some(arena.cockpit.frame(angle));
+        }
+    }
+}
+#[derive(Component, Default)]
+pub struct HudLetters {
+    last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16)>,
+}
+pub fn hud_letters(
+    window: Single<&Window>,
+    drive: Res<crate::driving::Drive>,
+    arena: Res<Arena>,
+    mut images: ResMut<Assets<Image>>,
+    mut overlay: Single<(&mut HudLetters, &mut Sprite)>,
+) {
+    use tm1_assets::screen::Face;
+    use tm1_core::drive::Vehicle;
+    let (state, sprite) = &mut *overlay;
+    sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
+    let speed = drive.player.speed_mph(3).abs() % 1000;
+    let target = drive.nearest_opponent();
+    let sign = (target.is_active() && target.health().0 > 0).then_some(target.vehicle());
+    let mask = if arena.list_cars {
+        drive
+            .opponents
+            .iter()
+            .enumerate()
+            .filter(|(_, ai)| ai.health().0 > 0)
+            .fold(0u16, |mask, (i, _)| mask | (1 << i))
+    } else {
+        0
+    };
+    if state.last == Some((speed, sign, mask)) {
+        return;
+    }
+    state.last = Some((speed, sign, mask));
+    if let Some(mut image) = images.get_mut(&sprite.image)
+        && let Some(pixels) = &mut image.data
+    {
+        pixels.fill(0);
+        arena
+            .fonts
+            .at(pixels, Face::Speed, 102, 214, &format!("{speed:3}"));
+        let name = |car: Vehicle| match car {
+            Vehicle::YellowJacket => {
+                "Y\x08ELL\x08\x08O\x08W \x08\x08\x08\x08J\x08A\x08CK\x08ET".to_owned()
+            }
+            Vehicle::CrimsonFury => "CRIMSON \x08\x08FURY".to_owned(),
+            Vehicle::MrGrimm => "MR GRIMM".to_owned(),
+            Vehicle::RoadKill => "ROAD KILL".to_owned(),
+            _ => car.name().to_ascii_uppercase(),
+        };
+        if let Some(car) = sign {
+            arena.fonts.centered(pixels, Face::Sign, 33, &name(car));
+        }
+        for (i, ai) in drive.opponents.iter().enumerate() {
+            if mask & (1 << i) != 0 {
+                arena.fonts.at(
+                    pixels,
+                    Face::Sign,
+                    220,
+                    70 + i as i32 * 12,
+                    &name(ai.vehicle()),
+                );
+            }
         }
     }
 }
@@ -506,32 +574,7 @@ pub fn hud(
     } else {
         String::new()
     };
-    let (weapon, ammo) = drive.player.weapon();
-    let remaining = if drive.opponents.len() > 1 {
-        format!(
-            "     Rivals  {}/{}",
-            drive
-                .opponents
-                .iter()
-                .filter(|ai| ai.health().0 > 0)
-                .count(),
-            drive.opponents.len()
-        )
-    } else {
-        String::new()
-    };
-    let message = format!(
-        "{}  {}      {}  {}{remaining}     Lives  {}
-{}  × {}     {}{password}",
-        drive.nearest_opponent().vehicle().name(),
-        drive.nearest_opponent().health().0.max(0),
-        drive.player.vehicle().name(),
-        drive.player.health().0.max(0),
-        drive.lives,
-        weapon,
-        ammo,
-        state
-    );
+    let message = format!("{state}{password}");
     if label.0 != message {
         label.0 = message;
     }
@@ -543,6 +586,9 @@ pub fn controls(
     mut arena: ResMut<Arena>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    if keys.just_pressed(KeyCode::KeyL) {
+        arena.list_cars = !arena.list_cars;
+    }
     if keys.just_pressed(KeyCode::KeyV) {
         arena.radar = !arena.radar;
     }
@@ -936,35 +982,7 @@ pub fn update(
             [tint; 2],
         );
     }
-    let scale = (window.height() / 800.).clamp(0.6, 1.8);
-    let x = -window.width() / 2. + 22. * scale;
-    let y = -window.height() / 2. + 24. * scale;
-    let mut bar = |y: f32, w: f32, h: f32, tint| {
-        let points = [
-            Vec2::new(x, y),
-            Vec2::new(x + w, y),
-            Vec2::new(x, y + h),
-            Vec2::new(x + w, y + h),
-        ];
-        for &i in indices(4) {
-            screen_batch.push(points[i].extend(0.), white, tint);
-        }
-    };
-    let (hp, max_hp) = drive.player.health();
-    let (op, op_max) = drive.nearest_opponent().health();
-    for (row, value, tint) in [
-        (
-            0,
-            drive.player.gun_heat() as f32 / 199.,
-            [1., 0.62, 0.1, 1.],
-        ),
-        (1, hp as f32 / max_hp.max(1) as f32, [0.25, 0.85, 0.42, 1.]),
-        (2, op as f32 / op_max.max(1) as f32, [0.95, 0.25, 0.18, 1.]),
-    ] {
-        let y = y + row as f32 * 12. * scale;
-        bar(y, 150. * scale, 8. * scale, [0.05, 0.05, 0.05, 0.85]);
-        bar(y, 150. * scale * value.clamp(0., 1.), 8. * scale, tint);
-    }
+    draw_instruments(&mut screen_batch, &arena, &drive, &window);
     if arena.radar {
         draw_radar(&mut screen_batch, &arena, &drive, &window);
     }
@@ -1010,9 +1028,144 @@ impl Arena {
         ]
     }
 }
+// UA_DASH.c places instruments on a 320 by 240 framebuffer.
+struct Instruments<'a> {
+    batch: &'a mut Batch,
+    arena: &'a Arena,
+    size: Vec2,
+}
+impl Instruments<'_> {
+    fn quad(&mut self, [x, y, w, h]: [i32; 4], uv: [[f32; 2]; 4], colors: [[f32; 4]; 2]) {
+        for &i in indices(4) {
+            let px = x + if i % 2 == 1 { w } else { 0 };
+            let py = y + if i >= 2 { h } else { 0 };
+            let pos = Vec2::new(px as f32 / 320. - 0.5, 0.5 - py as f32 / 240.) * self.size;
+            self.batch.push(pos.extend(0.), uv[i], colors[i % 2]);
+        }
+    }
+    fn bar(&mut self, rect: [i32; 4], colors: [[u8; 3]; 2]) {
+        let colors =
+            colors.map(|[r, g, b]| Color::srgba_u8(r, g, b, 128).to_linear().to_f32_array());
+        self.quad(rect, [self.arena.uv(0, Vec2::ZERO); 4], colors);
+    }
+    fn sprite(&mut self, x: i32, y: i32, f: SpriteFrame, tint: [u8; 3], semi: bool) {
+        let slot = self.arena.tiles[&(Some(f.texture), semi)];
+        let uv =
+            f.uv.map(|[u, v]| self.arena.uv(slot, Vec2::new(u.into(), v.into())));
+        let w = 1 + i32::from(f.width);
+        let h = 1 + i32::from(f.uv[2][1].wrapping_sub(f.uv[0][1]));
+        let tint = tint.map(|v| v as f32 / 128.);
+        self.quad([x, y, w, h], uv, [[tint[0], tint[1], tint[2], 1.]; 2]);
+    }
+    fn number(&mut self, mut x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
+        if n >= 10 {
+            let tens = digits[(n / 10 % 10) as usize];
+            self.sprite(x, y, tens, tint, false);
+            x += i32::from(tens.width) + 2;
+        }
+        self.sprite(x, y, digits[(n % 10) as usize], tint, false);
+    }
+}
+fn health_colors(tier: u8) -> [[u8; 3]; 2] {
+    match tier {
+        0 => [[255, 0, 0]; 2],
+        1 => [[255, 42, 0], [255, 115, 0]],
+        2 => [[186, 155, 32], [221, 231, 50]],
+        _ => [[0, 112, 10], [49, 148, 41]],
+    }
+}
+fn draw_instruments(
+    batch: &mut Batch,
+    arena: &Arena,
+    drive: &crate::driving::Drive,
+    window: &Window,
+) {
+    let mut hud = Instruments {
+        batch,
+        arena,
+        size: Vec2::new(window.width(), window.height()),
+    };
+    let icons = &arena.icons;
+    let (hp, max) = drive.player.health();
+    let pct = hp * 100 / max.max(1);
+    let (tier, holes) = tm1_core::drive::PlayerVehicle::windshield_damage(pct);
+    let cockpit = drive.camera.mode == tm1_core::drive::CarView::Cockpit
+        && !drive.camera.show_body
+        && drive.player.dashboard_enabled()
+        && !arena.overview
+        && drive.helicopter_pose().is_none();
+    let white = [128; 3];
+    let green = [36, 120, 36];
+    if cockpit && drive.player.vehicle() != tm1_core::drive::Vehicle::MrGrimm {
+        for &[x, y] in &drive.windshield_holes[..holes] {
+            hud.sprite(x, y, icons.hole, white, true);
+        }
+    } else {
+        hud.bar([216, 190, 90, 10], [[10; 3]; 2]);
+        hud.bar([102, 21, 88, 15], [[10; 3]; 2]);
+    }
+    hud.bar(
+        [217, 191, (pct * 88 / 100).clamp(1, 88), 8],
+        health_colors(tier),
+    );
+    let target = drive.nearest_opponent();
+    if target.is_active() {
+        let (hp, max) = target.health();
+        hud.bar(
+            [103, 22, (hp * 86 / max.max(1)).clamp(1, 86), 13],
+            health_colors(target.health_tier()),
+        );
+    }
+    for (i, (x, y)) in [(102, 40), (151, 37), (216, 202), (216, 215)]
+        .into_iter()
+        .enumerate()
+    {
+        hud.sprite(
+            x,
+            y,
+            icons.labels[i],
+            if i < 2 { white } else { green },
+            false,
+        );
+    }
+    let (slot, ammo, special) = drive.player.dashboard_weapon();
+    for i in 0..special.clamp(0, 5) {
+        hud.sprite(262 + i32::from(i) * 9, 202, icons.labels[4], white, false);
+    }
+    for i in 0..drive.lives.min(3) {
+        hud.sprite(309, 189 + i32::from(i) * 5, icons.life, white, true);
+    }
+    if let Some(icon) = icons.weapons.get(slot).filter(|_| ammo > 0) {
+        hud.sprite(255, 210, *icon, white, true);
+        hud.number(290, 212, i32::from(ammo), &icons.digits, green);
+    }
+    if drive.player.gun_overheated() {
+        hud.bar([216, 214, 38, 10], [[255, 0, 0]; 2]);
+    }
+    hud.number(
+        243,
+        202,
+        drive.player.turbo_charge(),
+        &icons.turbo_digits,
+        green,
+    );
+    let living = drive
+        .opponents
+        .iter()
+        .filter(|ai| ai.health().0 > 0)
+        .count() as i32;
+    hud.number(134, 39, living, &icons.digits, green);
+    hud.number(
+        179,
+        39,
+        drive.opponents.len() as i32 - living,
+        &icons.digits,
+        [120, 36, 36],
+    );
+}
 fn draw_radar(batch: &mut Batch, arena: &Arena, drive: &crate::driving::Drive, window: &Window) {
     use tm1_core::drive::RadarSignal;
-    let scale = window.height() / 240.;
+    let scale = Vec2::new(window.width() / 320., window.height() / 240.);
     let origin = Vec2::new(-window.width() / 2., window.height() / 2.);
     let white = arena.uv(0, Vec2::ZERO);
     let mut rect = |x: i32, y: i32, w: i32, h: i32, uv: [[f32; 2]; 4], color: [f32; 4]| {
