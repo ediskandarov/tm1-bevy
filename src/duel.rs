@@ -219,58 +219,44 @@ pub fn pause_menu(
     }
     let mut sound = None;
     let before_settings = duel.settings;
+    let mut controls_changed = false;
     if let Some(page) = before {
-        let (up, down, left, right, select) = if page == Page::Controls {
-            if duel.control_slot == 1 {
-                (
-                    false,
-                    false,
-                    keys.just_pressed(ArrowLeft),
-                    keys.just_pressed(ArrowRight),
-                    keys.just_pressed(Comma),
-                )
-            } else {
-                (
-                    false,
-                    false,
-                    keys.just_pressed(KeyA),
-                    keys.just_pressed(KeyD),
-                    keys.just_pressed(Space),
-                )
-            }
-        } else {
+        let (action, idle_reset) = if page == Page::Controls {
+            let slot = duel.control_slot;
+            let input = duel.controls_view.advance(time.delta(), &keys, slot);
+            controls_changed = input.redraw;
+            let resume = if slot == 0 { KeyP } else { NumpadEnter };
             (
-                keys.any_just_pressed([KeyW, ArrowUp]),
-                keys.any_just_pressed([KeyS, ArrowDown]),
-                keys.any_just_pressed([KeyA, ArrowLeft]),
-                keys.any_just_pressed([KeyD, ArrowRight]),
-                keys.any_just_pressed([Space, Comma]),
+                if keys.just_pressed(resume) {
+                    Some(Action::Resume)
+                } else {
+                    input.action
+                },
+                input.reset_idle,
             )
-        };
-        let action = if keys.any_just_pressed([KeyP, NumpadEnter, Escape]) {
-            Some(Action::Resume)
-        } else if up {
-            Some(Action::Up)
-        } else if down {
-            Some(Action::Down)
-        } else if select || keys.just_pressed(Enter) {
-            Some(Action::Select)
-        } else if left {
-            Some(Action::Left)
-        } else if right {
-            Some(Action::Right)
         } else {
-            None
+            let action = if keys.any_just_pressed([KeyP, NumpadEnter, Escape]) {
+                Some(Action::Resume)
+            } else if keys.any_just_pressed([KeyW, ArrowUp]) {
+                Some(Action::Up)
+            } else if keys.any_just_pressed([KeyS, ArrowDown]) {
+                Some(Action::Down)
+            } else if keys.any_just_pressed([Space, Comma, Enter]) {
+                Some(Action::Select)
+            } else if keys.any_just_pressed([KeyA, ArrowLeft]) {
+                Some(Action::Left)
+            } else if keys.any_just_pressed([KeyD, ArrowRight]) {
+                Some(Action::Right)
+            } else {
+                None
+            };
+            (action, action.is_some())
         };
-        let expired = crate::pause::options_timed_out(
-            page,
-            &mut duel.options_idle,
-            time.delta(),
-            action.is_some(),
-        );
+        let expired =
+            crate::pause::options_timed_out(page, &mut duel.options_idle, time.delta(), idle_reset);
         if let Some(action) = action.or(expired.then_some(Action::Resume)) {
             if page == Page::Choices(3) && matches!(action, Action::Select) {
-                duel.control_slot = usize::from(keys.just_pressed(Comma));
+                duel.control_slot = usize::from(crate::pause::duel_pad_held(&keys, 1));
                 duel.settings.layout = duel.layouts[duel.control_slot];
             }
             duel.pause = crate::pause::navigate(page, action, &mut duel.settings);
@@ -292,17 +278,9 @@ pub fn pause_menu(
         duel.pause = Some(Page::Choices(0));
     }
     let (sprite, visibility) = &mut *hud;
-    let controls_changed = if duel.pause == Some(Page::Controls) {
-        if before != duel.pause {
-            duel.controls_view = Default::default();
-            false
-        } else {
-            let slot = duel.control_slot;
-            duel.controls_view.advance(time.delta(), &keys, slot)
-        }
-    } else {
-        false
-    };
+    if duel.pause == Some(Page::Controls) && before != duel.pause {
+        duel.controls_view = Default::default();
+    }
     let changed = before != duel.pause || before_settings != duel.settings || controls_changed;
     if let Some(page) = duel.pause {
         sprite.custom_size = Some(Vec2::new(window.width(), window.height()));

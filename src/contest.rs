@@ -632,14 +632,10 @@ impl Contest {
                     return None;
                 }
             }
-            Page::Duel(_) | Page::DuelOptions(_) | Page::DuelStage | Page::DuelControls(_)
-                if before != self.page =>
-            {
+            Page::Duel(_) | Page::DuelOptions(_) | Page::DuelStage if before != self.page => {
                 usize::from(keys.any_just_pressed([Enter, Space, Comma, Escape]))
             }
             Page::DuelStage if horizontal || keys.any_just_pressed([KeyA, KeyD]) => 0,
-            Page::DuelControls(0) if keys.any_just_pressed([KeyA, KeyD]) => 0,
-            Page::DuelControls(1) if horizontal => 0,
             Page::Duel(0) if keys.any_just_pressed([Space, Comma]) => 1,
             Page::Password if enter => {
                 if matches!(self.page, Page::Wrong(_)) {
@@ -782,7 +778,7 @@ impl Contest {
                 } else if select {
                     if options {
                         self.page = if row == 0 {
-                            Page::DuelControls(usize::from(key(Comma)))
+                            Page::DuelControls(usize::from(crate::pause::duel_pad_held(keys, 1)))
                         } else {
                             Page::DuelStage
                         };
@@ -810,21 +806,7 @@ impl Contest {
                     self.duel_stage = (self.duel_stage + 1) % 6;
                 }
             }
-            Page::DuelControls(slot) => {
-                use KeyCode::*;
-                let [left, right, select] = if slot == 0 {
-                    [KeyA, KeyD, Space]
-                } else {
-                    [ArrowLeft, ArrowRight, Comma]
-                };
-                if key(Enter) || key(Escape) || key(select) {
-                    self.page = Page::DuelOptions(0);
-                } else if key(left) {
-                    self.duel_layouts[slot] = self.duel_layouts[slot].saturating_sub(1);
-                } else if key(right) {
-                    self.duel_layouts[slot] = (self.duel_layouts[slot] + 1).min(3);
-                }
-            }
+            Page::DuelControls(_) => {}
             Page::MainOptions(row) => {
                 if key(KeyCode::ArrowUp) {
                     self.page = Page::MainOptions((row + 3) % 4);
@@ -1214,7 +1196,12 @@ pub fn update(world: &mut World) {
             menu.idle = Duration::ZERO;
         }
         let keys = if scripted { &no_input } else { world.resource::<ButtonInput<KeyCode>>() };
-        let timed_out = menu.tick_setup_timeout(held,menu_delta(world));
+        let controls = if let Page::DuelControls(slot) = menu.page {
+            Some(menu.controls_view.advance(menu_delta(world), keys, slot))
+        } else {
+            None
+        };
+        let timed_out = menu.tick_setup_timeout(controls.map_or(held, |input| input.reset_idle), menu_delta(world));
         let expired = if let Page::BossPreview(remaining) = &mut menu.page {
             *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
             remaining.is_zero()
@@ -1228,8 +1215,8 @@ pub fn update(world: &mut World) {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
-        } else if let Page::DuelControls(slot) = menu.page {
-            menu.controls_view.advance(menu_delta(world), keys, slot)
+        } else if let Some(input) = controls {
+            input.redraw || input.action.is_some()
         } else if menu.page==Page::Password {
             let before=menu.cursor_fields/20;
             let fields=menu.presentation_fields(menu_delta(world));
@@ -1242,11 +1229,28 @@ pub fn update(world: &mut World) {
             return;
         }
         let previous = menu.page;
-        let start_battle = !expired && menu.input(keys);
+        let (start_battle, voice) = if let (Page::DuelControls(slot), Some(input)) = (previous, controls) {
+            let old = menu.duel_layouts[slot];
+            let mut settings = menu.settings;
+            settings.layout = old;
+            let sound = input.action.and_then(|action| {
+                if crate::pause::navigate(crate::pause::Page::Controls, action, &mut settings).is_none() {
+                    menu.page = Page::DuelOptions(0);
+                }
+                menu.duel_layouts[slot] = settings.layout;
+                crate::pause::navigation_sound(crate::pause::Page::Controls, action, old != settings.layout)
+            });
+            (false, sound.map(|select| menu.button_sounds[usize::from(select)].clone()))
+        } else if timed_out || expired {
+            (false, None)
+        } else {
+            let start = menu.input(keys);
+            (start, menu.input_sound(previous, keys))
+        };
         if previous != menu.page && matches!(menu.page, Page::DuelControls(_)) {
             menu.controls_view = Default::default();
         }
-        if !expired && let Some(voice) = menu.input_sound(previous, keys) {
+        if let Some(voice) = voice {
             world.spawn((
                 AudioPlayer::new(voice),
                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * menu.settings.effects_gain())),
@@ -1428,9 +1432,17 @@ mod tests {
             world.resource::<Contest>().duel_cars,
             [Vehicle::CARD_ORDER.len() - 1, 0]
         );
-        for key in [KeyD, Space, ArrowDown, Enter, Comma] {
+        for key in [KeyD, Space, ArrowDown, Enter] {
             press(&mut world, key);
         }
+        // screenGetWhichPad samples all of pad two, including a held non-select button.
+        let mut keys = ButtonInput::default();
+        keys.press(KeyL);
+        keys.press(Space);
+        world.insert_resource(keys);
+        update(&mut world);
+        assert!(world.resource::<Contest>().page == Page::DuelControls(1));
+        world.insert_resource(ButtonInput::<KeyCode>::default());
         let displayed = |world: &World| {
             let menu = world.resource::<Contest>();
             world
@@ -1486,9 +1498,11 @@ mod tests {
         assert!(displayed(&world) == expected);
         update(&mut world);
         assert!(displayed(&world) == released);
-        for key in [Comma, Space, KeyA, Escape] {
-            press(&mut world, key);
-        }
+        press(&mut world, Comma);
+        press(&mut world, Space);
+        update(&mut world);
+        press(&mut world, KeyA);
+        press(&mut world, Escape);
         let menu = world.resource::<Contest>();
         assert!(menu.page == Page::DuelOptions(0));
         assert_eq!(menu.duel_layouts, [0, 2]);
@@ -1550,10 +1564,15 @@ mod tests {
         assert_eq!(positions(&world), start);
         assert_eq!(active_engines(&mut world), 0);
         step(&mut world, &[ArrowUp]);
-        step(&mut world, &[Comma]);
+        step(&mut world, &[KeyL, Space]);
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Controls));
-        step(&mut world, &[ArrowRight]);
+        step(&mut world, &[Comma, ArrowRight]);
+        assert_eq!(world.resource::<duel::Duel>().settings.layout, 1);
+        step(&mut world, &[Space]);
+        step(&mut world, &[Space, ArrowRight]);
+        step(&mut world, &[Space, ArrowRight, ArrowLeft, Comma]);
         assert_eq!(world.resource::<duel::Duel>().settings.layout, 2);
+        step(&mut world, &[Space]);
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_secs(600));

@@ -133,10 +133,41 @@ pub fn navigate(page: Page, action: Action, settings: &mut Settings) -> Option<P
         _ => Some(page),
     }
 }
+#[derive(Clone, Copy)]
+pub struct ControlInput {
+    pub action: Option<Action>,
+    pub redraw: bool,
+    pub reset_idle: bool,
+}
+
+pub fn duel_pad_held(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
+    use KeyCode::*;
+    if slot == 0 {
+        keys.any_pressed([
+            KeyA, KeyD, KeyW, KeyS, Space, KeyE, KeyF, KeyT, ShiftLeft, KeyC, KeyP,
+        ])
+    } else {
+        keys.any_pressed([
+            ArrowLeft,
+            ArrowRight,
+            ArrowUp,
+            ArrowDown,
+            Comma,
+            Period,
+            Slash,
+            ShiftRight,
+            KeyL,
+            KeyO,
+            NumpadEnter,
+        ])
+    }
+}
+
 #[derive(Default)]
 pub struct DuelControlsView {
     elapsed: std::time::Duration,
     arrows: [bool; 2],
+    ready: bool,
 }
 
 impl DuelControlsView {
@@ -151,19 +182,42 @@ impl DuelControlsView {
         delta: std::time::Duration,
         keys: &ButtonInput<KeyCode>,
         slot: usize,
-    ) -> bool {
+    ) -> ControlInput {
+        use KeyCode::*;
         let previous = (self.label_visible(), self.arrows);
         self.elapsed = self.elapsed.saturating_add(delta);
-        let [left, right] = if slot == 0 {
-            [KeyCode::KeyA, KeyCode::KeyD]
+        let [left, right, select] = if slot == 0 {
+            [KeyA, KeyD, Space]
         } else {
-            [KeyCode::ArrowLeft, KeyCode::ArrowRight]
+            [ArrowLeft, ArrowRight, Comma]
         };
-        self.arrows = [
-            keys.pressed(left),
-            !keys.pressed(left) && keys.pressed(right),
-        ];
-        previous != (self.label_visible(), self.arrows)
+        let waiting = !self.ready;
+        let action = if keys.just_pressed(Escape) {
+            Some(Action::Resume)
+        } else if waiting {
+            if !duel_pad_held(keys, slot) && !keys.pressed(Enter) {
+                self.ready = true;
+                self.arrows = [false; 2];
+            }
+            None
+        } else if keys.any_pressed([select, Enter]) {
+            Some(Action::Select)
+        } else if keys.pressed(left) || keys.pressed(right) {
+            self.ready = false;
+            self.arrows = [keys.pressed(left), !keys.pressed(left)];
+            Some(if self.arrows[0] {
+                Action::Left
+            } else {
+                Action::Right
+            })
+        } else {
+            None
+        };
+        ControlInput {
+            action,
+            redraw: previous != (self.label_visible(), self.arrows),
+            reset_idle: waiting || action.is_some(),
+        }
     }
 
     pub fn frame(&self, art: &Art, fonts: &Fonts, layout: u8, slot: usize) -> Vec<u8> {
