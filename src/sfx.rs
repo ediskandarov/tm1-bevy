@@ -1,4 +1,5 @@
 pub mod duel;
+mod interpolation;
 pub mod pcm;
 use anyhow::Result;
 use bevy::{
@@ -109,8 +110,7 @@ impl Sample {
             let pan = f32::from(t.pan) / 64.;
             let gain = f32::from(t.volume) / 127.;
             for (i, out) in mix[..n].iter_mut().enumerate() {
-                let at = i * increment / 4096;
-                let v = t.pcm[at.min(t.pcm.len() - 1)] as f32 * gain;
+                let v = interpolation::interpolate(&t.pcm, i * increment) as f32 * gain;
                 out[0] += v * (2. - pan).min(1.);
                 out[1] += v * pan.min(1.);
             }
@@ -683,18 +683,30 @@ mod tests {
         let increment = 2453;
         let frames = (tone.pcm.len() * 4096).div_ceil(increment);
         let marker = tone.loop_start.map(|i| (i * 4096).div_ceil(increment));
-        let samples: Vec<_> = (0..1024)
-            .map(|i| {
-                let v = f32::from(tone.pcm[i * increment / 4096]) * (f32::from(tone.volume) / 127.);
-                v * (f32::from(tone.pan) / 64.).min(1.)
-            })
-            .collect();
+        let gain = f32::from(tone.volume) / 127.;
+        let pan = (f32::from(tone.pan) / 64.).min(1.);
+        // Independent decoder and four-tap interpolation at pitch register 2453.
+        let samples = [
+            (0, 0),
+            (62, 0),
+            (111, 2),
+            (127, -82),
+            (128, -97),
+            (129, -107),
+            (137, -83),
+            (255, -2),
+            (400, 127),
+            (511, 24),
+            (666, -7),
+            (777, 105),
+            (1000, 235),
+            (1023, -255),
+        ];
         let (sample, loop_start) = Sample::single(tone, false, false);
         assert_eq!(sample.mix.len(), frames);
         assert_eq!(loop_start, marker);
-        assert!(samples.iter().any(|v| *v != 0.));
-        for (actual, want) in sample.mix.iter().zip(samples) {
-            assert_eq!(actual[1], want);
+        for (frame, value) in samples {
+            assert_eq!(sample.mix[frame][1], value as f32 * gain * pan);
         }
     }
 

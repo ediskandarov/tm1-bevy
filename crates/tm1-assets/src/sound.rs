@@ -113,6 +113,17 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
                 {
                     repeat_prefix.pop();
                 }
+                // The SPU interpolator also needs three past samples at the loop boundary.
+                let period = pcm.len() - start;
+                for _ in 0..3 {
+                    let i = repeat_prefix.len();
+                    let sample = if i < period {
+                        pcm[start + i]
+                    } else {
+                        repeat_prefix[i - period]
+                    };
+                    repeat_prefix.push(sample);
+                }
             }
             Ok(Tone {
                 priority: t[0],
