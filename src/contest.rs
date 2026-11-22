@@ -619,6 +619,33 @@ impl Contest {
         let vertical = keys.any_just_pressed([ArrowUp, ArrowDown]);
         let horizontal = keys.any_just_pressed([ArrowLeft, ArrowRight]);
         let index = match before {
+            Page::DuelJoin if before != self.page && !keys.just_pressed(Escape) => 1,
+            Page::DuelGarage { slot, bio, .. } => {
+                let (select, vertical, horizontal) = if slot == 0 {
+                    (Space, [KeyW, KeyS], [KeyA, KeyD])
+                } else {
+                    (Comma, [ArrowUp, ArrowDown], [ArrowLeft, ArrowRight])
+                };
+                if keys.just_pressed(select) {
+                    1
+                } else if !bio
+                    && (keys.any_just_pressed(vertical)
+                        || (self.garage.row != 2 && keys.any_just_pressed(horizontal)))
+                {
+                    0
+                } else {
+                    return None;
+                }
+            }
+            Page::Duel(_) | Page::DuelOptions(_) | Page::DuelStage | Page::DuelControls(_)
+                if before != self.page =>
+            {
+                usize::from(keys.any_just_pressed([Enter, Space, Comma, Escape]))
+            }
+            Page::DuelStage if horizontal || keys.any_just_pressed([KeyA, KeyD]) => 0,
+            Page::DuelControls(0) if keys.any_just_pressed([KeyA, KeyD]) => 0,
+            Page::DuelControls(1) if horizontal => 0,
+            Page::Duel(0) if keys.any_just_pressed([Space, Comma]) => 1,
             Page::Password if enter => {
                 if matches!(self.page, Page::Wrong(_)) {
                     3
