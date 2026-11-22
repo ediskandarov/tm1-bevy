@@ -38,6 +38,7 @@ pub struct Duel {
     score: [u32; 2],
     pub(crate) settings: crate::pause::Settings,
     winner: Option<usize>,
+    layouts: [u8; 2],
 }
 
 pub fn start(
@@ -70,7 +71,7 @@ pub fn start(
     .ok_or_else(|| anyhow::anyhow!("unsupported duel collision graph"))?;
     let mut seed = 1;
     scene.start_pedestrians(level, &mut seed);
-    let cars =
+    let mut cars =
         PlayerVehicle::duel_players(&disc.read("SIPS_600.07")?, kinds, level, seed, difficulty)
             .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?;
     let arena = campaign::arena_art(
@@ -97,6 +98,14 @@ pub fn start(
                 .map(|c| c.settings)
         })
         .unwrap_or_default();
+    let layouts = world
+        .get_resource::<crate::contest::Contest>()
+        .map(|menu| menu.duel_layouts)
+        .or_else(|| world.get_resource::<Duel>().map(|duel| duel.layouts))
+        .unwrap_or([1; 2]);
+    for (car, layout) in cars.iter_mut().zip(layouts) {
+        car.set_pad_layout(layout);
+    }
     let cameras = cars
         .each_ref()
         .map(|car| VehicleCamera::new(car, CarView::Chase));
@@ -110,6 +119,7 @@ pub fn start(
         remainder: Duration::ZERO,
         score,
         winner: None,
+        layouts,
         settings,
     });
     world

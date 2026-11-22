@@ -22,7 +22,9 @@ cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 
 ## Local two-player battle
 
-Choose **2P BATTLE** at the title. Up and Down select the first car, second car, arena or START. Left and Right change the selected value. Enter advances to the next row and starts the round from START. The upper viewport follows player one and the lower viewport follows player two.
+Choose **2P BATTLE** at the title. At **PRESS ANY BUTTON**, either player can claim the first pick. Player one uses WASD and Space in the garage. Player two uses the arrow keys and Comma. Move left or right to browse cars, choose **CAR INFO** to read the driver's biography, or confirm the car to pass the turn. The second player chooses from the remaining cars.
+
+After both picks, choose **START** to play or **OPTIONS** to change the battleground or controls. Under **STAGE**, browse the six arenas with Left and Right and press Enter to confirm. Under **SELECT CONTROLS**, open the layout with Space for player one or Comma for player two. The upper viewport follows player one and the lower viewport follows player two.
 
 | Action | Player one | Player two |
 | --- | --- | --- |

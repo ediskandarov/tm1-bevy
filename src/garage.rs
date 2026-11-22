@@ -1,4 +1,4 @@
-//! The one-player vehicle carousel in SCREEN.c.
+//! The vehicle carousel in SCREEN.c.
 use anyhow::{Result, ensure};
 use bevy::prelude::*;
 use tm1_assets::{
@@ -128,6 +128,33 @@ impl Garage {
         self.left = false;
     }
     pub fn frame(&self, fonts: &Fonts, i: usize, demo: bool) -> Vec<u8> {
+        self.carousel(fonts, i, demo, 0, None, false)
+    }
+    pub fn join_frame(&self, fonts: &Fonts) -> Vec<u8> {
+        let mut frame = self.backdrop.clone();
+        if self.field % 16 >= 8 {
+            fonts.centered(&mut frame, Face::Text, 129, "PRESS ANY BUTTON");
+        }
+        frame
+    }
+    pub fn duel_frame(
+        &self,
+        fonts: &Fonts,
+        car: usize,
+        slot: usize,
+        locked: Option<usize>,
+    ) -> Vec<u8> {
+        self.carousel(fonts, car, false, slot, locked, true)
+    }
+    fn carousel(
+        &self,
+        fonts: &Fonts,
+        i: usize,
+        demo: bool,
+        slot: usize,
+        locked: Option<usize>,
+        two_players: bool,
+    ) -> Vec<u8> {
         let mut frame = if demo {
             self.demo_backdrop.clone()
         } else {
@@ -152,23 +179,38 @@ impl Garage {
         };
         draw(i, side * 7680. - spin);
         if self.slide < 22 {
-            draw((i + if self.left { 1 } else { 11 }) % 12, -spin);
+            let step = if self.left { 1 } else { 11 };
+            let mut previous = (i + step) % 12;
+            if Some(previous) == locked {
+                previous = (previous + step) % 12;
+            }
+            draw(previous, -spin);
         }
-        for y in 0..90 {
-            for x in 0..64 {
-                let at = 4 * ((35 + y) * 320 + 10 + x);
-                let pixel = &self.portraits[i][4 * (64 * y + x)..][..4];
-                match pixel[3] {
-                    0 => {}
-                    128 => {
-                        for c in 0..3 {
-                            frame[at + c] =
-                                (u16::from(frame[at + c]) / 2 + u16::from(pixel[c]) / 2) as u8;
+        let centers = [42, 277];
+        let mut portrait = |car: usize, slot: usize, w: usize, h: usize| {
+            for y in 0..h {
+                for x in 0..w {
+                    let at = 4 * ((80 - h / 2 + y) * 320 + centers[slot] - w / 2 + x);
+                    let pixel = &self.portraits[car][4 * (64 * (y * 90 / h) + x * 64 / w)..][..4];
+                    match pixel[3] {
+                        0 => {}
+                        128 => {
+                            for c in 0..3 {
+                                frame[at + c] =
+                                    (u16::from(frame[at + c]) / 2 + u16::from(pixel[c]) / 2) as u8;
+                            }
                         }
+                        _ => frame[at..at + 4].copy_from_slice(pixel),
                     }
-                    _ => frame[at..at + 4].copy_from_slice(pixel),
                 }
             }
+        };
+        portrait(i, slot, 64, 90);
+        if let Some(other) = locked {
+            let fields = self.field.min(8);
+            let w = 48 + 2 * (8 >> fields);
+            let h = 44 + 2 * (23 >> fields);
+            portrait(other, 1 - slot, w as usize, h as usize);
         }
         if !demo {
             for (row, label) in ["SELECT", "CAR INFO", "EXIT"].into_iter().enumerate() {
@@ -185,7 +227,22 @@ impl Garage {
                 );
             }
             if self.field % 16 >= 8 {
-                fonts.centered_at(&mut frame, Face::Control, 42, 30, "Player 1");
+                fonts.centered_at(
+                    &mut frame,
+                    Face::Control,
+                    centers[slot] as i32,
+                    30,
+                    ["Player 1", "Player 2"][slot],
+                );
+            }
+            if two_players {
+                fonts.centered_at(
+                    &mut frame,
+                    Face::Control,
+                    centers[1 - slot] as i32,
+                    30,
+                    ["Player 1", "Player 2"][1 - slot],
+                );
             }
             for (x, label, left) in [(14, "<", true), (285, ">", false)] {
                 let face = if self.slide == 0 && self.row == 0 && self.left == left {

@@ -12,7 +12,16 @@ struct ContestScreen;
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Title,
+    DuelJoin,
+    DuelGarage {
+        slot: usize,
+        second: bool,
+        bio: bool,
+    },
     Duel(usize),
+    DuelOptions(usize),
+    DuelStage,
+    DuelControls(usize),
     MainOptions(usize),
     Audio(usize),
     StaffRoll,
@@ -49,6 +58,8 @@ pub struct Contest {
     title_row: usize,
     duel_cars: [usize; 2],
     duel_stage: usize,
+    pub(crate) duel_layouts: [u8; 2],
+    battlegrounds: Vec<Vec<u8>>,
     duel_art: Vec<u8>,
     history_from_menu: bool,
     credits: crate::scroll::Scroll,
@@ -199,6 +210,7 @@ impl Contest {
             | Page::Controls
             | Page::Password
             | Page::Wrong(_) => Some(self.vehicle),
+            Page::DuelGarage { slot, .. } => Some(self.duel_cars[slot]),
             Page::Showcase(i) => Some(i),
             _ => None,
         };
@@ -298,6 +310,18 @@ impl Contest {
             .data = Some(self.frame());
         self.sync_theme(world);
     }
+    fn duel_rows(&self, frame: &mut [u8], row: usize, bottom: i32, entries: &[(&str, &str)]) {
+        for (i, &(label, value)) in entries.iter().enumerate() {
+            let y = bottom - 20 * (entries.len() - 1 - i) as i32;
+            let face = if row == i {
+                Face::Selected
+            } else {
+                Face::Choice
+            };
+            self.fonts.at(frame, face, 30, y, label);
+            self.fonts.at(frame, face, 160, y, value);
+        }
+    }
     fn frame(&self) -> Vec<u8> {
         let mut frame = match self.page {
             Page::Battle(_) => {
@@ -332,6 +356,63 @@ impl Contest {
                     self.settings,
                 );
             }
+            Page::DuelJoin => return self.garage.join_frame(&self.fonts),
+            Page::DuelGarage { slot, second, bio } => {
+                if bio {
+                    return self.garage.bio(self.duel_cars[slot]);
+                }
+                return self.garage.duel_frame(
+                    &self.fonts,
+                    self.duel_cars[slot],
+                    slot,
+                    second.then_some(self.duel_cars[1 - slot]),
+                );
+            }
+            Page::DuelControls(slot) => {
+                let mut settings = self.settings;
+                settings.layout = self.duel_layouts[slot];
+                let mut out = self.controls.frame(
+                    &self.fonts,
+                    self.level,
+                    crate::pause::Page::Controls,
+                    settings,
+                );
+                self.fonts
+                    .centered(&mut out, Face::Control, 32, ["Player 1", "Player 2"][slot]);
+                return out;
+            }
+            Page::DuelStage => {
+                let mut out = self.battlegrounds[self.duel_stage].clone();
+                self.fonts.at(&mut out, Face::Control, 64, 200, "<");
+                self.fonts.at(&mut out, Face::Control, 239, 200, ">");
+                self.fonts.centered_at(
+                    &mut out,
+                    Face::Choice,
+                    159,
+                    200,
+                    &crate::duel::NAMES[self.duel_stage].to_uppercase(),
+                );
+                self.fonts
+                    .centered_at(&mut out, Face::Control, 159, 220, "Press SELECT To Select");
+                return out;
+            }
+            Page::DuelOptions(row) => {
+                let mut out = self.options.clone();
+                self.duel_rows(
+                    &mut out,
+                    row,
+                    180,
+                    &[
+                        ("SELECT CONTROLS", ""),
+                        (
+                            "STAGE:",
+                            &crate::duel::NAMES[self.duel_stage].to_uppercase(),
+                        ),
+                        ("EXIT", ""),
+                    ],
+                );
+                return out;
+            }
             Page::Duel(row) => {
                 let mut out = self.duel_art.clone();
                 for (slot, &index) in self.duel_cars.iter().enumerate() {
@@ -342,24 +423,12 @@ impl Contest {
                         }
                     }
                 }
-                let labels = [
-                    format!("P1  {}", Vehicle::CARD_ORDER[self.duel_cars[0]].name()),
-                    format!("P2  {}", Vehicle::CARD_ORDER[self.duel_cars[1]].name()),
-                    format!("ARENA  {}", crate::duel::NAMES[self.duel_stage]),
-                    "START".to_owned(),
-                ];
-                for (i, label) in labels.iter().enumerate() {
-                    self.fonts.centered(
-                        &mut out,
-                        if i == row {
-                            Face::Selected
-                        } else {
-                            Face::Choice
-                        },
-                        141 + i as i32 * 20,
-                        &label.to_uppercase(),
-                    );
-                }
+                self.duel_rows(
+                    &mut out,
+                    row,
+                    210,
+                    &[("START", ""), ("OPTIONS", ""), ("EXIT", "")],
+                );
                 return out;
             }
             Page::Title => self.title.clone(),
@@ -433,7 +502,12 @@ impl Contest {
                     );
                 }
             }
-            Page::Duel(_) => unreachable!(),
+            Page::Duel(_)
+            | Page::DuelJoin
+            | Page::DuelGarage { .. }
+            | Page::DuelOptions(_)
+            | Page::DuelControls(_)
+            | Page::DuelStage => unreachable!(),
             Page::Contest | Page::Bio | Page::History | Page::Showcase(_) => unreachable!(),
             Page::Password | Page::Wrong(_) => {
                 if let Page::Wrong(row) = self.page {
@@ -491,7 +565,11 @@ impl Contest {
     fn tick_setup_timeout(&mut self, held: bool, dt: Duration) -> bool {
         let limit = match self.page {
             Page::MainOptions(_) | Page::Audio(_) | Page::Options(_) => 18001,
-            Page::Battle(_) | Page::Wrong(_) => 1201,
+            Page::DuelJoin | Page::Duel(_) | Page::Battle(_) | Page::Wrong(_) => 1201,
+            Page::DuelGarage { bio: false, .. }
+            | Page::DuelOptions(_)
+            | Page::DuelStage
+            | Page::DuelControls(_) => 18001,
             _ => return false,
         };
         if held {
@@ -506,7 +584,12 @@ impl Contest {
         match self.page {
             Page::MainOptions(_) => self.page = Page::Title,
             Page::Audio(_) => self.page = Page::MainOptions(0),
-            Page::Battle(_) => self.leave_battle(),
+            Page::DuelJoin | Page::DuelGarage { .. } | Page::Duel(_) | Page::Battle(_) => {
+                self.leave_battle()
+            }
+            Page::DuelOptions(_) => self.page = Page::Duel(1),
+            Page::DuelStage => self.page = Page::DuelOptions(1),
+            Page::DuelControls(_) => self.page = Page::DuelOptions(0),
             Page::Wrong(_) => self.page = self.after_password(),
             _ => self.page = Page::Battle(0),
         }
@@ -568,39 +651,156 @@ impl Contest {
                     self.title_row = (self.title_row + 1) % 3;
                 } else if key(KeyCode::Enter) {
                     self.page = match self.title_row {
-                        1 => Page::Duel(0),
+                        1 => {
+                            self.duel_stage = 0;
+                            self.duel_cars = [0, 0];
+                            Page::DuelJoin
+                        }
                         2 => Page::MainOptions(0),
                         _ => Page::Contest,
                     };
                     self.garage.reset();
                 }
             }
-            Page::Duel(row) => {
-                if key(KeyCode::Escape) {
+            Page::DuelJoin => {
+                use KeyCode::*;
+                let slot = if keys.any_just_pressed([
+                    ArrowLeft, ArrowRight, ArrowUp, ArrowDown, Comma, Period, Slash, ShiftRight,
+                    KeyL, KeyO,
+                ]) {
+                    Some(1)
+                } else if keys.any_just_pressed([
+                    KeyA, KeyD, KeyW, KeyS, Space, KeyE, KeyF, KeyT, ShiftLeft, KeyC,
+                ]) {
+                    Some(0)
+                } else {
+                    None
+                };
+                if key(Escape) {
                     self.page = Page::Title;
-                } else if key(KeyCode::ArrowDown) {
-                    self.page = Page::Duel((row + 1) % 4);
-                } else if key(KeyCode::ArrowUp) {
-                    self.page = Page::Duel((row + 3) % 4);
-                } else if key(KeyCode::Enter) {
-                    if row == 3 {
+                } else if let Some(slot) = slot {
+                    self.page = Page::DuelGarage {
+                        slot,
+                        second: false,
+                        bio: false,
+                    };
+                    self.idle = Duration::ZERO;
+                    self.garage.reset();
+                }
+            }
+            Page::DuelGarage { slot, second, bio } => {
+                use KeyCode::*;
+                let [up, down, left, right, select] = if slot == 0 {
+                    [KeyW, KeyS, KeyA, KeyD, Space]
+                } else {
+                    [ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Comma]
+                };
+                if bio {
+                    if key(select) || key(Escape) {
+                        self.page = Page::DuelGarage {
+                            slot,
+                            second,
+                            bio: false,
+                        };
+                    }
+                } else if key(Escape) || (key(select) && self.garage.row == 2) {
+                    self.leave_battle();
+                } else if key(select) {
+                    if self.garage.row == 1 {
+                        self.page = Page::DuelGarage {
+                            slot,
+                            second,
+                            bio: true,
+                        };
+                    } else if second {
+                        self.page = Page::Duel(0);
+                        self.idle = Duration::ZERO;
+                    } else {
+                        self.duel_cars[1 - slot] = usize::from(self.duel_cars[slot] == 0);
+                        self.page = Page::DuelGarage {
+                            slot: 1 - slot,
+                            second: true,
+                            bio: false,
+                        };
+                        self.garage.reset();
+                    }
+                } else if key(up) || key(down) {
+                    self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
+                } else if self.garage.row != 2 && (key(left) || key(right)) {
+                    let n = Vehicle::CARD_ORDER.len();
+                    let step = if key(left) { n - 1 } else { 1 };
+                    let mut next = (self.duel_cars[slot] + step) % n;
+                    if second && next == self.duel_cars[1 - slot] {
+                        next = (next + step) % n;
+                    }
+                    self.duel_cars[slot] = next;
+                    self.garage.slide = 0;
+                    self.garage.left = key(left);
+                }
+            }
+            Page::Duel(row) | Page::DuelOptions(row) => {
+                use KeyCode::*;
+                let options = matches!(self.page, Page::DuelOptions(_));
+                let select = key(Enter) || key(Space) || key(Comma);
+                let page = if options {
+                    Page::DuelOptions
+                } else {
+                    Page::Duel
+                };
+                if key(Escape) || (select && row == 2) {
+                    if options {
+                        self.page = Page::Duel(1);
+                    } else {
+                        self.leave_battle();
+                    }
+                } else if key(ArrowDown) || key(KeyS) {
+                    self.page = page((row + 1) % 3);
+                } else if key(ArrowUp) || key(KeyW) {
+                    self.page = page((row + 2) % 3);
+                } else if select {
+                    if options {
+                        self.page = if row == 0 {
+                            Page::DuelControls(usize::from(key(Comma)))
+                        } else {
+                            Page::DuelStage
+                        };
+                    } else if row == 0 {
                         return true;
+                    } else {
+                        self.page = Page::DuelOptions(0);
                     }
-                    self.page = Page::Duel(row + 1);
-                } else if key(KeyCode::ArrowLeft) || key(KeyCode::ArrowRight) {
-                    if row < 2 {
-                        let n = Vehicle::CARD_ORDER.len();
-                        let delta = if key(KeyCode::ArrowLeft) { n - 1 } else { 1 };
-                        loop {
-                            self.duel_cars[row] = (self.duel_cars[row] + delta) % n;
-                            if self.duel_cars[0] != self.duel_cars[1] {
-                                break;
-                            }
-                        }
-                    } else if row == 2 {
-                        self.duel_stage =
-                            (self.duel_stage + if key(KeyCode::ArrowRight) { 1 } else { 5 }) % 6;
-                    }
+                } else if options
+                    && row == 1
+                    && (key(ArrowLeft) || key(KeyA) || key(ArrowRight) || key(KeyD))
+                {
+                    self.duel_stage =
+                        (self.duel_stage + if key(ArrowLeft) || key(KeyA) { 5 } else { 1 }) % 6;
+                    self.page = Page::DuelStage;
+                }
+            }
+            Page::DuelStage => {
+                use KeyCode::*;
+                if key(Enter) || key(Space) || key(Comma) || key(Escape) {
+                    self.page = Page::DuelOptions(1);
+                } else if key(ArrowLeft) || key(KeyA) {
+                    self.duel_stage = (self.duel_stage + 5) % 6;
+                } else if key(ArrowRight) || key(KeyD) {
+                    self.duel_stage = (self.duel_stage + 1) % 6;
+                }
+            }
+            Page::DuelControls(slot) => {
+                use KeyCode::*;
+                let [left, right, select] = if slot == 0 {
+                    [KeyA, KeyD, Space]
+                } else {
+                    [ArrowLeft, ArrowRight, Comma]
+                };
+                if key(Enter) || key(Escape) || key(select) {
+                    self.page = Page::DuelOptions(0);
+                } else if key(left) {
+                    self.duel_layouts[slot] = self.duel_layouts[slot].saturating_sub(1);
+                } else if key(right) {
+                    self.duel_layouts[slot] = (self.duel_layouts[slot] + 1).min(3);
                 }
             }
             Page::MainOptions(row) => {
@@ -826,6 +1026,10 @@ pub fn show(
         title_row: 0,
         duel_cars: [0, 1],
         duel_stage: 0,
+        duel_layouts: [1; 2],
+        battlegrounds: (1..=6)
+            .map(|i| screen::background(&disc.read(&format!("UASCREEN/SCRNE3{i}.TIM"))?))
+            .collect::<Result<_>>()?,
         duel_art: screen::background(&disc.read("UASCREEN/SCRNE2.TIM")?)?,
         history_from_menu: false,
         soundtrack: 0,
@@ -997,7 +1201,7 @@ pub fn update(world: &mut World) {
         if expired {
             menu.page = menu.after_password();
         }
-        let animate = if menu.page == Page::Contest {
+        let animate = if matches!(menu.page, Page::Contest | Page::DuelJoin | Page::DuelGarage{bio:false,..}) {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
@@ -1035,6 +1239,14 @@ pub fn update(world: &mut World) {
                 if window.title != title {
                     window.title = title;
                 }
+            } else if menu.page == Page::DuelJoin {
+                window.title = "TM1 • First pick   |   Player 1: Space   Player 2: Comma".into();
+            } else if let Page::DuelGarage {slot, ..} = menu.page {
+                window.title = if slot == 0 {
+                    "TM1 • Player 1   |   A/D Car   W/S Menu   Space Select"
+                } else {
+                    "TM1 • Player 2   |   ← → Car   ↑ ↓ Menu   Comma Select"
+                }.into();
             } else if menu.page==Page::Password {
                 window.title="TM1 • Password   |   1 Triangle   2 Square   3 Cross   4 Circle   Space Blank   Enter Accept".into();
             } else if window.title != "TM1" {
@@ -1120,7 +1332,8 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         let mut world = menu_world();
         for key in [
-            ArrowDown, Enter, ArrowRight, Enter, ArrowRight, Enter, ArrowRight, Enter, Enter,
+            ArrowDown, Enter, Space, KeyD, Space, ArrowRight, Comma, ArrowDown, Enter, ArrowDown,
+            ArrowRight, Enter, Escape, ArrowUp, Enter,
         ] {
             press(&mut world, key);
         }
@@ -1154,6 +1367,45 @@ mod tests {
         crate::duel::round_menu(&mut world);
         assert!(world.resource::<Contest>().page == Page::Title);
         assert!(!world.contains_resource::<crate::duel::Duel>());
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn second_player_first_pick_and_independent_layouts() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, ArrowDown);
+        press(&mut world, Enter);
+        let mut keys = ButtonInput::default();
+        keys.press(Space);
+        keys.press(Comma);
+        world.insert_resource(keys);
+        update(&mut world);
+        press(&mut world, Space);
+        press(&mut world, ArrowDown);
+        press(&mut world, Comma);
+        assert!(matches!(
+            world.resource::<Contest>().page,
+            Page::DuelGarage {
+                slot: 1,
+                bio: true,
+                ..
+            }
+        ));
+        for key in [Comma, ArrowUp, Comma, KeyA] {
+            press(&mut world, key);
+        }
+        assert_eq!(
+            world.resource::<Contest>().duel_cars,
+            [Vehicle::CARD_ORDER.len() - 1, 0]
+        );
+        for key in [
+            KeyD, Space, ArrowDown, Enter, Comma, ArrowRight, Comma, Space, KeyA, Escape,
+        ] {
+            press(&mut world, key);
+        }
+        let menu = world.resource::<Contest>();
+        assert!(menu.page == Page::DuelOptions(0));
+        assert_eq!(menu.duel_layouts, [0, 2]);
     }
     fn password(world: &mut World, keys: &[KeyCode]) {
         press(world, KeyCode::KeyP);
