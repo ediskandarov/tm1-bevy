@@ -1382,8 +1382,6 @@ fn draw_view(
                 53 => (&arena.explosion_frames[(2 - ttl) as usize], 8),
                 44..=50 => (&arena.burn_frames[(kind - 44 + 2 - ttl) as usize], 8),
                 38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
-                35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
-                27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
                 56 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 4),
                 28 | 37 | 55 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
                 29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
@@ -1452,6 +1450,32 @@ fn draw_view(
         (204, [160, 120])
     };
     let pixel_scale = focal / lens as f32;
+    let mut fire = [[0; 4]; 80];
+    let fire_count = contacts.ground_fire(view.secondary, &mut fire);
+    for &[x, y, z, frame] in &fire[..fire_count] {
+        let [base, top] = [[x, y, z], [x, y, z + 80]].map(|p| {
+            let q = camera_point(p);
+            [q.x as i32, -q.y as i32, q.z as i32]
+        });
+        let Some(corners) =
+            player.ground_fire_quad(base, top, [lens; 2], center, arena.flame_frames[0].width)
+        else {
+            continue;
+        };
+        let sprite = &arena.flame_frames[frame as usize];
+        let tile = arena.tiles[&(Some(sprite.texture), true)];
+        // The original moves fire eight ordering-table buckets toward the camera.
+        let depth = ((base[2].max(8) - 64) as f32).max(near + 0.01);
+        for &i in indices(4) {
+            let [u, v] = corners[i];
+            let offset = right * u as f32 - up * v as f32;
+            additive.push(
+                eye + forward * depth + offset * (depth * pixel_scale / focal),
+                arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
+                [1.; 4],
+            );
+        }
+    }
     let mut fragments = [[0; 5]; 20];
     let fragment_count = contacts.fragment_poses(view.secondary, &mut fragments);
     for &[x, y, z, variant, phase] in &fragments[..fragment_count] {

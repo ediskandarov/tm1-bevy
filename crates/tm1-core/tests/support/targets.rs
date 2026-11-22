@@ -21,6 +21,9 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
             if matches!(kind, 751 | 756 | 760 | 772 | 773 | 775..=778 | 781 | 782) {
                 pedestrians.push((kind, cpu.r[5]));
             }
+            if kind == 650 {
+                sprite_loads.push((0x80137748, cpu.r[5], 0));
+            }
             if matches!(kind, 301 | 302 | 308 | 309) {
                 sprite_loads.push((0x8010c108, kind, cpu.r[5]));
             } else if matches!(kind, 670 | 671) {
@@ -38,8 +41,8 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
         });
     }
     cpu.put(PROCESS, &original);
-    for (load, kind, node) in sprite_loads {
-        cpu.call(load, &[kind, node]);
+    for (load, arg0, arg1) in sprite_loads {
+        cpu.call(load, &[arg0, arg1]);
     }
     for i in 0..50 {
         cpu.put(0x801ac968 + i * 28 + 8, &u32::MAX.to_le_bytes());

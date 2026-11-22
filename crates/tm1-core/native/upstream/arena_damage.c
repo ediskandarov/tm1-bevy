@@ -535,7 +535,7 @@ void UpdateCarDeath(Car* car, u8 isPlayer)
                 pos.vy = m->pos.vy;
                 pos.vz = m->pos.vz;
                 pos.vz = t->unk24;
-                arena_effect(&pos, 27);
+                arena_effect(&pos, 35);
                 f[20] = 0;
             }
         } else {

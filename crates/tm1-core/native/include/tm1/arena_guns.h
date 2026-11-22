@@ -94,6 +94,7 @@ void arena_regenerate_pickups(void);
 
 void arena_move_fragments(void);
 void arena_capture_fragments(void);
+void arena_animate_ground_fire(void);
 
 void arena_ai_weapon_profile(AICar* car);
 

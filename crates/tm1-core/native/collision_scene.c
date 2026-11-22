@@ -98,6 +98,8 @@ typedef struct CollisionScene {
     Cs missile_cs[10];
     s32 effects[80][5];
     size_t next_effect;
+    s32 primary_fire[80][4];
+    size_t primary_fire_count;
 } CollisionScene;
 
 static bool load(CollisionScene* s, u32 addr, size_t offset, void* out, size_t n)
@@ -709,6 +711,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->drawn_bullet_count = 0;
     memset(s->effects, 0, sizeof s->effects);
     s->next_effect = 0;
+    s->primary_fire_count = 0;
     s->has_temporary_hole = false;
     s->pothole_fields = 0;
     memset(&s->temporary_hole, 0, sizeof(PotHole));
@@ -1487,7 +1490,6 @@ void arena_effect(VECTOR3* pos, s32 kind)
     case 35: e[4] = 104; break;
     case 31: e[4] = 24; break;
     case 32: e[4] = 16; break;
-    case 27: e[4] = 8; break;
     case 28:
     case 37: e[4] = 32; break;
     case 29:
@@ -1501,7 +1503,7 @@ void tm1_age_effects(void)
         current->carry_notice_frames--;
     for (int i = 0; i < 80; i++) {
         s32* e = current->effects[i];
-        if (e[4] <= 0)
+        if (e[4] <= 0 || e[3] == 35)
             continue;
         if (e[3] == 8 || e[3] == 34)
             e[2] += 10;
@@ -1510,6 +1512,41 @@ void tm1_age_effects(void)
         e[4]--;
     }
 }
+static size_t copy_ground_fire(const CollisionScene* scene, int secondary, s32 (*out)[4])
+{
+    size_t n = 0;
+    for (int i = 0; i < 80; i++) {
+        const s32* e = scene->effects[i];
+        if (e[3] != 35 || e[4] <= 0)
+            continue;
+        int age = 104 - e[4];
+        // draw_explosions skips age one on the secondary view of the last loop.
+        if (secondary && age == 97)
+            continue;
+        s32 row[] = {e[0], e[1], e[2], age & 7};
+        memcpy(out[n++], row, sizeof(row));
+    }
+    return n;
+}
+
+void arena_animate_ground_fire(void)
+{
+    for (int i = 0; i < 80; i++) {
+        s32* e = current->effects[i];
+        if (e[3] == 35 && e[4] > 0)
+            e[4]--;
+    }
+    current->primary_fire_count = copy_ground_fire(current, 0, current->primary_fire);
+}
+
+size_t tm1_ground_fire(const CollisionScene* scene, int secondary, s32 (*out)[4])
+{
+    if (secondary)
+        return copy_ground_fire(scene, 1, out);
+    memcpy(out, scene->primary_fire, scene->primary_fire_count * sizeof(*out));
+    return scene->primary_fire_count;
+}
+
 void explodeCreateFragments(s32 count, VECTOR3* pos)
 {
     if (!current)

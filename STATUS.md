@@ -19,6 +19,10 @@ A disc-backed test executes the original bullet renderer for ten projectile type
 
 Fragments use the two four-frame texture sequences selected by EXPLODE.c. The main camera sees fragments immediately after their physics update. The mirror and second duel view also see any debris created during the subsequent vehicle updates. Encounter replays compare position, animation selection and frame for both views. A separate JP rendering test checks the raw textured quad, its corners, UVs, texture page and palette across both sequences, including the original depth and screen cutoffs. The Arena replay with Yellow Jacket shows debris at the barrier on update 134 (`--demo-screenshot local/arena-car-fragments.png 134`).
 
+## Ground fire
+
+Wrecks and special-weapon impacts use the same eight-frame flame sequence. It repeats thirteen times over 104 updates. The renderer projects a strip between the impact position and a point 80 units above it using the original angle tables. A disc-backed test checks both cameras against the JP GPU commands over 105 updates, including the frame omitted from the secondary view in the final loop. The Warehouse capture uses Sweet Tooth with `--demo-special-screenshot local/warehouse-ground-fire.png 210`.
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact.

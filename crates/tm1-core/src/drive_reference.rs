@@ -987,7 +987,7 @@ fn special_bullet_effects_original() {
                 .filter(|e| {
                     matches!(
                         (e[3], e[4]),
-                        (1, 4) | (54, 2) | (28 | 37 | 55, 32) | (35, 104) | (8, 88)
+                        (1, 4) | (54, 2) | (28 | 37 | 55, 32) | (35, 103) | (8, 88)
                     )
                 })
                 .map(|e| (e[3], [e[0], e[1], e[2]]))
@@ -2138,6 +2138,100 @@ fn fragment_draw_packets_original() {
                 assert_eq!((cpu.word(packet + 12) >> 16) as u16, sprite.texture.clut);
                 assert_eq!((cpu.word(packet + 20) >> 16) as u16, sprite.texture.page);
             }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn ground_fire_matches_retail_packets() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let frames = tm1_assets::scene::Dmd::parse(&data)
+        .unwrap()
+        .flame_frames()
+        .unwrap();
+    let mut r = Reference::build(Vehicle::YellowJacket, true);
+    r.cpu.call(0x80137268, &[]);
+    let pos = [32, 400, 36];
+    for (k, n) in pos.into_iter().enumerate() {
+        put(&mut r.cpu, VIEW_OUTPUT + k as u32 * 4, n as u32);
+    }
+    r.cpu.call(0x80136e18, &[VIEW_OUTPUT]);
+    {
+        let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe extern "C" {
+            fn arena_effect(p: *const i32, kind: i32);
+        }
+        unsafe {
+            tm1_use_scene(r.scene.native.as_ptr());
+            arena_effect(pos.as_ptr(), 35);
+            tm1_use_scene(std::ptr::null_mut());
+        }
+    }
+    let ot = 0x80010000;
+    let packet = RENDER_SCRATCH + 0x100;
+    put(&mut r.cpu, RENDER_SCRATCH, ot);
+    put(&mut r.cpu, RENDER_SCRATCH + 12, packet + 256);
+    for update in 1..=105 {
+        r.cpu.call(0x801360bc, &[]);
+        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+        for view in 0..=1 {
+            let m = r.cpu.call(0x8010af70, &[view]);
+            let matrix = crate::math::Matrix {
+                rotation: if update % 2 == 0 {
+                    [[4096, 0, 0], [0, 0, -4096], [0, 4096, 0]]
+                } else {
+                    [[2896, 0, 2896], [2896, 0, -2896], [0, 4096, 0]]
+                },
+                ..Default::default()
+            };
+            for (i, v) in matrix.rotation.iter().flatten().enumerate() {
+                r.cpu.put(m + i as u32 * 2, &v.to_le_bytes());
+            }
+            let translation = r.cpu.call(0x8010af54, &[view]);
+            r.cpu.put(translation, &[0; 12]);
+            r.cpu
+                .call(0x8010aed4, &[view, VIEW_OUTPUT, VIEW_OUTPUT + 4]);
+            let center = [0, 4].map(|k| r.cpu.word(VIEW_OUTPUT + k) as i32);
+            let focal = [0x80109e3c, 0x80109e74].map(|f| r.cpu.call(f, &[view]) as i32);
+            put(&mut r.cpu, RENDER_SCRATCH + 8, packet);
+            r.cpu.call(0x80136288, &[RENDER_SCRATCH, view]);
+            let count = (r.cpu.word(RENDER_SCRATCH + 8) - packet) / 160;
+            let mut fire = [[0; 4]; 80];
+            assert_eq!(
+                r.scene.ground_fire(view == 1, &mut fire),
+                count as usize,
+                "update {update}, view {view}"
+            );
+            if count == 0 {
+                continue;
+            }
+            assert_eq!(count, 1);
+            let [x, y, z, phase] = fire[0];
+            assert_eq!([x, y, z], pos);
+            let [base, top] =
+                [[x, y, z], [x, y, z + 80]].map(|p| crate::math::multiply(&matrix, p, false));
+            let corners = r
+                .player
+                .ground_fire_quad(base, top, focal, center, frames[0].width)
+                .unwrap();
+            for (i, [u, v]) in corners.into_iter().enumerate() {
+                let xy = r.cpu.word(packet + 8 + i as u32 * 8);
+                assert_eq!(
+                    [u + center[0], v + center[1]],
+                    [xy as i16 as i32, (xy >> 16) as i16 as i32],
+                    "update {update} view {view} corner {i}"
+                );
+                let uv = r.cpu.word(packet + 12 + i as u32 * 8);
+                assert_eq!(frames[phase as usize].uv[i], [uv as u8, (uv >> 8) as u8]);
+            }
+            assert_eq!(r.cpu.word(packet + 4) >> 24, 0x2f);
+            let bucket = ((base[2] >> 3) - 8).max(0);
+            assert_eq!(
+                r.cpu.word(ot + 4 * bucket as u32) & 0xffffff,
+                packet & 0xffffff
+            );
         }
     }
 }

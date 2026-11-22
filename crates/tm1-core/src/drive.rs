@@ -581,19 +581,54 @@ impl PlayerVehicle {
     pub fn frame(&self) -> u32 {
         self.frame
     }
+    fn sine(&self, angle: i32) -> i32 {
+        let phase = (angle & 4095) as usize;
+        let i = phase & 1023;
+        let v = i32::from(self.trig[if phase & 1024 == 0 { i } else { 1024 - i }]);
+        if phase & 2048 == 0 { v } else { -v }
+    }
+    /// EXPLODE.c projects the top of the fire using the depth of its base.
+    pub fn ground_fire_quad(
+        &self,
+        base: [i32; 3],
+        top: [i32; 3],
+        focal: [i32; 2],
+        center: [i32; 2],
+        width: u8,
+    ) -> Option<[[i32; 2]; 4]> {
+        if !(-32..=32000).contains(&base[2]) {
+            return None;
+        }
+        let depth = base[2].max(8);
+        let project = |p: [i32; 3]| [p[0] * focal[0] / depth, p[1] * focal[1] / depth];
+        let [x, y] = project(base);
+        if !(-99..1000).contains(&(x + center[0])) || !(-99..1000).contains(&(y + center[1])) {
+            return None;
+        }
+        let [tx, ty] = project(top);
+        let size = ((i32::from(width) * 12 * focal[0] / depth) >> 3).clamp(1, 512);
+        unsafe extern "C" {
+            fn tm1_fire_angle(tables: *const i16, dy: i32, dx: i32) -> i32;
+        }
+        let angle = unsafe { tm1_fire_angle(self.trig.as_ptr(), ty - y, tx - x) };
+        let sin = self.sine(angle);
+        let cos = self.sine(angle + 1024);
+        let dx = (cos - sin) * size >> 12;
+        let dy = (cos + sin) * size >> 12;
+        Some([
+            [tx - dx, ty - dy],
+            [tx + dx, ty + dy],
+            [x - dx, y - dy],
+            [x + dx, y + dy],
+        ])
+    }
     /// HUD.c projects horizontal world offsets into the 72 by 44 radar field.
     pub fn radar_offset(&self, position: [i32; 3]) -> [i32; 2] {
         let origin = self.position();
         let dx = position[0].wrapping_sub(origin[0]);
         let dy = position[1].wrapping_sub(origin[1]);
-        let sin = |angle: i32| {
-            let phase = (angle & 4095) as usize;
-            let i = phase & 1023;
-            let v = i32::from(self.trig[if phase & 1024 == 0 { i } else { 1024 - i }]);
-            if phase & 2048 == 0 { v } else { -v }
-        };
-        let s = sin(self.heading());
-        let c = sin(self.heading().wrapping_add(1024));
+        let s = self.sine(self.heading());
+        let c = self.sine(self.heading().wrapping_add(1024));
         let x = dx.wrapping_mul(c).wrapping_sub(dy.wrapping_mul(s)) / 0x14d555;
         let y = dx
             .wrapping_mul(s)
@@ -1875,6 +1910,16 @@ impl Opponent {
 }
 
 impl CollisionScene {
+    pub fn ground_fire(&self, secondary: bool, out: &mut [[i32; 4]; 80]) -> usize {
+        unsafe extern "C" {
+            fn tm1_ground_fire(
+                scene: *mut std::ffi::c_void,
+                secondary: i32,
+                out: *mut [i32; 4],
+            ) -> usize;
+        }
+        unsafe { tm1_ground_fire(self.native.as_ptr(), i32::from(secondary), out.as_mut_ptr()) }
+    }
     pub fn fragment_poses(&self, second_view: bool, out: &mut [[i32; 5]; 20]) -> usize {
         unsafe extern "C" {
             fn tm1_fragment_poses(

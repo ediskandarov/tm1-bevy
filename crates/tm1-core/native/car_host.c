@@ -77,19 +77,27 @@ s32 rsin(s32 angle)
         index = 1024 - index;
     return (phase & 2048) ? -trig[index] : trig[index];
 }
-s32 ratan2(s32 y, s32 x)
+static s32 table_atan2(const s16* angles, s32 y, s32 x)
 {
     s32 ay = abs(y), ax = abs(x);
     if (!ay && !ax)
         return 0;
     s32 lo = ay < ax ? ay : ax, hi = ay < ax ? ax : ay;
     s32 idx = (lo & 0x7fe00000) ? lo / (hi >> 10) : (lo << 10) / hi;
-    s32 angle = ATAN_TABLE[idx];
+    s32 angle = angles[idx];
     if (ay >= ax)
         angle = 1024 - angle;
     if (x < 0)
         angle = 2048 - angle;
     return y < 0 ? -angle : angle;
+}
+s32 ratan2(s32 y, s32 x)
+{
+    return table_atan2(ATAN_TABLE, y, x);
+}
+s32 tm1_fire_angle(const s16* tables, s32 dy, s32 dx)
+{
+    return table_atan2(tables + (0x80188d58 - 0x80183f14) / 2, dy, dx) + 512;
 }
 void do_smoke(VECTOR3* pos)
 {
@@ -1011,6 +1019,7 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
         arena_move_fragments();
         arena_capture_fragments();
         arena_animate_flames();
+        arena_animate_ground_fire();
         tm1_capture_car_lights();
     } else {
         if (is_player && player->stats.unk38) {
