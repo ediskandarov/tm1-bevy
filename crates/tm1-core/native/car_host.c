@@ -300,40 +300,40 @@ static void init_vehicle_stats(CarStats* stats, s32 kind)
     }
 }
 
-static void set_player_start(PlayerCar* car)
+// CAR_INIT.c InitPlayerPositions. Split screen changes even the first
+// player's start on Freeway, City Park and Cyburbia.
+static void set_player_start(PlayerCar* car, int split)
 {
-    setVector(&car->motion.pos, 0, 0, 0);
-    setVector(&car->motion.rot, 0, 0, 0);
-    if (current_level == LEVEL2_WAREHOUSE) {
-        car->motion.pos.vx = -0x28a0;
-        car->motion.pos.vy = -0x11d0;
-        car->motion.rot.vz = car->motion.rot2.vz = 0xc1;
-    } else if (current_level == LEVEL6_ROOFTOPS) {
-        car->motion.pos.vx = 0x3cd8;
-        car->motion.pos.vy = 0x250;
-        car->motion.pos.vz = 0x1e50;
-        car->motion.rot.vz = car->motion.rot2.vz = -0x1c7;
-    } else if (current_level == LEVEL5_CYBURBIA) {
-        car->motion.pos.vx = 0x1c20;
-        car->motion.pos.vy = 0x2ee0;
-        car->motion.rot.vz = car->motion.rot2.vz = 0x400;
-    } else if (current_level == LEVEL4_CITY_PARK) {
-        car->motion.pos.vx = 0x12c0;
-        car->motion.pos.vy = -0x12c0;
-    } else if (current_level == LEVEL3_FREEWAY) {
-        car->motion.pos.vx = 0x1c20;
-        car->motion.pos.vy = -0x2390;
-        car->motion.rot.vz = car->motion.rot2.vz = 0x400;
-    } else {
-        car->motion.pos.vx = car->motion.pos.vy = 0x460;
-        car->motion.rot.vz = car->motion.rot2.vz = 0x200;
+    typedef struct { s16 x, y, z, heading; } Start;
+    static const Start starts[][2] = {
+        [LEVEL1_ARENA]     = {{0x460, 0x460, 0, 0x200}, {0xe60, 0xe60, 0, -0x600}},
+        [LEVEL2_WAREHOUSE] = {{-0x28a0, -0x11d0, 0, 0xc1}, {-0x2580, 0x960, 0, -0x400}},
+        [LEVEL3_FREEWAY]   = {{-0x4110, 0x1f40, 0, 0x800}, {-0x40e8, -0x17c0, 0, 0}},
+        [LEVEL4_CITY_PARK] = {{0x2580, 0xc0, 0, -0x400}, {0x12c0, 0xc0, 0, 0x400}},
+        [LEVEL5_CYBURBIA]  = {{0x3ea0, 0x1ef0, 0, 0x400}, {0x3de0, 0x690, 0, 0x400}},
+        [LEVEL6_ROOFTOPS]  = {{0x3cd8, 0x250, 0x1e50, -0x1c7}, {0x3520, 0x640, 0x1e50, 0x6aa}},
+    };
+    int level = current_level;
+    if (level < LEVEL1_ARENA || level > LEVEL6_ROOFTOPS)
+        level = LEVEL1_ARENA;
+    Start start = starts[level][car->playerIdx != 0];
+    if (!split) {
+        if (level == LEVEL3_FREEWAY)
+            start = (Start){0x1c20, -0x2390, 0, 0x400};
+        if (level == LEVEL4_CITY_PARK)
+            start = (Start){0x12c0, -0x12c0, 0, 0};
+        if (level == LEVEL5_CYBURBIA)
+            start = (Start){0x1c20, 0x2ee0, 0, 0x400};
     }
+    setVector(&car->motion.pos, start.x, start.y, start.z);
+    setVector(&car->motion.rot, 0, 0, start.heading);
     car->motion.rot2 = car->motion.rot;
 }
 
-void tm1_player_init(u8* state, u32* seed, s32 kind)
+void tm1_player_init(u8* state, u32* seed, s32 kind, int slot, int split)
 {
     PlayerCar car = { 0 };
+    car.playerIdx = slot;
     random_state = *seed;
     gFieldsLastFrame = 3;
     gUpdateRate = 20;
@@ -367,7 +367,7 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     car.stats.unk40 = car.stats.unk44;
     car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
     car.motion.mat = car.motion.mat2;
-    set_player_start(&car);
+    set_player_start(&car, split);
     memcpy(state, &car, sizeof(car));
 }
 
@@ -704,7 +704,7 @@ static void respawn_player(PlayerCar* car, int fov)
     init_motion_flags(car->flags);
     car->unk98 = car->unk99 = 0;
     setVector(&car->motion.vel, 0, 0, 0);
-    set_player_start(car);
+    set_player_start(car, 0);
     setVector(&car->motion.rotDelta, 0, 0, 0);
     setVector(&car->motion.rot2Delta, 0, 0, 0);
     car->motion.rot2 = car->motion.rot;

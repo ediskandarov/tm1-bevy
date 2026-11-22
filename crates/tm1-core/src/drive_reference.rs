@@ -3940,3 +3940,73 @@ fn hunt_and_battle_music_match_disc() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn split_screen_player_starts_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    cpu.call(0x800ffad8, &[1]);
+    for level in [
+        Level::Arena,
+        Level::Warehouse,
+        Level::Freeway,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Rooftops,
+        Level::Arena5,
+    ] {
+        put(&mut cpu, 0x8018c3b4, level as u32);
+        let players = PlayerVehicle::duel_players(
+            &exe,
+            [Vehicle::Outlaw, Vehicle::Darkside],
+            level,
+            1,
+            Difficulty::Medium,
+        )
+        .unwrap();
+        for (slot, car) in players.iter().enumerate() {
+            cpu.put(PLAYER + 0x388, &[0xff; 0x30]);
+            cpu.call(0x80122ea4, &[PLAYER, u32::from(slot == 0)]);
+            assert_eq!(car.state[2..4], (slot as u16).to_le_bytes());
+            for offset in [0x388, 0x38c, 0x390, 0x3a8, 0x3ac, 0x3b0, 0x3b4] {
+                assert_eq!(
+                    car.word(offset),
+                    cpu.word(PLAYER + offset as u32) as i32,
+                    "{level:?} player {slot} offset {offset:#x}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn duel_pad_routing_matches_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut cars = PlayerVehicle::duel_players(
+        &exe,
+        [Vehicle::YellowJacket; 2],
+        Level::Arena,
+        1,
+        Difficulty::Medium,
+    )
+    .unwrap();
+    for (tick, buttons) in [0x00000080, 0x00800000, 0xa0802080, 0x00000000]
+        .into_iter()
+        .enumerate()
+    {
+        cpu.call(0x800ffb98, &[2, buttons]);
+        put(&mut cpu, 0x8017023c, tick as u32 + 1);
+        for car in &mut cars {
+            cpu.put(PLAYER, &car.state);
+            cpu.call(0x801125ac, &[PLAYER]);
+            car.step_with_pads(buttons, 3);
+            let pad = (PLAYER & 0x1fffff) as usize + 0xc8;
+            assert_eq!(&car.state[0xc8..0xc8 + 44], &cpu.ram[pad..pad + 44]);
+        }
+    }
+}

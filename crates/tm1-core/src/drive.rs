@@ -5,7 +5,7 @@ unsafe extern "C" {
     fn tm1_bind_difficulty(difficulty: i32);
     fn tm1_campaign_player(state: *mut u8, table: *const i16, seed: *mut u32, new_life: i32);
     fn tm1_new_life(scene: *mut std::ffi::c_void);
-    fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
+    fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32, slot: i32, split: i32);
     fn tm1_drive_step(
         state: *mut u8,
         opponent: *mut u8,
@@ -357,6 +357,30 @@ impl PlayerVehicle {
         initial_seed: u32,
         difficulty: Difficulty,
     ) -> Option<Self> {
+        Self::initialize(exe, vehicle, level, initial_seed, difficulty, None)
+    }
+    /// Initialize the two player records in slot order using the shared PS1 RNG.
+    pub fn duel_players(
+        exe: &[u8],
+        vehicles: [Vehicle; 2],
+        level: Level,
+        seed: u32,
+        difficulty: Difficulty,
+    ) -> Option<[Self; 2]> {
+        let mut first = Self::initialize(exe, vehicles[0], level, seed, difficulty, Some(0))?;
+        let second = Self::initialize(exe, vehicles[1], level, first.seed, difficulty, Some(1))?;
+        first.initial_seed = second.seed;
+        first.seed = second.seed;
+        Some([first, second])
+    }
+    fn initialize(
+        exe: &[u8],
+        vehicle: Vehicle,
+        level: Level,
+        initial_seed: u32,
+        difficulty: Difficulty,
+        duel_slot: Option<i32>,
+    ) -> Option<Self> {
         if exe.get(..8)? != b"PS-X EXE" {
             return None;
         }
@@ -376,7 +400,13 @@ impl PlayerVehicle {
             unsafe {
                 tm1_bind_difficulty(difficulty as i32);
                 tm1_bind_level(level as i32);
-                tm1_player_init(state.as_mut_ptr(), &mut seed, vehicle as i32)
+                tm1_player_init(
+                    state.as_mut_ptr(),
+                    &mut seed,
+                    vehicle as i32,
+                    duel_slot.unwrap_or(0),
+                    i32::from(duel_slot.is_some()),
+                )
             };
         }
         Some(Self {
@@ -633,26 +663,22 @@ impl PlayerVehicle {
         i32::from_le_bytes(self.state[i..i + 4].try_into().unwrap())
     }
     pub fn step(&mut self, input: Input, fields: u8) {
-        self.step_in_scene(input, fields, std::ptr::null_mut(), None)
+        let slot = u16::from_le_bytes(self.state[2..4].try_into().unwrap());
+        self.step_with_pads(u32::from(input.ps1_buttons()) << (16 * slot), fields)
     }
-    fn step_in_scene(
-        &mut self,
-        input: Input,
-        fields: u8,
-        scene: *mut std::ffi::c_void,
-        opponent: Option<&mut PoliceCar>,
-    ) {
+    /// Advance driving dynamics with the original packed two-controller input.
+    pub fn step_with_pads(&mut self, buttons: u32, fields: u8) {
         assert!((1..=5).contains(&fields));
         self.frame = self.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(self.level as i32);
-            tm1_use_scene(scene);
+            tm1_use_scene(std::ptr::null_mut());
             tm1_drive_step(
                 self.state.as_mut_ptr(),
-                opponent.map_or(std::ptr::null_mut(), |car| car.state.as_mut_ptr()),
-                u32::from(input.ps1_buttons()),
+                std::ptr::null_mut(),
+                buttons,
                 fields.into(),
                 self.frame,
                 self.trig.as_ptr(),
