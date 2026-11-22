@@ -529,6 +529,10 @@ impl PlayerVehicle {
     pub fn random(&mut self) -> u32 {
         bios_rand(&mut self.seed)
     }
+    pub fn set_round_seed(&mut self, timer_ticks: u32) {
+        self.initial_seed = timer_ticks;
+        self.seed = timer_ticks;
+    }
     pub fn rng_state(&self) -> u32 {
         self.seed
     }

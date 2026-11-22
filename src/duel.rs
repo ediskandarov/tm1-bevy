@@ -36,7 +36,7 @@ pub struct Duel {
     pub scene: CollisionScene,
     remainder: Duration,
     focus: DuelFocus,
-    score: [u32; 2],
+    score: [i16; 2],
     pub(crate) settings: crate::pause::Settings,
     winner: Option<usize>,
     score_time_left: Duration,
@@ -126,12 +126,32 @@ fn accepts_input(duel: Res<Duel>) -> bool {
     matches!(duel.focus, DuelFocus::Playing)
 }
 
+fn round_ticks(world: &World) -> u32 {
+    if world
+        .get_resource::<Capture>()
+        .is_some_and(|capture| capture.demo)
+    {
+        return 1;
+    }
+    let time = world.resource::<Time<Real>>();
+    let elapsed = if matches!(
+        world.get_resource::<bevy::time::TimeUpdateStrategy>(),
+        Some(bevy::time::TimeUpdateStrategy::Automatic)
+    ) {
+        time.startup().elapsed()
+    } else {
+        time.elapsed()
+    };
+    // PS1 root counter 2 runs at the system clock divided by eight.
+    (elapsed.as_nanos() * 4_233_600 / 1_000_000_000) as u32
+}
+
 pub fn start(
     world: &mut World,
     level: Level,
     kinds: [Vehicle; 2],
     difficulty: Difficulty,
-    score: [u32; 2],
+    score: [i16; 2],
 ) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
     let stem = level
@@ -158,11 +178,22 @@ pub fn start(
         [first[0].root_id, second[0].root_id],
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported duel collision graph"))?;
-    let mut seed = 1;
+    let pedestrian_seed = world
+        .get_resource::<Duel>()
+        .map(|previous| previous.cars[0].rng_state())
+        .unwrap_or_else(|| round_ticks(world));
+    let mut seed = pedestrian_seed;
     scene.start_pedestrians(level, &mut seed);
-    let mut cars =
-        PlayerVehicle::duel_players(&disc.read("SIPS_600.07")?, kinds, level, seed, difficulty)
-            .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?;
+    // uaInitDB reseeds after loading the stage-specific objects.
+    let setup_seed = round_ticks(world);
+    let mut cars = PlayerVehicle::duel_players(
+        &disc.read("SIPS_600.07")?,
+        kinds,
+        level,
+        setup_seed,
+        difficulty,
+    )
+    .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?;
     let arena = campaign::arena_art(
         disc,
         level,
@@ -198,6 +229,12 @@ pub fn start(
     campaign::clear_stage(world);
     world.remove_resource::<crate::contest::Contest>();
     world.insert_resource(arena);
+    // InitLevel resets the shared BIOS generator once both cars are ready.
+    let battle_seed = round_ticks(world);
+    info!("Duel seeds: pedestrians={pedestrian_seed}, setup={setup_seed}, battle={battle_seed}");
+    for car in &mut cars {
+        car.set_round_seed(battle_seed);
+    }
     world.insert_resource(Duel {
         cars,
         cameras,
@@ -498,7 +535,7 @@ pub fn advance(
             camera.update(car, false);
         }
         if let Some(slot) = duel.winner {
-            duel.score[slot] += 1;
+            duel.score[slot] = duel.score[slot].wrapping_add(1);
             bank.play_score_engine(&mut commands, duel.settings.effects_gain());
         }
     }
@@ -586,6 +623,19 @@ pub fn round_menu(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn round_clock_wraps_and_capture_is_repeatable() {
+        use super::*;
+        let mut world = World::new();
+        world.init_resource::<Time<Real>>();
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(1_100_250));
+        assert_eq!(round_ticks(&world), 4_658_018_400u64 as u32);
+        world.insert_resource(Capture::new(None, true, false));
+        assert_eq!(round_ticks(&world), 1);
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn duel_focus_preserves_simulation_and_voices() {
@@ -741,6 +791,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             score_voices
         );
+        let previous_seed = world.resource::<Duel>().cars[0].rng_state();
         let remaining = world.resource::<Duel>().score_time_left;
         let mut schedule = Schedule::default();
         configure(&mut schedule);
@@ -795,6 +846,12 @@ mod tests {
         );
         let round = world.resource::<Duel>();
         assert_eq!(round.score, [2, 4]);
+        let expected_seed = round_ticks(&world);
+        assert_ne!(expected_seed, previous_seed);
+        assert_eq!(
+            round.cars.each_ref().map(PlayerVehicle::rng_state),
+            [expected_seed; 2]
+        );
         assert!(round.winner.is_none());
         for (slot, car) in round.cars.iter().enumerate() {
             assert_eq!(car.position(), initial_positions[slot]);

@@ -117,6 +117,10 @@ impl Cpu {
                         .wrapping_add(12345);
                     (self.random_state >> 16) & 32767
                 }
+                0x30 => {
+                    self.random_state = self.r[4];
+                    0
+                }
                 id => panic!("unexpected BIOS A0 call {id:x}"),
             };
             self.pc = self.r[31];

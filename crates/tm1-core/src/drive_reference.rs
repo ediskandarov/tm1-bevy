@@ -5406,6 +5406,44 @@ fn duel_stages_from_disc() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn duel_round_reseeds_from_retail_timer() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut cars = PlayerVehicle::duel_players(
+        &exe,
+        [Vehicle::YellowJacket, Vehicle::Outlaw],
+        Level::Arena,
+        1,
+        Difficulty::Medium,
+    )
+    .unwrap();
+    // Run the final GetCurTics/srand calls of uaInitDB and InitLevel. Only the
+    // physical counter read is supplied; GetCurTics combines it with gTotalTics.
+    for (entry, total, counter) in [
+        (0x8014b6fc, 65535u32, 7u16),
+        (0x8014c2fc, 0xffff_ff00, 0x345),
+    ] {
+        put(&mut cpu, 0x80170240, total);
+        put(&mut cpu, 0x80162f40, 0x03e00008);
+        put(&mut cpu, 0x80162f44, 0x34020000 | u32::from(counter));
+        cpu.call_until(entry, &[], entry + 16);
+        let ticks = total.wrapping_add(u32::from(counter));
+        assert_eq!(cpu.random_state, ticks);
+        let draws: Vec<_> = (0..32).map(|_| cpu.call(0x80154898, &[])).collect();
+        for car in &mut cars {
+            car.set_round_seed(ticks);
+            for &draw in &draws {
+                assert_eq!(car.random(), draw);
+            }
+            car.reset();
+            assert_eq!(car.random(), draws[0]);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn duel_winner_and_return_delay_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
