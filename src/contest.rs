@@ -225,13 +225,13 @@ impl Contest {
     fn sync_theme(&mut self, world: &mut World) {
         use crate::garage::GarageSound;
         let sound = match self.page {
-            Page::Contest
-            | Page::Bio
-            | Page::Battle(_)
+            Page::Contest | Page::Bio => Some(GarageSound::Vehicle(self.vehicle)),
+            Page::Battle(_)
             | Page::Options(_)
             | Page::Controls
             | Page::Password
-            | Page::Wrong(_) => Some(GarageSound::Vehicle(self.vehicle)),
+            | Page::Wrong(_)
+            | Page::BossPreview(_) => Some(GarageSound::Engine(Vehicle::CARD_ORDER[self.vehicle])),
             // The title clears gVehicleID. The fallback sound ID 0x52
             // plays the same engine as Crimson Fury.
             Page::DuelJoin(_) => Some(GarageSound::Engine(Vehicle::CrimsonFury)),
@@ -1453,10 +1453,13 @@ mod tests {
             .read("SND/UACORE.VAB")
             .unwrap();
         let expected = EngineSample::load(&bank, car).unwrap();
-        assert!(!voices.is_empty());
-        assert_eq!(voices.len(), expected.len());
-        for (&entity, tone) in voices.iter().zip(expected) {
-            let player = world.get::<AudioPlayer<StereoPcm>>(entity).unwrap();
+        let engines: Vec<_> = voices
+            .iter()
+            .filter_map(|&entity| world.get::<AudioPlayer<StereoPcm>>(entity))
+            .collect();
+        assert!(!engines.is_empty());
+        assert_eq!(engines.len(), expected.len());
+        for (player, tone) in engines.into_iter().zip(expected) {
             let clip = world
                 .resource::<Assets<StereoPcm>>()
                 .get(&player.0)
@@ -2259,6 +2262,43 @@ mod tests {
         press(&mut world, KeyCode::Enter);
         assert!(world.resource::<Contest>().page == Page::Title);
         assert!(world.resource::<Contest>().cinema.is_some());
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn campaign_setup_retains_showroom_audio_and_direct_entry_only_starts_the_motor() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        open_garage(&mut world, true);
+        let voices = assert_menu_engine(&world, Vehicle::YellowJacket);
+        assert!(
+            voices
+                .iter()
+                .all(|&entity| world.get::<AudioPlayer<AudioSource>>(entity).is_none())
+        );
+
+        open_garage(&mut world, false);
+        press(&mut world, ArrowRight);
+        let vehicle = Vehicle::CARD_ORDER[world.resource::<Contest>().vehicle];
+        let showroom = assert_menu_engine(&world, vehicle);
+        assert_eq!(
+            showroom
+                .iter()
+                .filter(|&&entity| world.get::<AudioPlayer<AudioSource>>(entity).is_some())
+                .count(),
+            1
+        );
+        for key in [ArrowDown, Enter, Enter, ArrowUp, Enter] {
+            press(&mut world, key);
+            assert!(
+                world
+                    .resource::<Contest>()
+                    .garage
+                    .voices()
+                    .eq(showroom.iter().copied())
+            );
+        }
+        assert_eq!(world.resource::<Contest>().page, Page::Battle(0));
     }
 
     #[test]

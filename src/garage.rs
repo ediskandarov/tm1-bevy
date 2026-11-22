@@ -86,6 +86,14 @@ impl Garage {
         if self.voices.as_ref().map(|v| v.0) == sound {
             return;
         }
+        // The shell requests the same rev after the showroom. Its looping
+        // channels keep their phase and the one-shot signature can finish.
+        if let (Some((current, _)), Some(GarageSound::Engine(car))) = (&mut self.voices, sound)
+            && *current == GarageSound::Vehicle(car.card_index())
+        {
+            *current = GarageSound::Engine(car);
+            return;
+        }
         if let Some((_, voices)) = self.voices.take() {
             for entity in voices {
                 world.despawn(entity);
