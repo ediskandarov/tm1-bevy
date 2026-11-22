@@ -1427,7 +1427,13 @@ pub struct ParticleFrame {
     pub first: usize,
     pub frame: usize,
     pub scale: i32,
-    pub depth_bias: i32,
+    depth_bias: i32,
+}
+
+impl ParticleFrame {
+    pub fn ordering_bucket(&self, camera_z: i32) -> u32 {
+        ((camera_z.max(8) - self.depth_bias).max(0) as u32) >> 3
+    }
 }
 
 pub fn particle_frame(kind: i32, ticks: i32) -> Option<ParticleFrame> {
@@ -1471,7 +1477,7 @@ pub fn project_taser_point(
     [x, y, z]: [i32; 3],
     focal: [i32; 2],
     center: [i32; 2],
-) -> Option<[i32; 2]> {
+) -> Option<(u32, [i32; 2])> {
     if !(4..16364).contains(&z) {
         return None;
     }
@@ -1479,7 +1485,7 @@ pub fn project_taser_point(
     xy.into_iter()
         .zip(center)
         .all(|(v, c)| (-4000..=4000).contains(&v.wrapping_add(c)))
-        .then_some(xy)
+        .then_some((z as u32 >> 2, xy))
 }
 
 /// INTERACT.c culls the drop center before projecting either kind of quad.
@@ -1510,7 +1516,7 @@ pub fn project_fragment(
     camera: [i32; 3],
     focal: [i32; 2],
     center: [i32; 2],
-) -> Option<[[i32; 2]; 4]> {
+) -> Option<(u32, [[i32; 2]; 4])> {
     if !(-32..=32000).contains(&camera[2]) {
         return None;
     }
@@ -1521,12 +1527,15 @@ pub fn project_fragment(
         return None;
     }
     let radius = 10 * focal[0] / depth;
-    Some([
-        [x - radius, y - radius],
-        [x + radius, y - radius],
-        [x - radius, y + radius],
-        [x + radius, y + radius],
-    ])
+    Some((
+        depth as u32 >> 3,
+        [
+            [x - radius, y - radius],
+            [x + radius, y - radius],
+            [x - radius, y + radius],
+            [x + radius, y + radius],
+        ],
+    ))
 }
 
 #[must_use]

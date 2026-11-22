@@ -1382,6 +1382,7 @@ fn draw_view(
         (204, [160, 120])
     };
     let pixel_scale = focal / lens as f32;
+    let bucket_depth = |bucket: u32, units: u32| ((bucket * units) as f32).max(near + 0.01);
     let drop_camera = |p: Vec3| {
         let d = p - eye;
         [
@@ -1484,7 +1485,7 @@ fn draw_view(
         };
         let sprite = &frames[particle.frame];
         let tile = arena.tiles[&(Some(sprite.texture), true)];
-        let depth = ((base[2].max(8) - particle.depth_bias) as f32).max(near + 0.01);
+        let depth = bucket_depth(particle.ordering_bucket(base[2]), 8);
         let tint = if kind == 55 {
             [0.5, 0.5, 255. / 128., 1.]
         } else {
@@ -1510,12 +1511,13 @@ fn draw_view(
     for &[x, y, z, variant, phase] in &fragments[..fragment_count] {
         let camera = camera_point([x, y, z]);
         let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
-        let Some(corners) = tm1_core::drive::project_fragment(coords, [lens; 2], center) else {
+        let Some((bucket, corners)) = tm1_core::drive::project_fragment(coords, [lens; 2], center)
+        else {
             continue;
         };
         let sprite = &arena.fragment_frames[variant as usize][phase as usize];
         let tile = arena.tiles[&(Some(sprite.texture), false)];
-        let draw_depth = (coords[2].max(8) as f32).max(near + 0.01);
+        let draw_depth = bucket_depth(bucket, 8);
         for &i in indices(4) {
             let [u, v] = corners[i];
             let offset = right * u as f32 - up * v as f32;
@@ -1530,10 +1532,10 @@ fn draw_view(
         let points = arc.map(|p| {
             let camera = camera_point(p);
             let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
-            let [x, y] = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
+            let (bucket, [x, y]) = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
             Some((
                 Vec2::new(x as f32, -y as f32) * pixel_scale,
-                coords[2] as f32,
+                bucket_depth(bucket, 4),
             ))
         });
         for (j, segment) in points.windows(2).enumerate() {
@@ -1548,7 +1550,7 @@ fn draw_view(
             quad(
                 &mut solids,
                 [a - normal, a + normal, b - normal, b + normal],
-                depth.max(near + 0.01),
+                depth,
                 colors,
             );
         }
@@ -1564,7 +1566,7 @@ fn draw_view(
             continue;
         };
         let screen = |[x, y]: [i32; 2]| Vec2::new(x as f32, -y as f32) * pixel_scale;
-        let depth = ((bucket * 8) as f32).max(near + 0.01);
+        let depth = bucket_depth(bucket, 8);
         let vertex = |point: Vec2| {
             eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
         };

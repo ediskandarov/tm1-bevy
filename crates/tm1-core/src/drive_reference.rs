@@ -2355,6 +2355,7 @@ fn outlaw_taser_draw_packets_original() {
         }
         cpu.put(taser + 8, &2i16.to_le_bytes());
         put(&mut cpu, RENDER_SCRATCH + 8, packet);
+        cpu.put(ot, &[0xff; 4096 * 4]);
         let mut points = Vec::new();
         cpu.call_observed(0x801333d0, &[RENDER_SCRATCH, 0], 0x80000080, |cpu| {
             if cpu.pc() == 0x800fe9c4 {
@@ -2365,7 +2366,7 @@ fn outlaw_taser_draw_packets_original() {
         let mut next = packet;
         let mut buckets = std::collections::BTreeMap::new();
         for (j, pair) in points.windows(2).enumerate() {
-            let [Some(a), Some(b)] =
+            let [Some((_, a)), Some((bucket, b))] =
                 [pair[0], pair[1]].map(|p| project_taser_point(p, focal, center))
             else {
                 continue;
@@ -2382,12 +2383,13 @@ fn outlaw_taser_draw_packets_original() {
                     u32::from_le_bytes([level, level, 255, 0])
                 );
             }
-            buckets.insert(pair[1][2] / 4, next);
+            let previous = buckets.insert(bucket, next).unwrap_or(0xffffff);
+            assert_eq!(cpu.word(next) & 0xffffff, previous & 0xffffff);
             next += 80;
         }
         assert_eq!(cpu.word(RENDER_SCRATCH + 8), next);
         for (bucket, last) in buckets {
-            assert_eq!(cpu.word(ot + bucket as u32 * 4) & 0xffffff, last & 0xffffff);
+            assert_eq!(cpu.word(ot + bucket * 4) & 0xffffff, last & 0xffffff);
         }
         full |= next == packet + 15 * 80;
         partial |= next > packet && next < packet + 15 * 80;
@@ -2506,7 +2508,7 @@ fn fragment_draw_packets_original() {
         for (phase, sprite) in frames.iter().enumerate() {
             cpu.put(f + 24, &[phase as u8]);
             for pos in [
-                [-26, 17, 240],
+                [-26, 17, 247],
                 [0, 0, -33],
                 [0, 0, -32],
                 [0, 0, 7],
@@ -2518,13 +2520,18 @@ fn fragment_draw_packets_original() {
                     put(cpu, f + axis as u32 * 4, value as u32);
                 }
                 put(cpu, RENDER_SCRATCH + 8, packet);
+                cpu.put(0x80010000, &[0xff; 4096 * 4]);
                 cpu.call(0x80137e7c, &[RENDER_SCRATCH, 0]);
                 let emitted = cpu.word(RENDER_SCRATCH + 8) != packet;
                 let corners = project_fragment(pos, focal, center);
                 assert_eq!(emitted, corners.is_some(), "{pos:?}");
-                let Some(corners) = corners else {
+                let Some((bucket, corners)) = corners else {
                     continue;
                 };
+                assert_eq!(
+                    cpu.word(0x80010000 + 4 * bucket) & 0xffffff,
+                    packet & 0xffffff
+                );
                 assert_eq!(cpu.word(packet + 4) >> 24, 0x2d);
                 for (i, [x, y]) in corners.into_iter().enumerate() {
                     let xy = cpu.word(packet + 8 + i as u32 * 8);
@@ -2573,7 +2580,7 @@ fn verify_particle_packets(kind: i32, routine: u32, duration: i32) {
     };
     let mut r = Reference::build(Vehicle::YellowJacket, true);
     r.cpu.call(0x80137268, &[]);
-    let pos = [32, if kind == 8 { 3200 } else { 400 }, 36];
+    let pos = [32, if kind == 8 { 3205 } else { 405 }, 36];
     let ot = 0x80010000;
     let packet = RENDER_SCRATCH + 0x100;
     put(&mut r.cpu, RENDER_SCRATCH, ot);
@@ -2683,7 +2690,7 @@ fn verify_particle_packets(kind: i32, routine: u32, duration: i32) {
                 (r.cpu.word(packet + 20) >> 16) as u16,
                 frames[phase].texture.page
             );
-            let bucket = ((base[2] >> 3) - sprite.depth_bias / 8).max(0);
+            let bucket = sprite.ordering_bucket(base[2]);
             assert_eq!(
                 r.cpu.word(ot + 4 * bucket as u32) & 0xffffff,
                 packet & 0xffffff
