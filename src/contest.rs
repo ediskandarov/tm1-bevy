@@ -1572,7 +1572,36 @@ mod tests {
         }
         assert_eq!(positions(&world), start);
         assert_eq!(active_engines(&mut world), 0);
+        step(&mut world, &[ShiftRight, ArrowUp]);
+        assert_eq!(
+            world.resource::<duel::Duel>().pause,
+            Some(Pause::Choices(0))
+        );
+        step(&mut world, &[]);
+        step(&mut world, &[Space, ArrowUp]);
+        assert_eq!(
+            world.resource::<duel::Duel>().pause,
+            Some(Pause::Choices(3))
+        );
+        step(&mut world, &[]);
+        step(&mut world, &[ArrowDown]);
+        step(&mut world, &[]);
+        step(&mut world, &[Space, Slash]);
+        step(&mut world, &[Slash]);
+        assert_eq!(
+            world.resource::<duel::Duel>().pause,
+            Some(Pause::Choices(0))
+        );
+        assert_eq!(positions(&world), start);
+        assert_eq!(active_engines(&mut world), 0);
+        step(&mut world, &[]);
+        assert!(world.resource::<duel::Duel>().pause.is_none());
+        assert_eq!(positions(&world), start);
+        step(&mut world, &[KeyP]);
+        step(&mut world, &[]);
         step(&mut world, &[ArrowUp]);
+        step(&mut world, &[]);
+
         step(&mut world, &[KeyL, Space]);
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Controls));
         step(&mut world, &[Comma, ArrowRight]);
@@ -1602,6 +1631,7 @@ mod tests {
         assert_eq!(active_engines(&mut world), engine_count);
         for key in [KeyP, KeyS, KeyS, Space, KeyD] {
             step(&mut world, &[key]);
+            step(&mut world, &[]);
         }
         for (player, playback, engine) in world
             .query_filtered::<(
@@ -1641,6 +1671,7 @@ mod tests {
         let before = menu_voices(&mut world);
         step(&mut world, &[Space]);
         assert_eq!(menu_voices(&mut world), before + 1);
+        step(&mut world, &[]);
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_secs(300));
@@ -1657,6 +1688,7 @@ mod tests {
             .advance_by(Duration::from_millis(50));
         for key in [NumpadEnter, ArrowDown, Comma] {
             step(&mut world, &[key]);
+            step(&mut world, &[]);
         }
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Aborted));
         for _ in 0..10 {

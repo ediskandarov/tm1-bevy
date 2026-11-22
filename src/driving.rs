@@ -261,12 +261,7 @@ pub(crate) fn battle_audio(
         }
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PauseInput {
-    Ready,
-    WaitRelease,
-    ResumeOnRelease,
-}
+use crate::pause::PauseInput;
 
 #[derive(Resource)]
 pub struct Drive {
@@ -292,7 +287,7 @@ pub struct Drive {
     pub pause: Option<crate::pause::Page>,
     pub settings: crate::pause::Settings,
     pub pause_sound: Option<bool>,
-    pub abort_delay: Duration,
+    pub(crate) abort_wait: crate::pause::AbortWait,
     options_idle: Duration,
     pause_input: PauseInput,
     pub(crate) control_arrows: [bool; 2],
@@ -527,7 +522,7 @@ impl Drive {
             pause: None,
             pause_sound: None,
             settings: Default::default(),
-            abort_delay: Duration::ZERO,
+            abort_wait: Default::default(),
             options_idle: Duration::ZERO,
             pause_input: PauseInput::Ready,
             control_arrows: [false; 2],
@@ -641,7 +636,15 @@ pub fn advance(
     if let Some(page) = drive.pause {
         if window.focused {
             if page == Page::Aborted {
-                drive.abort_delay = drive.abort_delay.saturating_sub(time.delta());
+                let confirm = keys.any_pressed([KeyCode::Enter, KeyCode::Space, KeyCode::KeyP])
+                    || pad.is_some_and(|p| {
+                        p.any_pressed([
+                            GamepadButton::Start,
+                            GamepadButton::Select,
+                            GamepadButton::South,
+                        ])
+                    });
+                drive.abort_wait.advance(time.delta(), confirm);
             } else {
                 let action = crate::pause::campaign_action(page, &keys, pad);
                 if page != Page::Controls && pause_input_held() {
@@ -677,9 +680,6 @@ pub fn advance(
                     if drive.pause.is_none() && pause_input_held() {
                         drive.pause = Some(page);
                         drive.pause_input = PauseInput::ResumeOnRelease;
-                    }
-                    if drive.pause == Some(Page::Aborted) {
-                        drive.abort_delay = Duration::from_millis(500);
                     }
                 }
             }

@@ -36,7 +36,7 @@ After both picks, choose **START** to play or **OPTIONS** to change the battlegr
 
 Each split-screen view follows its car using that vehicle’s two-player chase camera.
 
-Press P or the numeric keypad Enter to pause both views. Either player can navigate the pause menu. Choose CONTROLLER OPTIONS with Space for player one or Comma for player two. AUDIO adjusts the shared music and effects mix. START resumes the round and QUIT returns to the title movie.
+Press P or the numeric keypad Enter to pause both views. Either player can navigate the pause menu. Both players must release their keys between choices and before driving resumes. Choose CONTROLLER OPTIONS with Space for player one or Comma for player two. AUDIO adjusts the shared music and effects mix. START resumes the round and QUIT returns to the title movie.
 
 After the round, the score stays on screen while the same arena reloads. The next round starts automatically with both cars repaired and the score preserved. Enter skips the score display. Esc returns to the title. To launch a specific match directly, use the second car’s slug after `--duel`.
 

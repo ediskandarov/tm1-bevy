@@ -56,6 +56,28 @@ impl Settings {
         f32::from(self.effects_volume()) / 33.
     }
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PauseInput {
+    Ready,
+    WaitRelease,
+    ResumeOnRelease,
+}
+
+#[derive(Default)]
+pub(crate) struct AbortWait {
+    elapsed: std::time::Duration,
+    pub finished: bool,
+}
+
+impl AbortWait {
+    pub fn advance(&mut self, dt: std::time::Duration, confirm: bool) {
+        let before_poll = self.elapsed < std::time::Duration::from_millis(500);
+        self.elapsed += dt;
+        let fields = self.elapsed.as_nanos() * 60 / 1_000_000_000;
+        self.finished |= fields >= 31 || (before_poll && fields == 30 && confirm);
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Action {
     Up,
@@ -437,5 +459,40 @@ pub fn draw(
             });
         }
         state.last = Some(active);
+    }
+}
+
+#[cfg(test)]
+mod abort_tests {
+    use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn abort_wait_matches_jp_field_poll() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        for addr in [0x8016206c, 0x800ffb2c] {
+            cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        for (confirm, pad) in [(true, 0x40), (false, 0)] {
+            cpu.call(0x800ffb98, &[2, pad]);
+            let mut fields = 0;
+            let selected = cpu.call_observed(0x8013f728, &[30, 30], 0x80000080, |cpu| {
+                if cpu.pc() == 0x8016206c {
+                    fields += 1;
+                }
+            });
+            assert_eq!(selected != 0, confirm);
+            let mut wait = AbortWait::default();
+            for field in 1..=fields {
+                wait.advance(std::time::Duration::from_nanos(16_666_667), confirm);
+                assert_eq!(wait.finished, field == fields);
+            }
+        }
+        let mut wait = AbortWait::default();
+        wait.advance(std::time::Duration::from_millis(500), false);
+        wait.advance(std::time::Duration::from_millis(5), true);
+        assert!(!wait.finished);
+        wait.advance(std::time::Duration::from_millis(12), false);
+        assert!(wait.finished);
     }
 }

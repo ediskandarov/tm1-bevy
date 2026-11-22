@@ -318,7 +318,7 @@ pub fn advance(world: &mut World) {
         }
         return;
     }
-    if drive.pause == Some(crate::pause::Page::Aborted) && drive.abort_delay.is_zero() {
+    if drive.pause == Some(crate::pause::Page::Aborted) && drive.abort_wait.finished {
         if let Err(err) = crate::contest::open(world) {
             error!("Opening title after abort failed: {err:#}");
             world.write_message(AppExit::error());

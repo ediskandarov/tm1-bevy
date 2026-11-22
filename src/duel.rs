@@ -43,9 +43,10 @@ pub struct Duel {
     pub(crate) pause: Option<crate::pause::Page>,
     control_slot: usize,
     controls_view: crate::pause::DuelControlsView,
-    abort_elapsed: Duration,
+    abort_wait: crate::pause::AbortWait,
     options_idle: Duration,
-    wait_release: bool,
+    pause_input: crate::pause::PauseInput,
+    just_resumed: bool,
     layouts: [u8; 2],
     pub(crate) sounds: Vec<crate::driving::BattleRequest>,
 }
@@ -231,9 +232,10 @@ pub fn start(
         pause: None,
         control_slot: 0,
         controls_view: Default::default(),
-        abort_elapsed: Duration::ZERO,
+        abort_wait: Default::default(),
         options_idle: Duration::ZERO,
-        wait_release: false,
+        pause_input: crate::pause::PauseInput::Ready,
+        just_resumed: false,
         layouts,
         sounds: Vec::new(),
         settings,
@@ -297,7 +299,7 @@ pub fn pause_menu(
         (With<StageEntity>, Without<PauseVoice>, Without<ScoreEngine>),
     >,
 ) {
-    use crate::pause::{Action, Page};
+    use crate::pause::{Action, Page, PauseInput};
     use KeyCode::*;
     if duel.winner.is_some() {
         for (entity, ..) in &mut audio {
@@ -306,14 +308,32 @@ pub fn pause_menu(
         return;
     }
     let before = duel.pause;
+    let held = crate::pause::duel_pad_held(&keys, 0)
+        || crate::pause::duel_pad_held(&keys, 1)
+        || keys.any_pressed([Enter, Escape]);
+    if duel.pause_input != PauseInput::Ready {
+        if held {
+            return;
+        }
+        let resuming = duel.pause_input == PauseInput::ResumeOnRelease;
+        duel.pause_input = PauseInput::Ready;
+        if resuming {
+            duel.pause = None;
+        } else {
+            return;
+        }
+    }
     if before == Some(Page::Aborted) {
-        duel.abort_elapsed += time.delta();
+        duel.abort_wait.advance(
+            time.delta(),
+            keys.any_pressed([Space, Comma, Enter, KeyP, NumpadEnter]),
+        );
         return;
     }
     let mut sound = None;
     let before_settings = duel.settings;
     let mut controls_changed = false;
-    if let Some(page) = before {
+    if let Some(page) = duel.pause {
         let (action, idle_reset) = if page == Page::Controls {
             let slot = duel.control_slot;
             let input = duel.controls_view.advance(time.delta(), &keys, slot);
@@ -334,17 +354,20 @@ pub fn pause_menu(
                 Some(Action::Up)
             } else if keys.any_just_pressed([KeyS, ArrowDown]) {
                 Some(Action::Down)
-            } else if keys.any_just_pressed([Space, Comma, Enter]) {
-                Some(Action::Select)
-            } else if keys.any_just_pressed([KeyA, ArrowLeft]) {
+            } else if matches!(page, Page::Audio(_)) && keys.any_pressed([KeyA, ArrowLeft]) {
                 Some(Action::Left)
-            } else if keys.any_just_pressed([KeyD, ArrowRight]) {
+            } else if matches!(page, Page::Audio(_)) && keys.any_pressed([KeyD, ArrowRight]) {
                 Some(Action::Right)
+            } else if keys.any_pressed([Space, Comma, Enter]) {
+                Some(Action::Select)
             } else {
                 None
             };
             (action, action.is_some())
         };
+        if page != Page::Controls && held {
+            duel.pause_input = PauseInput::WaitRelease;
+        }
         let expired =
             crate::pause::options_timed_out(page, &mut duel.options_idle, time.delta(), idle_reset);
         if let Some(action) = action.or(expired.then_some(Action::Resume)) {
@@ -359,6 +382,10 @@ pub fn pause_menu(
                 duel.layouts[slot] = layout;
                 duel.cars[slot].set_pad_layout(layout);
             }
+            if duel.pause.is_none() && held {
+                duel.pause = Some(page);
+                duel.pause_input = PauseInput::ResumeOnRelease;
+            }
             if !expired {
                 sound = crate::pause::navigation_sound(
                     page,
@@ -369,10 +396,12 @@ pub fn pause_menu(
         }
     } else if keys.any_just_pressed([KeyP, NumpadEnter]) {
         duel.pause = Some(Page::Choices(0));
+        duel.pause_input = PauseInput::WaitRelease;
     }
     let (sprite, visibility) = &mut *hud;
     if duel.pause == Some(Page::Controls) && before != duel.pause {
         duel.controls_view = Default::default();
+        duel.pause_input = PauseInput::Ready;
     }
     let changed = before != duel.pause || before_settings != duel.settings || controls_changed;
     if let Some(page) = duel.pause {
@@ -395,7 +424,7 @@ pub fn pause_menu(
         }
     } else if before.is_some() {
         **visibility = Visibility::Hidden;
-        duel.wait_release = true;
+        duel.just_resumed = true;
     }
     if duel.pause.is_some() || before.is_some() {
         for (entity, effect, music, engine_playing, mut playback, sink) in &mut audio {
@@ -464,11 +493,8 @@ pub fn advance(
         hud.0.custom_size = Some(Vec2::new(window.width(), window.height()));
         return;
     }
-    if duel.wait_release {
-        if keys.any_pressed([Space, Comma, Enter, Escape, KeyP, NumpadEnter]) {
-            return;
-        }
-        duel.wait_release = false;
+    if std::mem::take(&mut duel.just_resumed) {
+        return;
     }
     let duel = &mut *duel;
     let input = [
@@ -582,10 +608,9 @@ pub fn round_menu(world: &mut World) {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let duel = world.resource::<Duel>();
     let difficulty = duel.cars[0].difficulty();
-    let aborted = duel.pause == Some(crate::pause::Page::Aborted)
-        && duel.abort_elapsed >= Duration::from_secs_f64(31. / 60.);
+    let aborted = duel.pause == Some(crate::pause::Page::Aborted) && duel.abort_wait.finished;
     let result = if aborted
-        || (duel.pause.is_none() && !duel.wait_release && keys.just_pressed(KeyCode::Escape))
+        || (duel.pause.is_none() && !duel.just_resumed && keys.just_pressed(KeyCode::Escape))
     {
         let result = crate::contest::show(
             world,
@@ -707,6 +732,7 @@ mod tests {
         assert_eq!(clocks(&world), frame.map(|f| f + 1));
         for key in [KeyP, ArrowDown, ArrowDown, Enter] {
             tick(&mut world, true, 50, &[key]);
+            tick(&mut world, true, 0, &[]);
         }
         assert_eq!(
             world.resource::<Duel>().pause,
