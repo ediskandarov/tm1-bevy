@@ -1656,13 +1656,13 @@ size_t tm1_fragment_poses(const CollisionScene* scene, int second_view, s32 (*ou
     return scene->drawn_fragment_count;
 }
 
-size_t tm1_drawn_drops(CollisionScene* s, s32 (*out)[4])
+size_t tm1_drawn_drops(CollisionScene* s, int view, s32 (*out)[4])
 {
     size_t n = 0;
     for (int i = 0; i < 12; i++) {
         DropWeap* d = &s->drops[i];
-        if (d->drawn_kind) {
-            s32 pose[4] = { d->drawn_pos.vx, d->drawn_pos.vy, d->drawn_pos.vz, d->drawn_kind };
+        if (d->drawn_kind[view]) {
+            s32 pose[4] = { d->drawn_pos[view].vx, d->drawn_pos[view].vy, d->drawn_pos[view].vz, d->drawn_kind[view] };
             memcpy(out[n++], pose, sizeof(pose));
         }
     }
@@ -1971,12 +1971,12 @@ size_t tm1_missile_poses(CollisionScene* s, s32 (*out)[13])
     }
     return count;
 }
-size_t tm1_taser_arcs(CollisionScene* s, VECTOR3 (*out)[16])
+size_t tm1_taser_arcs(CollisionScene* s, int view, VECTOR3 (*out)[16])
 {
     size_t count = 0;
     for (size_t i = 0; i < 3; i++)
-        if (s->tasers[i].visible)
-            memcpy(out[count++], s->tasers[i].points, sizeof s->tasers[i].points);
+        if (s->tasers[i].visible[view])
+            memcpy(out[count++], s->tasers[i].points[view], sizeof s->tasers[i].points[view]);
     return count;
 }
 

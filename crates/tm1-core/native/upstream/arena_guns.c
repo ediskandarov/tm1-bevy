@@ -521,12 +521,12 @@ static void fireBossSpecial(int owner, CarStats* stats, CarMotion* motion, CarWe
     weapon->fireDelay = 20;
     flags[9] = 1;
 }
-void arena_move_tasers(void)
+void arena_move_tasers(int view)
 {
     ArenaTaser* tasers = arena_tasers();
     for (int i = 0; i < 3; i++) {
-        tasers[i].visible = tasers[i].life > 0;
-        if (!tasers[i].visible)
+        tasers[i].visible[view] = tasers[i].life > 0;
+        if (!tasers[i].visible[view])
             continue;
         VECTOR3 origin
             = tasers[i].owner < 50 ? GetPlayerInfo(tasers[i].owner - 1)->motion.pos : GetAICarInfo(tasers[i].owner - 50)->motion.pos,
@@ -540,7 +540,7 @@ void arena_move_tasers(void)
             end.vy = origin.vy + (rsin(tasers[i].life * 400) >> 4);
             end.vz = shellGetCurrentLevel() == LEVEL6_ROOFTOPS ? origin.vz - 40 : 0;
         }
-        VECTOR3* pt = tasers[i].points;
+        VECTOR3* pt = tasers[i].points[view];
         pt[0] = origin;
         pt[0].vz += 30;
         pt[15] = end;
@@ -603,17 +603,17 @@ static void launchDrop(
     pad->totalAmmo--;
     arena_drop_launch_sound(&d->pos, d->kind);
 }
-void arena_move_drops(void)
+void arena_move_drops(int view)
 {
     for (int i = 0; i < 12; i++) {
         DropWeap* d = &dropweapon[i];
-        d->drawn_kind = 0;
+        d->drawn_kind[view] = 0;
         if (d->life <= 0)
             continue;
         if (d->power < d->pos.vz)
             d->pos.vz = d->pos.vz - 12 >= d->power ? d->pos.vz - 12 : d->power;
-        d->drawn_kind = d->kind;
-        d->drawn_pos = d->pos;
+        d->drawn_kind[view] = d->kind;
+        d->drawn_pos[view] = d->pos;
         --d->life;
         d->pos.vz += 30;
         int hit = CAR_HD(&d->pos, d->life >= 360 ? d->idx : 0, 2);

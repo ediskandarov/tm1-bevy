@@ -1363,7 +1363,7 @@ fn draw_view(
         ]
     };
     let mut drops = [[0; 4]; 12];
-    let drop_count = contacts.drawn_drops(&mut drops);
+    let drop_count = contacts.drawn_drops(view.secondary, &mut drops);
     for &[x, y, z, weapon] in &drops[..drop_count] {
         let center = world([x as f32, y as f32, z as f32]);
         let camera = drop_camera(center);
@@ -1422,7 +1422,7 @@ fn draw_view(
     let mut bullets = [[0; 8]; 40];
     let bullet_count = contacts.drawn_bullets(view.secondary, &mut bullets);
     let mut arcs = [[[0; 3]; 16]; 3];
-    let arc_count = contacts.taser_arcs(&mut arcs);
+    let arc_count = contacts.taser_arcs(view.secondary, &mut arcs);
     let mut particles = [[0; 5]; 80];
     let count = contacts.drawn_particles(view.secondary, &mut particles);
     for &[x, y, z, kind, ttl] in &particles[..count] {

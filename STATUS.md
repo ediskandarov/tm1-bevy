@@ -61,6 +61,10 @@ The main camera captures the particle pool immediately after animation. Vehicle 
 
 An Arena replay drives Hammerhead over Outlaw with each player slot taking a turn as the attacker. It runs the JP InitMonsterSmash routine alongside the native encounter with five and six units of special ammo. Six units trigger the attack, spend the charge, and take 12 HP from Outlaw on Medium. The test compares the crush radius and lift, checks both cars’ crush flags through separation, and verifies the victim material ID passed to carTakeHit. The JP routine sends sound ID 0x36 with zero distance and pan. Both battle mixers now request Hammerhead’s program 45 centered, preserving any active instance of the sound.
 
+## Weapon updates in the rear and split-screen views
+
+The JP render loop advances dropped weapons, flamethrowers and Outlaw tasers during each call to display_bullets. The primary pass runs before the actors move. An enabled rear mirror or the bottom duel viewport runs a second pass after the actors. Each viewport keeps its own drop positions and taser points. Missiles, bullet movement and explosion animation retain their once-per-update timing. A replay switches the mirror during an Outlaw discharge and compares both endpoints and its ten-pass lifetime with the disc. A duel test fires oil after the top viewport has finished and checks the trap position on both screens through four updates against displayDropWeapons.
+
 ## Dropped weapons
 
 Bombs, oil, spikes and catapults use the four weapon sprites in the arena DMD. Oil projects onto a 96-unit ground square. The other three face the camera. Each trap is drawn on its last active field, including the field when a car triggers it. Both battle modes play the launch and impact sounds from UACORE.VAB. Bombs produce a pair of bursts 50 world units apart vertically. Oil stays active after contact. Drop projection uses the current viewport lens, integer screen coordinates and the original center visibility bounds. A packet test runs the retail display routine for all four weapons, checks all four vertex positions, and exercises oil straddling the near plane with a rotated camera.

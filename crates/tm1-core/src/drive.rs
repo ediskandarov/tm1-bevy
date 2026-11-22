@@ -1266,6 +1266,7 @@ unsafe extern "C" {
     fn tm1_bout_phase(
         prepare: bool,
         update_player: bool,
+        rear_view: bool,
         scene: *mut std::ffi::c_void,
         player_state: *mut u8,
         opponents: *const *mut u8,
@@ -1898,7 +1899,7 @@ impl CollisionScene {
     ) {
         self.radar.display(true);
         let prepared = self.begin_bout_step(player, opponents, fields);
-        self.finish_bout_step(player, opponents, pads, prepared);
+        self.finish_bout_step(player, opponents, pads, prepared, false);
     }
 
     pub fn begin_bout_step(
@@ -1910,7 +1911,7 @@ impl CollisionScene {
         assert!((1..=5).contains(&fields));
         self.audio.clear();
         player.frame = player.frame.wrapping_add(1);
-        let update_player = self.bout_phase(player, opponents, 0, fields, None);
+        let update_player = self.bout_phase(player, opponents, 0, fields, None, false);
         PreparedBout {
             fields,
             update_player,
@@ -1923,6 +1924,7 @@ impl CollisionScene {
         opponents: &mut [Opponent],
         pads: u32,
         prepared: PreparedBout,
+        rear_view: bool,
     ) {
         self.bout_phase(
             player,
@@ -1930,6 +1932,7 @@ impl CollisionScene {
             pads,
             prepared.fields,
             Some(prepared.update_player),
+            rear_view,
         );
         unsafe extern "C" {
             fn tm1_radar_reports(scene: *const std::ffi::c_void, out: *mut [i32; 4]) -> usize;
@@ -1952,6 +1955,7 @@ impl CollisionScene {
         pads: u32,
         fields: u8,
         update_player: Option<bool>,
+        rear_view: bool,
     ) -> bool {
         assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
         let mut records = [std::ptr::null_mut(); 8];
@@ -1970,6 +1974,7 @@ impl CollisionScene {
             tm1_bout_phase(
                 update_player.is_none(),
                 update_player.unwrap_or(false),
+                rear_view,
                 self.native.as_ptr(),
                 player.state.as_mut_ptr(),
                 records.as_ptr(),
@@ -2050,11 +2055,21 @@ impl CollisionScene {
         }
         unsafe { tm1_missile_poses(self.native.as_ptr(), out.as_mut_ptr()) }
     }
-    pub fn taser_arcs(&self, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
+    pub fn taser_arcs(&self, secondary: bool, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
         unsafe extern "C" {
-            fn tm1_taser_arcs(scene: *mut std::ffi::c_void, arcs: *mut [[i32; 3]; 16]) -> usize;
+            fn tm1_taser_arcs(
+                scene: *mut std::ffi::c_void,
+                view: i32,
+                arcs: *mut [[i32; 3]; 16],
+            ) -> usize;
         }
-        unsafe { tm1_taser_arcs(self.native.as_ptr(), arcs.as_mut_ptr()) }
+        unsafe {
+            tm1_taser_arcs(
+                self.native.as_ptr(),
+                i32::from(secondary),
+                arcs.as_mut_ptr(),
+            )
+        }
     }
     pub fn drawn_bullets(&self, second_view: bool, out: &mut [[i32; 8]; 40]) -> usize {
         unsafe extern "C" {
@@ -2189,11 +2204,15 @@ impl CollisionScene {
             )
         }
     }
-    pub fn drawn_drops(&self, out: &mut [[i32; 4]; 12]) -> usize {
+    pub fn drawn_drops(&self, secondary: bool, out: &mut [[i32; 4]; 12]) -> usize {
         unsafe extern "C" {
-            fn tm1_drawn_drops(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;
+            fn tm1_drawn_drops(
+                scene: *mut std::ffi::c_void,
+                view: i32,
+                out: *mut [i32; 4],
+            ) -> usize;
         }
-        unsafe { tm1_drawn_drops(self.native.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_drawn_drops(self.native.as_ptr(), i32::from(secondary), out.as_mut_ptr()) }
     }
     pub fn effects(&self, out: &mut [[i32; 5]; 122]) -> usize {
         unsafe extern "C" {

@@ -827,9 +827,13 @@ pub fn advance(
                 .player
                 .set_battle_view(state.selected_view(), state.camera.fixed_pose.is_some());
         }
-        state
-            .contacts
-            .finish_bout_step(&mut state.player, &mut state.opponents, pads, prepared);
+        state.contacts.finish_bout_step(
+            &mut state.player,
+            &mut state.opponents,
+            pads,
+            prepared,
+            state.mirror,
+        );
         battle_audio(
             &state.contacts,
             &state.listener,

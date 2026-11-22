@@ -1013,6 +1013,13 @@ void VectorNormal(VECTOR* in, VECTOR* out)
     out->vy = y * factor >> shift;
     out->vz = z * factor >> shift;
 }
+// display_bullets runs these simulation routines for each active viewport.
+static void display_weapon_pass(int view)
+{
+    arena_move_drops(view);
+    arena_move_flames();
+    arena_move_tasers(view);
+}
 static size_t contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields)
 {
     if (is_player == 2) {
@@ -1021,9 +1028,7 @@ static size_t contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fiel
         size_t before_primary_view = step_audio ? tm1_event_count(step_audio) : 0;
         tm1_update_hit_lights();
         tm1_display_hit_sheet();
-        arena_move_drops();
-        arena_move_flames();
-        arena_move_tasers();
+        display_weapon_pass(0);
         arena_capture_bullets();
         arena_move_bullets();
         arena_move_fragments();
@@ -1140,7 +1145,7 @@ static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motio
 // Release the bound scene between projectile/recharge processing and the actor pass
 // so CheckVRMode can use the post-impact car state.
 // The original routines can change other cars during collision and weapon updates.
-u8 tm1_bout_phase(bool prepare, bool update_player, struct CollisionScene* scene, u8* player_state, u8** opponents,
+u8 tm1_bout_phase(bool prepare, bool update_player, bool rear_view, struct CollisionScene* scene, u8* player_state, u8** opponents,
     s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio)
 {
     tm1_bind_step_audio(audio);
@@ -1216,6 +1221,8 @@ u8 tm1_bout_phase(bool prepare, bool update_player, struct CollisionScene* scene
     tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
+    if (rear_view)
+        display_weapon_pass(1);
 store_frame:
     tm1_store_battle(battle);
     tm1_bind_step_audio(NULL);
@@ -1233,7 +1240,7 @@ store_frame:
 
 
 // Both human actors update in slot order against the same collision graph.
-// The projectile and arena passes run once per frame.
+// The bottom viewport processes its display-time weapons after both actors.
 size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio, u8 updated[2])
 {
@@ -1274,6 +1281,7 @@ size_t tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     tm1_regenerate_stands();
     move_arena_targets(&cars[0].motion.pos);
     UpdateNumPotHoles();
+    display_weapon_pass(1);
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
     memcpy(second, &cars[1], sizeof(PlayerCar));

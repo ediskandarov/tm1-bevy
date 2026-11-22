@@ -2170,6 +2170,59 @@ fn player_special_launch_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn rear_view_advances_outlaw_arc_after_actors() {
+    let mut r = Reference::with_vehicle(Vehicle::Outlaw);
+    // Fire at empty space so only the one taser can contribute a polyline.
+    r.police.state[0x24c..0x250].fill(0);
+    r.player.state[0xd2] = 1;
+    r.sync();
+    for at in [0x80107f84, 0x80108034, 0x80136a28, 0x80136c00, 0x80137140] {
+        r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    r.cpu.call(0x80113858, &[PLAYER, 1]);
+    r.cpu.call(0x8013148c, &[PLAYER, 1]);
+    r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+    r.compare();
+    let mut passes = 0;
+    for mirror in [true, true, false, true, true, true, true] {
+        let previous = r.player.position();
+        let opponents = std::slice::from_mut(&mut r.police);
+        let step = r.scene.begin_bout_step(&mut r.player, opponents, 3);
+        r.scene
+            .finish_bout_step(&mut r.player, opponents, 0, step, mirror);
+        for view in 0..=u32::from(mirror) {
+            let mut points = Vec::new();
+            let origin = if view == 0 {
+                previous
+            } else {
+                r.player.position()
+            };
+            for (i, coordinate) in origin.into_iter().enumerate() {
+                put(&mut r.cpu, PLAYER + 0x388 + i as u32 * 4, coordinate as u32);
+            }
+            let translation = r.cpu.call(0x8010af54, &[view]);
+            r.cpu.put(translation, &[0; 12]);
+            r.cpu
+                .call_observed(0x801333d0, &[RENDER_SCRATCH, view], 0x80000080, |cpu| {
+                    if cpu.pc() == 0x800fe9c4 {
+                        points.push([0, 4, 8].map(|i| cpu.word(cpu.r[5] + i) as i32));
+                    }
+                });
+            let mut arcs = [[[0; 3]; 16]; 3];
+            let count = r.scene.taser_arcs(view == 1, &mut arcs);
+            assert_eq!(count * 16, points.len(), "pass {passes}");
+            if count != 0 {
+                assert_eq!(arcs[0][0], points[0]);
+                assert_eq!(arcs[0][15], points[15]);
+            }
+            assert_eq!(count, usize::from(passes < 10));
+            passes += 1;
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn outlaw_taser_original() {
     for (level, distance, alive, expected_target) in [
         (Level::Arena, 647, true, 50),
@@ -2228,7 +2281,7 @@ fn outlaw_taser_original() {
             r.scene.phase(&mut r.player, &mut r.police, 2, 3);
             r.compare();
             let mut arcs = [[[0; 3]; 16]; 3];
-            let count = r.scene.taser_arcs(&mut arcs);
+            let count = r.scene.taser_arcs(false, &mut arcs);
             assert_eq!(count, usize::from(frame <= 10));
             assert_eq!(points.as_slice(), arcs[..count].as_flattened());
             assert_eq!(r.scene.audio, effects, "{level:?} update {frame}");
@@ -3110,10 +3163,13 @@ fn dropped_weapon_contacts_original() {
         let n = r.scene.effects(&mut fx);
         assert_eq!(fx[..n].iter().any(|e| e[3] == 6), weapon == 9);
         let mut drawn = [[0; 4]; 12];
-        assert_eq!(r.scene.drawn_drops(&mut drawn), 1);
+        assert_eq!(r.scene.drawn_drops(false, &mut drawn), 1);
         assert_eq!(drawn[0], [pos[0], pos[1], pos[2], i32::from(weapon)]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
-        assert_eq!(r.scene.drawn_drops(&mut drawn), usize::from(weapon == 9));
+        assert_eq!(
+            r.scene.drawn_drops(false, &mut drawn),
+            usize::from(weapon == 9)
+        );
     }
 }
 
@@ -3684,7 +3740,8 @@ fn warehouse_repair_holds_view_until_the_release_update() {
                     .set_battle_view(PlayerView::Car(camera.mode), false);
             }
             let updated = step.updates_player();
-            r.scene.finish_bout_step(&mut r.player, opponents, 0, step);
+            r.scene
+                .finish_bout_step(&mut r.player, opponents, 0, step, false);
             camera.after_step(&r.player, updated);
             if !held_at_stand {
                 r.cpu.put(PLAYER + 0x138, &r.player.state[0x138..]);
@@ -5662,6 +5719,76 @@ fn hammerhead_duel_crush() {
             assert_eq!(sounds, retail_sound.len());
             if hit {
                 assert_eq!(retail_sound, [[0x36, 0, 0]]);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn split_screen_oil_appears_on_launch_pass() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let data = disc.read("UA2PLAY/XARENA1.DMD").unwrap();
+    let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+    let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
+    let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+    let mut cars =
+        PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+    let mut scene =
+        CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
+    vec3(&mut cars[0].state, 0x388, [2700, 2200, 900]);
+    cars[0].state[0x460..0x464].copy_from_slice(&9i32.to_le_bytes());
+    cars[0].state[0x476..0x478].copy_from_slice(&2i16.to_le_bytes());
+    let mut cpu = Cpu::new(&exe);
+    let drop = 0x801996b8;
+    cpu.put(0x80133fd4, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    put(&mut cpu, drop, 9);
+    put(&mut cpu, drop + 20, 0);
+    for tick in 0..4 {
+        scene.step_duel(
+            &mut cars,
+            [
+                Input {
+                    missile: tick == 0,
+                    ..Default::default()
+                },
+                Input::default(),
+            ],
+            3,
+        );
+        for view in 0..2 {
+            if tick == 0 && view == 1 {
+                let pos = scene
+                    .audio
+                    .iter()
+                    .find_map(|request| match request {
+                        BattleEvent::DropLaunch {
+                            weapon: 9,
+                            position,
+                        } => Some(*position),
+                        _ => None,
+                    })
+                    .expect("oil launch");
+                for (axis, v) in pos.into_iter().enumerate() {
+                    put(&mut cpu, drop + 8 + 4 * axis as u32, v as u32);
+                }
+                cpu.put(drop + 4, &400i16.to_le_bytes());
+            }
+            cpu.call(0x801344e0, &[RENDER_SCRATCH, view]);
+            let mut draws = [[0; 4]; 12];
+            let n = scene.drawn_drops(view == 1, &mut draws);
+            assert_eq!(n, usize::from(tick != 0 || view != 0));
+            if n > 0 {
+                assert_eq!(
+                    draws[0],
+                    [
+                        cpu.word(drop + 8) as i32,
+                        cpu.word(drop + 12) as i32,
+                        cpu.word(drop + 16) as i32,
+                        9
+                    ]
+                );
             }
         }
     }
