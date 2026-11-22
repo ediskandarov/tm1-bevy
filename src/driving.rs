@@ -16,7 +16,11 @@ pub struct Drive {
     pub contacts: CollisionScene,
     pub sounds: Vec<(usize, [i32; 3])>,
     remainder: Duration,
-    pub paused: bool,
+    pub pause: Option<crate::pause::Page>,
+    pub settings: crate::pause::Settings,
+    pub pause_sound: Option<bool>,
+    pub abort_delay: Duration,
+    options_idle: Duration,
     pub restart_count: u32,
     was_focused: bool,
     victory_fields: u16,
@@ -148,7 +152,11 @@ impl Drive {
             player,
             sounds: Vec::new(),
             remainder: Duration::ZERO,
-            paused: false,
+            pause: None,
+            pause_sound: None,
+            settings: Default::default(),
+            abort_delay: Duration::ZERO,
+            options_idle: Duration::ZERO,
             mirror: false,
             helicopter_unlocked: false,
             helicopter_active: false,
@@ -174,6 +182,7 @@ pub fn advance(
     mut timings: Local<Vec<f64>>,
 ) {
     drive.sounds.clear();
+    drive.pause_sound = None;
     const STEP: Duration = Duration::from_millis(50);
     let pad = gamepads
         .iter()
@@ -183,11 +192,15 @@ pub fn advance(
     let just_pressed = |button| pad.is_some_and(|p| p.just_pressed(button));
     let regained = window.focused && !drive.was_focused;
     drive.was_focused = window.focused;
-    if window.focused && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select)) {
+    if window.focused
+        && drive.pause != Some(crate::pause::Page::Aborted)
+        && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select))
+    {
         drive.contacts.reset_projectiles();
-        drive.paused = false;
+        drive.pause = None;
         let state = &mut *drive;
         state.player.reset();
+        state.player.set_pad_layout(state.settings.layout);
         state.camera.update(&state.player, true);
         drive.helicopter = None;
         drive.helicopter_active = false;
@@ -210,8 +223,63 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    if window.focused && (keys.just_pressed(KeyCode::KeyP) || just_pressed(GamepadButton::Start)) {
-        drive.paused = !drive.paused;
+    use crate::pause::{Action, Page};
+    let start = keys.just_pressed(KeyCode::KeyP) || just_pressed(GamepadButton::Start);
+    if let Some(page) = drive.pause {
+        if window.focused {
+            if page == Page::Aborted {
+                drive.abort_delay = drive.abort_delay.saturating_sub(time.delta());
+            } else {
+                let action = if start {
+                    Some(Action::Resume)
+                } else {
+                    [
+                        (KeyCode::ArrowUp, GamepadButton::DPadUp, Action::Up),
+                        (KeyCode::ArrowDown, GamepadButton::DPadDown, Action::Down),
+                        (KeyCode::ArrowLeft, GamepadButton::DPadLeft, Action::Left),
+                        (KeyCode::ArrowRight, GamepadButton::DPadRight, Action::Right),
+                        (KeyCode::Enter, GamepadButton::South, Action::Select),
+                    ]
+                    .into_iter()
+                    .find(|(key, pad, _)| keys.just_pressed(*key) || just_pressed(*pad))
+                    .map(|(_, _, a)| a)
+                };
+                let action = if action.is_none() && matches!(page, Page::Audio(_) | Page::Controls)
+                {
+                    drive.options_idle += time.delta();
+                    (drive.options_idle >= Duration::from_secs_f64(18001. / 60.))
+                        .then_some(Action::Resume)
+                } else {
+                    action
+                };
+                if let Some(action) = action {
+                    drive.options_idle = Duration::ZERO;
+                    drive.pause_sound = match action {
+                        Action::Select | Action::Resume => Some(true),
+                        Action::Up | Action::Down if !matches!(page, Page::Controls) => Some(false),
+                        Action::Left | Action::Right
+                            if matches!(page, Page::Audio(0 | 1) | Page::Controls) =>
+                        {
+                            Some(false)
+                        }
+                        _ => None,
+                    };
+                    drive.pause = crate::pause::navigate(page, action, &mut drive.settings);
+                    if page == Page::Controls && drive.pause.is_none() {
+                        let layout = drive.settings.layout;
+                        drive.player.set_pad_layout(layout);
+                    }
+                    if drive.pause == Some(Page::Aborted) {
+                        drive.abort_delay = Duration::from_millis(500);
+                    }
+                }
+            }
+        }
+        drive.remainder = Duration::ZERO;
+        return;
+    }
+    if window.focused && start {
+        drive.pause = Some(Page::Choices(0));
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -219,8 +287,6 @@ pub fn advance(
         "Wrecked • R to restart"
     } else if drive.cleared() {
         "Arena cleared • R to restart"
-    } else if drive.paused {
-        "Paused • P to resume"
     } else {
         drive.player.level().name()
     };
@@ -239,7 +305,7 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    if drive.paused || (!capture.demo && (!window.focused || regained)) {
+    if !capture.demo && (!window.focused || regained) {
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -269,16 +335,40 @@ pub fn advance(
         drive.camera.cycle();
     }
     let input = Input {
-        cycle_weapon: keys.pressed(KeyCode::KeyE) || pressed(GamepadButton::LeftTrigger2),
-        missile: keys.pressed(KeyCode::KeyF) || pressed(GamepadButton::LeftTrigger),
-        fire_guns: keys.pressed(KeyCode::Space) || pressed(GamepadButton::RightTrigger),
-        accelerate: keys.pressed(KeyCode::KeyW) || pressed(GamepadButton::West),
-        reverse: keys.pressed(KeyCode::KeyS) || pressed(GamepadButton::East),
-        left: keys.pressed(KeyCode::KeyA) || pressed(GamepadButton::DPadLeft),
-        right: keys.pressed(KeyCode::KeyD) || pressed(GamepadButton::DPadRight),
-        hard_turn: keys.pressed(KeyCode::ShiftLeft) || pressed(GamepadButton::South),
-        turbo: keys.pressed(KeyCode::KeyT) || pressed(GamepadButton::North),
+        cycle_weapon: keys.pressed(KeyCode::KeyE),
+        missile: keys.pressed(KeyCode::KeyF),
+        fire_guns: keys.pressed(KeyCode::Space),
+        accelerate: keys.pressed(KeyCode::KeyW),
+        reverse: keys.pressed(KeyCode::KeyS),
+        left: keys.pressed(KeyCode::KeyA),
+        right: keys.pressed(KeyCode::KeyD),
+        hard_turn: keys.pressed(KeyCode::ShiftLeft),
+        turbo: keys.pressed(KeyCode::KeyT),
     };
+    // Keep physical pad bits intact so uaPadInit can reinterpret them.
+    let pad_bits = [
+        GamepadButton::LeftTrigger,
+        GamepadButton::RightTrigger,
+        GamepadButton::LeftTrigger2,
+        GamepadButton::RightTrigger2,
+        GamepadButton::North,
+        GamepadButton::East,
+        GamepadButton::South,
+        GamepadButton::West,
+        GamepadButton::Select,
+        GamepadButton::LeftThumb,
+        GamepadButton::RightThumb,
+        GamepadButton::Start,
+        GamepadButton::DPadUp,
+        GamepadButton::DPadRight,
+        GamepadButton::DPadDown,
+        GamepadButton::DPadLeft,
+    ]
+    .into_iter()
+    .enumerate()
+    .fold(0u16, |bits, (i, button)| {
+        bits | (u16::from(pressed(button)) << i)
+    });
     if capture.realtime {
         capture.elapsed += time.delta();
     }
@@ -309,7 +399,9 @@ pub fn advance(
         } else {
             input
         };
-        let mut pads = u32::from(input.ps1_buttons());
+        let mut pads = u32::from(
+            state.player.keyboard_buttons(input) | if capture.demo { 0 } else { pad_bits },
+        );
         if state.player.cheat_controls() && !capture.demo {
             // Each digit holds one original multi-button combination for a simulation step.
             for (key, mask) in [
@@ -385,6 +477,69 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn pause_options_from_keyboard() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::pause::Page;
+        use tm1_core::drive::Level;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let stage = Stage::load(
+            &disc,
+            Level::Warehouse,
+            Vehicle::YellowJacket,
+            Entry::New(Default::default()),
+        )
+        .unwrap();
+        let mut app = App::new();
+        stage.install(app.world_mut());
+        app.insert_resource(Campaign(disc))
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .init_resource::<Assets<Image>>()
+            .init_resource::<Assets<AudioSource>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Time<Real>>()
+            .add_systems(Update, (advance, crate::campaign::advance).chain());
+        app.world_mut().spawn(Window {
+            focused: true,
+            ..default()
+        });
+        tick(&mut app, 1);
+        let tap = |app: &mut App, key| {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(key);
+            tick(app, 50);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(key);
+        };
+        let frame = app.world().resource::<Drive>().player.frame();
+        use KeyCode::*;
+        for key in [KeyP, ArrowDown, ArrowDown, Enter, ArrowRight] {
+            tap(&mut app, key);
+        }
+        let drive = app.world().resource::<Drive>();
+        assert_eq!(drive.pause, Some(Page::Audio(0)));
+        assert_eq!((drive.settings.music, drive.settings.effects), (8, 6));
+        assert!(drive.settings.music_gain() > 1. && drive.settings.effects_gain() < 1.);
+        assert_eq!(drive.player.frame(), frame);
+        for key in [ArrowUp, Enter, KeyP, ArrowUp, Enter, ArrowRight, Enter] {
+            tap(&mut app, key);
+        }
+        let drive = app.world().resource::<Drive>();
+        assert_eq!(drive.settings.layout, 2);
+        assert_eq!(drive.player.state()[0xc8 + 22], 2);
+        assert!(drive.pause.is_none());
+        assert_eq!(drive.player.frame(), frame);
+        for key in [KeyP, ArrowDown, Enter] {
+            tap(&mut app, key);
+        }
+        assert_eq!(app.world().resource::<Drive>().pause, Some(Page::Aborted));
+        tick(&mut app, 600);
+        assert!(app.world().contains_resource::<crate::contest::Contest>());
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn campaign_replaces_stage_entities_and_audio_in_one_world() {

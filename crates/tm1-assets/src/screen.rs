@@ -48,6 +48,9 @@ pub enum Face {
     Password,
     Speed,
     Sign,
+    Choice,
+    Selected,
+    Control,
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
@@ -128,7 +131,11 @@ impl Fonts {
         } else {
             47
         };
-        let metrics = &self.metrics[face as usize];
+        let metrics = &self.metrics[match face {
+            Face::Choice | Face::Selected => 1,
+            Face::Control => 3,
+            _ => face as usize,
+        }];
         metrics.get(idx).copied().unwrap_or(metrics[47])
     }
     pub fn line_height(&self) -> i32 {
@@ -136,10 +143,10 @@ impl Fonts {
     }
     pub fn centered(&self, frame: &mut [u8], face: Face, y: i32, text: &str) {
         let spacing = match face {
-            Face::Text => -1,
+            Face::Text | Face::Choice | Face::Selected => -1,
             Face::Password => 7,
             Face::Speed => 3,
-            Face::Sign => 0,
+            Face::Sign | Face::Control => 0,
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
         let width: i32 = text
@@ -151,13 +158,16 @@ impl Fonts {
     }
     pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
         let (spacing, tint) = match face {
+            Face::Choice => (-1, [93, 30, 23]),
+            Face::Selected => (-1, [115, 61, 27]),
+            Face::Control => (0, [128; 3]),
             Face::Text => (-1, [115, 84, 35]),
             Face::Password => (7, [50, 50, 50]),
             Face::Speed => (3, [100, 0, 30]),
             Face::Sign => (0, [36, 150, 36]),
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        let (pixels, width) = if matches!(face, Face::Sign) {
+        let (pixels, width) = if matches!(face, Face::Sign | Face::Control) {
             (&self.signs, self.sign_width)
         } else {
             (&self.pixels, self.width)

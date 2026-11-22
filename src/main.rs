@@ -6,6 +6,7 @@ mod driving;
 mod ending;
 mod gpu_timing;
 mod music;
+mod pause;
 mod render;
 mod sfx;
 mod smoke;
@@ -95,7 +96,13 @@ fn main() -> Result<()> {
         !mirror_demo || !menu,
         "mirror capture requires a running encounter"
     );
-    let demo = mirror_demo
+    let pause_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-pause-screenshot"));
+    ensure!(
+        !pause_demo || !menu,
+        "pause capture requires a running encounter"
+    );
+    let demo = pause_demo
+        || mirror_demo
         || cockpit_demo
         || helicopter_demo
         || realtime
@@ -148,6 +155,9 @@ fn main() -> Result<()> {
         }));
     if let Some(stage) = stage {
         stage.install(app.world_mut());
+        if pause_demo {
+            app.world_mut().resource_mut::<driving::Drive>().pause = Some(pause::Page::Choices(0));
+        }
         if mirror_demo {
             app.world_mut().resource_mut::<driving::Drive>().mirror = true;
         }
@@ -187,6 +197,7 @@ fn main() -> Result<()> {
                 render::hud_letters,
                 render::hud,
                 render::boss_intro,
+                pause::draw,
             )
                 .chain()
                 .run_if(not(resource_exists::<ending::Ending>))
@@ -211,7 +222,7 @@ fn main() -> Result<()> {
             campaign::advance
                 .run_if(not(resource_exists::<ending::Ending>))
                 .run_if(not(resource_exists::<contest::Contest>))
-                .after(render::boss_intro)
+                .after(pause::draw)
                 .after(sfx::update)
                 .after(music::control)
                 .after(smoke::capture),

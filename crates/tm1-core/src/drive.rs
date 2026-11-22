@@ -410,6 +410,36 @@ impl PlayerVehicle {
             trig: self.trig.clone(),
         }
     }
+    pub fn set_pad_layout(&mut self, layout: u8) {
+        assert!(layout < 4);
+        unsafe extern "C" {
+            fn tm1_pad_layout(state: *mut u8, mode: i32);
+        }
+        unsafe {
+            tm1_pad_layout(self.state.as_mut_ptr(), layout.into());
+            tm1_pad_layout(self.initial_state.as_mut_ptr(), layout.into());
+        }
+    }
+    /// Translate keyboard actions using the currently selected UA controller layout.
+    pub fn keyboard_buttons(&self, input: Input) -> u16 {
+        const BITS: [u8; 15] = [0, 8, 11, 2, 0, 12, 14, 15, 13, 3, 1, 4, 6, 7, 5];
+        [
+            (input.accelerate, 29),
+            (input.reverse, 25),
+            (input.left, 27),
+            (input.right, 28),
+            (input.hard_turn, 31),
+            (input.turbo, 33),
+            (input.fire_guns, 34),
+            (input.missile, 35),
+            (input.cycle_weapon, 36),
+        ]
+        .into_iter()
+        .filter(|(pressed, _)| *pressed)
+        .fold(0, |bits, (_, i)| {
+            bits | 1 << BITS[self.state[0xc8 + i] as usize]
+        })
+    }
     pub fn cheat_controls(&self) -> bool {
         self.cheat_controls
     }

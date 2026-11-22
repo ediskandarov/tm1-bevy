@@ -104,6 +104,7 @@ impl Stage {
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
         let arena = render::Arena::new(
             tm1_assets::screen::Fonts::load(disc)?,
+            crate::pause::Art::load(disc)?,
             load_cockpit(disc, &dmd, vehicle)?,
             scene,
             (!matches!(level, Level::Arena | Level::Arena5))
@@ -160,7 +161,11 @@ impl Stage {
             self.drive.start_with_minion();
         }
     }
-    pub fn install(self, world: &mut World) {
+    pub fn install(mut self, world: &mut World) {
+        if let Some(prev) = world.get_resource::<driving::Drive>() {
+            self.drive.settings = prev.settings;
+            self.drive.player.set_pad_layout(prev.settings.layout);
+        }
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);
         world.insert_resource(self.music);
@@ -171,7 +176,14 @@ impl Stage {
 
 pub fn advance(world: &mut World) {
     let drive = world.resource::<driving::Drive>();
-    if !drive.stage_finished() {
+    if drive.pause == Some(crate::pause::Page::Aborted) && drive.abort_delay.is_zero() {
+        if let Err(err) = crate::contest::open(world) {
+            error!("Opening title after abort failed: {err:#}");
+            world.write_message(AppExit::error());
+        }
+        return;
+    }
+    if drive.pause.is_some() || !drive.stage_finished() {
         return;
     }
     if drive.player.level() == Level::Arena5 {

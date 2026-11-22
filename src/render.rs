@@ -44,7 +44,8 @@ const COLUMNS: usize = 8;
 
 #[derive(Resource)]
 pub struct Arena {
-    fonts: tm1_assets::screen::Fonts,
+    pub(crate) fonts: tm1_assets::screen::Fonts,
+    pub(crate) pause_art: crate::pause::Art,
     cockpit: tm1_assets::screen::Cockpit,
     scene: Scene,
     sky: Option<Scene>,
@@ -74,6 +75,7 @@ pub struct Arena {
 impl Arena {
     pub fn new(
         fonts: tm1_assets::screen::Fonts,
+        pause_art: crate::pause::Art,
         cockpit: tm1_assets::screen::Cockpit,
         mut scene: Scene,
         sky: Option<Scene>,
@@ -150,6 +152,7 @@ impl Arena {
         ensure!(radius.is_finite() && radius > 0., "invalid arena bounds");
         Ok(Self {
             fonts,
+            pause_art,
             cockpit,
             scene,
             sky,
@@ -214,6 +217,15 @@ pub fn setup(
         RenderAssetUsages::default(),
     );
     cockpit_image.sampler = ImageSampler::nearest();
+    let mut pause_image = cockpit_image.clone();
+    pause_image.data = Some(vec![0; 320 * 240 * 4]);
+    commands.spawn((
+        crate::campaign::StageEntity,
+        crate::pause::Overlay::default(),
+        Sprite::from_image(images.add(pause_image)),
+        Visibility::Hidden,
+        Transform::from_xyz(0., 0., 8.),
+    ));
     let mut lettering = cockpit_image.clone();
     lettering.data = Some(vec![0; 320 * 240 * 4]);
     commands.spawn((
@@ -616,45 +628,25 @@ pub fn hud(
         "WRECKED   R · Restart"
     } else if drive.cleared() {
         "ARENA CLEARED   R · Restart"
-    } else if drive.paused {
-        "PAUSED   P · Resume"
     } else {
         ""
     };
-    let password = if drive.paused {
-        drive
-            .player
-            .level()
-            .password()
-            .map(|code| {
-                let digits: String = code
-                    .bytes()
-                    .map(|c| match c {
-                        b'<' => '1',
-                        b'=' => '2',
-                        b'>' => '3',
-                        b'@' => '4',
-                        _ => ' ',
-                    })
-                    .collect();
-                format!("   Password  {digits}")
-            })
-            .unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let message = format!("{state}{password}");
+    let message = state.to_owned();
     if label.0 != message {
         label.0 = message;
     }
 }
 
 pub fn controls(
+    drive: Res<crate::driving::Drive>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     mut arena: ResMut<Arena>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    if drive.pause.is_some() {
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyL) {
         arena.list_cars = !arena.list_cars;
     }

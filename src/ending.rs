@@ -290,7 +290,11 @@ pub fn begin(world: &mut World) -> Result<()> {
         i32::from_le_bytes(player.state()[0x138 + 0x6c..0x138 + 0x70].try_into()?),
     )?;
     crate::campaign::clear_stage(world);
-    let engine = world.resource::<crate::sfx::Sounds>().ending_engine();
+    let gain = world
+        .resource::<crate::driving::Drive>()
+        .settings
+        .effects_gain();
+    let engine = world.resource::<crate::sfx::Sounds>().ending_engine(gain);
     world.spawn((StageEntity, EndingEngine, engine));
     ending.image = spawn_screen(world, EndingScreen, ending.reward.clone());
     world.insert_resource(ending);
@@ -331,6 +335,7 @@ pub fn update(
     time: Res<Time<Real>>,
     keys: Res<ButtonInput<KeyCode>>,
     pads: Query<&Gamepad>,
+    drive: Res<crate::driving::Drive>,
     sounds: Res<crate::sfx::Sounds>,
     engines: Query<Entity, With<EndingEngine>>,
     sinks: Query<&AudioSink>,
@@ -387,14 +392,24 @@ pub fn update(
             && first_frame < signature_field
             && ending.frame >= signature_field
         {
-            commands.spawn((StageEntity, EndingEngine, sounds.ending_engine()));
-            commands.spawn((StageEntity, sounds.signature(), PlaybackSettings::DESPAWN));
+            commands.spawn((
+                StageEntity,
+                EndingEngine,
+                sounds.ending_engine(drive.settings.effects_gain()),
+            ));
+            commands.spawn((
+                StageEntity,
+                sounds.signature(),
+                PlaybackSettings::DESPAWN
+                    .with_volume(bevy::audio::Volume::Linear(drive.settings.effects_gain())),
+            ));
         }
         if let Some(track) = ending.track.take() {
             commands.spawn((
                 StageEntity,
                 AudioPlayer::new(audio.add(track)),
-                PlaybackSettings::LOOP,
+                PlaybackSettings::LOOP
+                    .with_volume(bevy::audio::Volume::Linear(drive.settings.music_gain())),
             ));
         }
         if let Some(data) = images

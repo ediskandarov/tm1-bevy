@@ -14,12 +14,12 @@ pub struct Sounds {
 }
 
 impl Sounds {
-    pub fn ending_engine(&self) -> (AudioPlayer, PlaybackSettings) {
+    pub fn ending_engine(&self, gain: f32) -> (AudioPlayer, PlaybackSettings) {
         (
             AudioPlayer::new(self.voices[2].clone()),
             PlaybackSettings::LOOP
                 .with_speed(2f32.powf(self.engine_range * 30. / (99. * 12.)))
-                .with_volume(Volume::Linear(0.28)),
+                .with_volume(Volume::Linear(0.28 * gain)),
         )
     }
 
@@ -57,7 +57,7 @@ impl Sounds {
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .chain(opponents.iter().map(|&car| programs(car).1))
-            .chain([52])
+            .chain([52, 57, 58])
             .enumerate()
         {
             let tones = program(&bank, prog)?;
@@ -111,6 +111,7 @@ pub struct OneShot(usize);
 pub fn start(
     mut commands: Commands,
     mut sounds: ResMut<Sounds>,
+    drive: Res<crate::driving::Drive>,
     mut assets: ResMut<Assets<AudioSource>>,
 ) {
     sounds.voices = std::mem::take(&mut sounds.sources)
@@ -123,7 +124,7 @@ pub fn start(
         AudioPlayer::new(sounds.voices[2].clone()),
         PlaybackSettings::LOOP
             .with_start_position(sounds.engine_loop)
-            .with_volume(Volume::Linear(0.28)),
+            .with_volume(Volume::Linear(0.28 * drive.settings.effects_gain())),
     ));
 }
 pub fn update(
@@ -131,13 +132,15 @@ pub fn update(
     sounds: Res<Sounds>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
-    engine: Query<&AudioSink, With<Engine>>,
-    shots: Query<(Entity, Option<&AudioSink>, &OneShot)>,
+    mut engine: Query<&mut AudioSink, With<Engine>>,
+    shots: Query<(Entity, Option<&AudioSink>, &OneShot), Without<Engine>>,
     mut restart: Local<u32>,
 ) {
     let reset = *restart != drive.restart_count;
-    let pause = drive.paused || !window.focused;
-    if let Ok(sink) = engine.single() {
+    let pause = drive.pause.is_some() || !window.focused;
+    let gain = drive.settings.effects_gain();
+    if let Ok(mut sink) = engine.single_mut() {
+        sink.set_volume(Volume::Linear(0.28 * gain));
         if reset {
             let _ = sink.try_seek(sounds.engine_loop);
         }
@@ -150,7 +153,7 @@ pub fn update(
     }
     *restart = drive.restart_count;
     for (e, sink, _) in &shots {
-        if reset {
+        if reset || drive.pause.is_some() {
             commands.entity(e).despawn();
         } else if let Some(sink) = sink {
             if pause {
@@ -159,6 +162,14 @@ pub fn update(
                 sink.play();
             }
         }
+    }
+    if let Some(select) = drive.pause_sound {
+        let program = sounds.voices.len() / 5 - 2 + usize::from(select);
+        commands.spawn((
+            crate::campaign::StageEntity,
+            AudioPlayer::new(sounds.voices[program * 5 + 2].clone()),
+            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+        ));
     }
     let mut remaining = 22usize.saturating_sub(shots.iter().count());
     let heading = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
@@ -182,7 +193,7 @@ pub fn update(
                 crate::campaign::StageEntity,
                 OneShot(id),
                 AudioPlayer::new(sounds.voices[id * 5 + bin as usize].clone()),
-                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume)),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume * gain)),
             ));
         }
     }

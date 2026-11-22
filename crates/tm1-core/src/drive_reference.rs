@@ -692,6 +692,59 @@ fn windshield_damage_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn control_options_match_original() {
+    let mut r = Reference::new();
+    r.cpu.put(PLAYER, &r.player.state);
+    for layout in [0, 1, 2, 3, 1] {
+        r.player.set_pad_layout(layout);
+        r.cpu.call(0x80150318, &[PLAYER, u32::from(layout)]);
+        let start = (PLAYER & 0x1fffff) as usize + 0xc8;
+        assert_eq!(
+            &r.player.state[0xc8..0xc8 + 44],
+            &r.cpu.ram[start..start + 44]
+        );
+        for input in [
+            Input {
+                accelerate: true,
+                ..Default::default()
+            },
+            Input {
+                fire_guns: true,
+                ..Default::default()
+            },
+            Input {
+                missile: true,
+                ..Default::default()
+            },
+            Input {
+                reverse: true,
+                left: true,
+                hard_turn: true,
+                ..Default::default()
+            },
+        ] {
+            let mask = r.player.keyboard_buttons(input);
+            if layout == 1 {
+                assert_eq!(mask, input.ps1_buttons());
+            }
+            r.cpu.call(0x800ffb98, &[2, u32::from(mask)]);
+            // Re-evaluate the selected original bindings for these keyboard actions.
+            for (binding, active) in [
+                (29, input.accelerate),
+                (34, input.fire_guns),
+                (35, input.missile),
+                (25, input.reverse),
+                (27, input.left),
+                (31, input.hard_turn),
+            ] {
+                let btn = u32::from(r.cpu.ram[start + binding]);
+                assert_eq!(r.cpu.call(0x800ffbe4, &[btn, 0]) != 0, active);
+            }
+        }
+    }
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn rooftops_fall_camera_original() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
     let cs = 0x800d8000;

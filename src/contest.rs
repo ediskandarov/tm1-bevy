@@ -41,12 +41,16 @@ impl Contest {
     fn sync_theme(&mut self, world: &mut World) {
         if self.page == Page::Title {
             if self.theme_entity.is_none() {
+                let gain = world
+                    .get_resource::<crate::driving::Drive>()
+                    .map_or(1., |d| d.settings.music_gain());
                 self.theme_entity = Some(
                     world
                         .spawn((
                             campaign::StageEntity,
                             AudioPlayer::new(self.theme.clone()),
-                            PlaybackSettings::LOOP.with_volume(bevy::audio::Volume::Linear(0.35)),
+                            PlaybackSettings::LOOP
+                                .with_volume(bevy::audio::Volume::Linear(0.35 * gain)),
                         ))
                         .id(),
                 );

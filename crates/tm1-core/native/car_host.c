@@ -544,6 +544,14 @@ static s16 reserve_ai_start(u16* used)
     return 0;
 }
 
+void tm1_pad_layout(u8* state, int mode)
+{
+    PlayerCar car;
+    memcpy(&car, state, sizeof(car));
+    uaPadInit(&car, mode);
+    memcpy(state, &car, sizeof(car));
+}
+
 static void init_camera_modes(PlayerCar* car, int fov)
 {
     car->vrPos[1].vx = 0;
@@ -732,8 +740,9 @@ static void respawn_player(PlayerCar* car, int fov)
     car->unkC0 = 0;
     SetBounce(car, 2, 2, 0, 1);
     car->speedDelta = 0;
+    int layout = car->skid[22];
     InitControlPad(car->skid);
-    uaPadInit(car, 1);
+    uaPadInit(car, layout);
     stats->cheatA = stats->cheatAArmed = 0;
     stats->cheatB = stats->cheatBArmed = 0;
     stats->unk01 = 0;

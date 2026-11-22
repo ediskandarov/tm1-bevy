@@ -50,6 +50,7 @@ pub struct ArenaMusic;
 pub fn start(
     mut commands: Commands,
     mut music: ResMut<Music>,
+    drive: Res<crate::driving::Drive>,
     mut assets: ResMut<Assets<AudioSource>>,
 ) {
     if let Some(source) = music.0.take() {
@@ -57,24 +58,29 @@ pub fn start(
             crate::campaign::StageEntity,
             ArenaMusic,
             AudioPlayer::new(assets.add(source)),
-            PlaybackSettings::LOOP.with_volume(Volume::Linear(0.35)),
+            PlaybackSettings::LOOP.with_volume(Volume::Linear(0.35 * drive.settings.music_gain())),
         ));
     }
 }
 pub fn control(
-    sink: Query<&AudioSink, With<ArenaMusic>>,
+    mut sink: Query<&mut AudioSink, With<ArenaMusic>>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
     mut last_restart: Local<u32>,
 ) {
-    let Ok(sink) = sink.single() else { return };
+    let Ok(mut sink) = sink.single_mut() else {
+        return;
+    };
     if *last_restart != drive.restart_count {
         if let Err(err) = sink.try_seek(Duration::ZERO) {
             warn!("Music restart failed: {err}");
         }
         *last_restart = drive.restart_count;
     }
-    let pause = drive.paused || !window.focused;
+    sink.set_volume(Volume::Linear(0.35 * drive.settings.music_gain()));
+    let pause = (drive.pause.is_some()
+        && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
+        || !window.focused;
     if pause != sink.is_paused() {
         if pause {
             sink.pause();
