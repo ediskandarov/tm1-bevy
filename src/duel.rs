@@ -465,14 +465,12 @@ pub fn pause_menu(
         }
     }
     if let Some(select) = sound {
-        commands.spawn((
-            StageEntity,
-            PauseVoice,
-            sounds.menu_voice(select),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
-                0.44 * duel.settings.effects_gain(),
-            )),
-        ));
+        let player = sounds.menu_voice(select);
+        let gain = duel.settings.effects_gain();
+        commands.queue(move |world: &mut World| {
+            let entity = crate::sfx::play_menu_button(world, select, player, gain);
+            world.entity_mut(entity).insert((StageEntity, PauseVoice));
+        });
     }
 }
 

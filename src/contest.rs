@@ -314,7 +314,17 @@ impl Contest {
             world.despawn(entity);
         }
     }
-    fn play_button(&self, world: &mut World, voice: Handle<AudioSource>) {
+    fn play_button(&self, world: &mut World, index: usize) {
+        let voice = self.button_sounds[index].clone();
+        if index < 2 {
+            crate::sfx::play_menu_button(
+                world,
+                index == 1,
+                AudioPlayer::new(voice),
+                self.settings.effects_gain(),
+            );
+            return;
+        }
         world.spawn((
             AudioPlayer::new(voice),
             PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
@@ -735,11 +745,7 @@ impl Contest {
             Page::Contest
         }
     }
-    fn input_sound(
-        &self,
-        before: Page,
-        keys: &ButtonInput<KeyCode>,
-    ) -> Option<Handle<AudioSource>> {
+    fn input_sound(&self, before: Page, keys: &ButtonInput<KeyCode>) -> Option<usize> {
         use KeyCode::*;
         let enter = keys.just_pressed(Enter);
         let vertical = keys.any_just_pressed([ArrowUp, ArrowDown]);
@@ -782,7 +788,7 @@ impl Contest {
             Page::Contest if self.garage.row != 2 && horizontal => 0,
             _ => return None,
         };
-        Some(self.button_sounds[index].clone())
+        Some(index)
     }
     fn input(&mut self, keys: &ButtonInput<KeyCode>) -> bool {
         let key = |k| keys.just_pressed(k);
@@ -1288,7 +1294,7 @@ pub fn update(world: &mut World) {
             if done != CinemaStep::Playing {
                 let next = movie.clip.next();
                 if done == CinemaStep::Skipped {
-                    menu.play_button(world, menu.button_sounds[1].clone());
+                    menu.play_button(world, 1);
                 }
                 menu.play(world, next);
             }
@@ -1393,21 +1399,21 @@ pub fn update(world: &mut World) {
                 }
                 crate::pause::navigation_sound(crate::pause::Page::Controls, action, old != settings.layout)
             });
-            (false, sound.map(|select| menu.button_sounds[usize::from(select)].clone()))
+            (false, sound.map(usize::from))
         } else if timed_out {
-            (false, (joining && timed_out).then(|| menu.button_sounds[1].clone()))
+            (false, joining.then_some(1))
         } else if preview_finished {
             menu.page = menu.after_password();
-            (false, Some(menu.button_sounds[2].clone()))
+            (false, Some(2))
         } else if menu.page == Page::Password {
             let sound = menu.password_input(keys);
-            (false, sound.map(|index| menu.button_sounds[index].clone()))
+            (false, sound)
         } else {
             let start = menu.input(keys);
             (start, menu.input_sound(previous, keys))
         };
         if preview_confirmed {
-            menu.play_button(world, menu.button_sounds[1].clone());
+            menu.play_button(world, 1);
         }
         if menu.player_cars != *world.resource::<PlayerCars>() {
             world.insert_resource(menu.player_cars);
@@ -2158,14 +2164,22 @@ mod tests {
         }
         assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
         let menu_voices = |world: &mut World| {
-            world
-                .query_filtered::<Entity, With<duel::PauseVoice>>()
-                .iter(world)
-                .count()
+            let bank = world.resource::<crate::sfx::duel::DuelBank>();
+            let sources = [bank.menu_voice(false).0, bank.menu_voice(true).0];
+            sources.map(|source| {
+                let mut query =
+                    world.query_filtered::<(Entity, &AudioPlayer), With<duel::PauseVoice>>();
+                let mut matching = query.iter(world).filter(|(_, player)| player.0 == source);
+                let entity = matching.next().unwrap().0;
+                assert!(matching.next().is_none());
+                entity
+            })
         };
-        let before = menu_voices(&mut world);
+        let [cycle, select] = menu_voices(&mut world);
         step(&mut world, &[Space]);
-        assert_eq!(menu_voices(&mut world), before + 1);
+        let after = menu_voices(&mut world);
+        assert_eq!(after[0], cycle);
+        assert_ne!(after[1], select);
         step(&mut world, &[]);
         world
             .resource_mut::<Time<Real>>()
@@ -2177,7 +2191,7 @@ mod tests {
             .advance_by(Duration::from_secs_f64(1. / 60.));
         step(&mut world, &[]);
         assert!(world.resource::<duel::Duel>().pause.is_none());
-        assert_eq!(menu_voices(&mut world), before + 1);
+        assert_eq!(menu_voices(&mut world), after);
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(50));
@@ -2595,10 +2609,10 @@ mod tests {
         let confirmations = |world: &mut World| {
             let sound = world.resource::<Contest>().button_sounds[1].clone();
             world
-                .query::<&AudioPlayer>()
+                .query::<(Entity, &AudioPlayer)>()
                 .iter(world)
-                .filter(|p| p.0 == sound)
-                .count()
+                .filter_map(|(entity, player)| (player.0 == sound).then_some(entity))
+                .collect::<Vec<_>>()
         };
         let mut pads = [
             world.spawn(Gamepad::default()).id(),
@@ -2617,7 +2631,7 @@ mod tests {
             .press(GamepadButton::Select);
         tick(&mut world, 1933);
         assert!(clip(&world) == Some(Clip::Logo));
-        assert_eq!(confirmations(&mut world), 0);
+        assert!(confirmations(&mut world).is_empty());
         world
             .get_mut::<Gamepad>(pads[0])
             .unwrap()
@@ -2634,7 +2648,8 @@ mod tests {
         assert!(clip(&world) == Some(Clip::Logo));
         tick(&mut world, 57);
         assert!(clip(&world) == Some(Clip::Title));
-        assert_eq!(confirmations(&mut world), 1);
+        let first = confirmations(&mut world);
+        assert_eq!(first.len(), 1);
         world
             .get_mut::<Gamepad>(pads[0])
             .unwrap()
@@ -2666,7 +2681,7 @@ mod tests {
         tick(&mut world, 166);
         world.insert_resource(ButtonInput::<KeyCode>::default());
         assert!(clip(&world).is_none());
-        assert_eq!(confirmations(&mut world), 1);
+        assert_eq!(confirmations(&mut world), first);
         assert!(world.resource::<Contest>().theme_entity.is_some());
         tick(&mut world, 0);
         tick(&mut world, 20017);
@@ -2675,7 +2690,9 @@ mod tests {
         tick(&mut world, 0);
         press(&mut world, KeyCode::KeyP);
         assert!(clip(&world) == Some(Clip::Title));
-        assert_eq!(confirmations(&mut world), 2);
+        let second = confirmations(&mut world);
+        assert_eq!(second.len(), 1);
+        assert_ne!(second, first);
     }
 
     #[test]

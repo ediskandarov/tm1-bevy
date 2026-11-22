@@ -9,6 +9,32 @@ use bevy::{
 };
 use tm1_assets::{disc::Disc, sound::program};
 
+#[derive(Component)]
+struct MenuButtonVoice(bool);
+
+pub(crate) fn play_menu_button(
+    world: &mut World,
+    select: bool,
+    player: AudioPlayer,
+    gain: f32,
+) -> Entity {
+    // UA_SOUND requests cycle and select with mode 5: each restarts its own ID.
+    let previous = world
+        .query::<(Entity, &MenuButtonVoice)>()
+        .iter(world)
+        .find_map(|(entity, voice)| (voice.0 == select).then_some(entity));
+    if let Some(entity) = previous {
+        world.despawn(entity);
+    }
+    world
+        .spawn((
+            MenuButtonVoice(select),
+            player,
+            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+        ))
+        .id()
+}
+
 #[derive(Resource)]
 pub struct Sounds {
     sources: Vec<AudioSource>,
@@ -470,11 +496,13 @@ pub fn update(
         }
     }
     if let Some(select) = drive.pause_sound {
-        commands.spawn((
-            crate::campaign::StageEntity,
-            sounds.menu_voice(select),
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
-        ));
+        let player = sounds.menu_voice(select);
+        commands.queue(move |world: &mut World| {
+            let entity = play_menu_button(world, select, player, gain);
+            world
+                .entity_mut(entity)
+                .insert(crate::campaign::StageEntity);
+        });
     }
 
     if stop_battle {
