@@ -40,7 +40,7 @@ struct ViewMeshes {
     transparent: Handle<Mesh>,
 }
 const TILE: usize = 256;
-const COLUMNS: usize = 8;
+const MAX_ATLAS_SIDE: usize = 8192;
 
 #[derive(Resource)]
 pub struct Arena {
@@ -53,6 +53,7 @@ pub struct Arena {
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     flame_frames: [SpriteFrame; 10],
+    burn_frames: [SpriteFrame; 8],
     smoke_frames: [[SpriteFrame; 16]; 2],
     vehicle_start: usize,
     body_ranges: Vec<[std::ops::Range<usize>; 3]>,
@@ -85,6 +86,7 @@ impl Arena {
         missile_models: [Option<Scene>; 2],
         explosion_frames: [SpriteFrame; 16],
         flame_frames: [SpriteFrame; 10],
+        burn_frames: [SpriteFrame; 8],
         smoke_frames: [[SpriteFrame; 16]; 2],
         contrail_frames: [SpriteFrame; 8],
         icons: tm1_assets::scene::DashboardIcons,
@@ -116,6 +118,7 @@ impl Arena {
         for (frame, semi) in explosion_frames
             .iter()
             .chain(&flame_frames)
+            .chain(&burn_frames)
             .chain(smoke_frames.iter().flatten())
             .chain(&contrail_frames)
             .chain(&arrows)
@@ -125,9 +128,13 @@ impl Arena {
             let next = tiles.len();
             tiles.entry((Some(frame.texture), semi)).or_insert(next);
         }
-        let width = COLUMNS * TILE;
-        let height = tiles.len().div_ceil(COLUMNS) * TILE;
-        ensure!(height <= 8192, "texture atlas exceeds prototype limit");
+        let columns = tiles.len().isqrt().max(1);
+        let width = columns * TILE;
+        let height = tiles.len().div_ceil(columns) * TILE;
+        ensure!(
+            width.max(height) <= MAX_ATLAS_SIDE,
+            "texture atlas exceeds supported dimensions"
+        );
         let mut pixels = vec![0; width * height * 4];
         for ((key, semi), slot) in &tiles {
             for y in 0..TILE {
@@ -136,7 +143,7 @@ impl Arena {
                         Some(k) => vram.sample_primitive(*k, x as u8, y as u8, *semi)?,
                         None => [255, 255, 255, if *semi { 128 } else { 255 }],
                     };
-                    let i = ((slot / COLUMNS * TILE + y) * width + slot % COLUMNS * TILE + x) * 4;
+                    let i = ((slot / columns * TILE + y) * width + slot % columns * TILE + x) * 4;
                     pixels[i..i + 4].copy_from_slice(&color);
                 }
             }
@@ -164,6 +171,7 @@ impl Arena {
             body_ranges,
             explosion_frames,
             flame_frames,
+            burn_frames,
             smoke_frames,
             contrail_frames,
             overview: false,
@@ -1095,6 +1103,7 @@ fn draw_view(
                 }
                 31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
                 32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
+                38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
                 35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
                 28 | 37 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
@@ -1185,7 +1194,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 8 | 26..=37 => continue,
+            3 | 8 | 26..=43 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };
@@ -1234,8 +1243,10 @@ fn draw_view(
 impl Arena {
     fn uv(&self, slot: usize, uv: Vec2) -> [f32; 2] {
         [
-            ((slot % COLUMNS * TILE) as f32 + uv.x + 0.5) / self.atlas_size[0] as f32,
-            ((slot / COLUMNS * TILE) as f32 + uv.y + 0.5) / self.atlas_size[1] as f32,
+            ((slot % (self.atlas_size[0] / TILE) * TILE) as f32 + uv.x + 0.5)
+                / self.atlas_size[0] as f32,
+            ((slot / (self.atlas_size[0] / TILE) * TILE) as f32 + uv.y + 0.5)
+                / self.atlas_size[1] as f32,
         ]
     }
 }

@@ -136,6 +136,7 @@ impl Stage {
             ],
             dmd.explosion_frames()?,
             dmd.flame_frames()?,
+            dmd.burn_frames()?,
             [dmd.smoke_frames(false)?, dmd.smoke_frames(true)?],
             dmd.contrail_frames()?,
             dmd.dashboard_icons()?,
@@ -179,6 +180,9 @@ impl Stage {
     }
     pub fn install(mut self, world: &mut World) {
         if let Some(prev) = world.get_resource::<driving::Drive>() {
+            self.drive
+                .contacts
+                .continue_static_cop_cycle(&prev.contacts);
             self.drive.settings = prev.settings;
             self.drive.player.set_pad_layout(prev.settings.layout);
         }

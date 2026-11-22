@@ -19,7 +19,15 @@ typedef struct DamageNode {
     u8 initial;
 } DamageNode;
 
+typedef struct StaticCop {
+    DbSwitch* node;
+    VECTOR3 pos;
+    int phase, delay;
+} StaticCop;
+
 typedef struct CollisionScene {
+    StaticCop cops[25];
+    int cop_cycle;
     ArenaTarget targets[50];
     DamageNode damage_nodes[2][30];
     int num_targets, num_damage_nodes[2];
@@ -305,6 +313,8 @@ static bool scan_targets(CollisionScene* s, DbNode* n, VECTOR3 pos, unsigned* vi
             && scan_targets(s, n->ctrl.childOut, pos, visits);
     }
 
+    if (op == DB_OP_SWITCH && type >= 753 && type <= 755 && n->sw.sub >= 1 && n->sw.sub <= 25)
+        s->cops[n->sw.sub - 1] = (StaticCop){ &n->sw, pos, 0, 6 };
     int group = damage_node_class(type);
     if (group >= 0 && op != DB_OP_BOX && op != DB_OP_VOLUME && op != DB_OP_UNK_6 && op != DB_OP_UNK_10) {
         u16 sub;
@@ -550,6 +560,14 @@ void tm1_reset_projectiles(CollisionScene* s)
                 model.node->sw.sel = model.initial;
         }
     }
+    for (int i = 0; i < 25; i++) {
+        StaticCop* cop = &s->cops[i];
+        if (cop->node) {
+            cop->phase = 0;
+            cop->delay = 6;
+            cop->node->sel = 0;
+        }
+    }
     s->drop_box_tick = s->window_tick = 0;
     for (int i = 0; i < 8; i++)
         if (s->arena_switches[i])
@@ -760,6 +778,15 @@ int tm1_damage_branch(const CollisionScene* s, u32 addr)
 
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
+    if ((id <= 0 || id == 8) && tag >= 753 && tag <= 755 && sub >= 1 && sub <= 25) {
+        StaticCop* cop = &current->cops[sub - 1];
+        arena_effect(&cop->pos, 36);
+        if (cop->node && cop->phase < 4) {
+            cop->phase = 4;
+            cop->node->sel = 4;
+        }
+        return;
+    }
     if ((id <= 0 || id == 8) && tag == UA_DROP_BOX) {
         DbSwitch* release = current->arena_switches[4];
         if (release && release->nChild > 1)
@@ -1015,6 +1042,86 @@ static void advance_rooftop_switch(DbSwitch* node, int* tick)
     }
 }
 
+static void static_cop_fire(StaticCop* cop, const VECTOR3* target)
+{
+    VECTOR3 pos = cop->pos;
+    int type = cop->node->h.kind;
+    cop->phase = 3;
+    cop->delay = 4;
+    if (type == 753) {
+        pos.vz += 40;
+        VECTOR3 aim;
+        aim.vx = target->vx - pos.vx - 64 + (arena_rand() & 127);
+        aim.vy = target->vy - pos.vy - 64 + (arena_rand() & 127);
+        aim.vz = target->vz - pos.vz;
+        create_bullet(-type, &aim, &pos, 1);
+        arena_flash(&pos);
+    } else {
+        pos.vz += 52;
+        int dx = target->vx - pos.vx + arena_rand() % 200 - 100;
+        int yaw = ratan2(dx, target->vy - pos.vy) + arena_rand() % 200 - 100;
+        arena_cop_missile(-type, yaw, &pos);
+        arena_flash(&pos);
+        do_puff(&pos);
+        cop->delay = 7 + (arena_rand() & 7);
+    }
+}
+
+void tm1_continue_static_cop_cycle(CollisionScene* scene, const CollisionScene* previous)
+{
+    scene->cop_cycle = previous->cop_cycle;
+}
+
+void tm1_move_static_cops(const VECTOR3* player)
+{
+    for (int i = current->cop_cycle; i < 25; i += 6) {
+        StaticCop* cop = &current->cops[i];
+        if (!cop->node)
+            continue;
+        int dx = abs(player->vx - cop->pos.vx);
+        int dy = abs(player->vy - cop->pos.vy);
+        int distance = dx >= dy ? dx + (dy >> 1) : dy + (dx >> 1);
+        switch (cop->phase) {
+        case 0:
+            if (distance < 1200)
+                cop->phase = 1;
+            break;
+        case 1:
+            cop->phase = distance < 1200 ? 2 : 0;
+            if (cop->phase == 2)
+                cop->delay = 2;
+            break;
+        case 2:
+            if (--cop->delay <= 0)
+                static_cop_fire(cop, player);
+            break;
+        case 3:
+            if (--cop->delay < 3)
+                cop->phase = distance < 1200 ? 2 : 1;
+            break;
+        case 4:
+            cop->phase = 5;
+            break;
+        case 5:
+            cop->phase = 6;
+            cop->delay = 900;
+            break;
+        case 6:
+            if (--cop->delay <= 0)
+                cop->phase = 0;
+            break;
+        }
+        if (cop->phase < cop->node->nChild)
+            cop->node->sel = cop->phase;
+    }
+    current->cop_cycle = (current->cop_cycle + 1) % 6;
+}
+
+void arena_flash(VECTOR3* pos)
+{
+    arena_effect(pos, 38 + arena_rand() % 6);
+}
+
 void tm1_move_rooftop_targets(void)
 {
     advance_rooftop_switch(current->arena_switches[5], &current->drop_box_tick);
@@ -1042,6 +1149,7 @@ void arena_effect(VECTOR3* pos, s32 kind)
     case 2: e[4] = 7; break;
     case 8:
     case 34: e[4] = 88; break;
+    case 38: case 39: case 40: case 41: case 42: case 43: e[4] = 3; break;
     case 35: e[4] = 104; break;
     case 31: e[4] = 24; break;
     case 32: e[4] = 16; break;

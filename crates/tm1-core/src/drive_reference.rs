@@ -2019,6 +2019,9 @@ fn compare_battle_controls(
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
         r.cpu.call(0x80135e10, &[]);
+        if level != Level::Arena {
+            r.cpu.call(0x8014aaa0, &[]);
+        }
         r.cpu.call(0x80120728, &[]);
         if lineup.is_empty() {
             r.scene.step(&mut r.player, &mut r.police, input, fields);
@@ -2080,32 +2083,7 @@ fn compare_battle_controls(
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
         }
         if boss {
-            let mut poses = [[0; 13]; 10];
-            let count = r.scene.missile_poses(&mut poses);
-            let expected = (0..10)
-                .map(|i| 0x801a9c10 + 0x3e8 * i)
-                .filter(|&m| r.cpu.word(m + 0x34) as i32 > 0)
-                .map(|m| {
-                    let cs = r.cpu.word(m + 0x24);
-                    [0, 4, 8].map(|d| r.cpu.word(cs + 0x5c + d) as i32)
-                });
-            assert!(
-                poses[..count]
-                    .iter()
-                    .map(|row| [row[1], row[2], row[3]])
-                    .eq(expected),
-                "missiles {vehicle:?} tick {tick}"
-            );
-            let mut shots = [[[0; 3]; 2]; 40];
-            let count = r.scene.bullet_segments(&mut shots);
-            let expected = (0..40)
-                .map(|i| 0x80198c28 + 0x3c * i)
-                .filter(|&b| r.cpu.word(b + 0x28) as i32 > 0)
-                .map(|b| [12, 0].map(|p| [0, 4, 8].map(|d| r.cpu.word(b + p + d) as i32)));
-            assert!(
-                shots[..count].iter().copied().eq(expected),
-                "bullets {vehicle:?} tick {tick}"
-            );
+            compare_projectiles(&r, vehicle, tick);
             if tick == 360 {
                 let charge = i16::from_le_bytes(lineup[3].state[0x536..0x538].try_into().unwrap());
                 assert!(charge < 20, "expected Minion to use the special weapon");
@@ -2762,4 +2740,123 @@ fn rooftop_pyramid_bullet_matches_retail_clouds() {
         .collect();
     assert_eq!(native, clouds);
     assert_eq!(r.player.seed, r.cpu.random_state);
+}
+
+fn compare_projectiles(r: &Reference, vehicle: Vehicle, tick: usize) {
+    let mut poses = [[0; 13]; 10];
+    let count = r.scene.missile_poses(&mut poses);
+    let expected = (0..10)
+        .map(|i| 0x801a9c10 + 0x3e8 * i)
+        .filter(|&m| r.cpu.word(m + 0x34) as i32 > 0)
+        .map(|m| {
+            let cs = r.cpu.word(m + 0x24);
+            [0, 4, 8].map(|d| r.cpu.word(cs + 0x5c + d) as i32)
+        });
+    assert!(
+        poses[..count]
+            .iter()
+            .map(|row| [row[1], row[2], row[3]])
+            .eq(expected),
+        "missiles {vehicle:?} tick {tick}"
+    );
+    let mut shots = [[[0; 3]; 2]; 40];
+    let count = r.scene.bullet_segments(&mut shots);
+    let expected = (0..40)
+        .map(|i| 0x80198c28 + 0x3c * i)
+        .filter(|&b| r.cpu.word(b + 0x28) as i32 > 0)
+        .map(|b| [12, 0].map(|p| [0, 4, 8].map(|d| r.cpu.word(b + p + d) as i32)));
+    assert!(
+        shots[..count].iter().copied().eq(expected),
+        "bullets {vehicle:?} tick {tick}"
+    );
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn static_cop_encounters_match_disc() {
+    let mut kinds = std::collections::BTreeSet::new();
+    for level in [
+        Level::Warehouse,
+        Level::Freeway,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Rooftops,
+    ] {
+        let r = Reference::on_level(Vehicle::YellowJacket, true, level);
+        for slot in 0..25 {
+            let at = 0x8019eac0 + 28 * slot;
+            let kind = r.cpu.word(at);
+            if kind == 0 || !kinds.insert(kind) {
+                continue;
+            }
+            let mut r = Reference::on_level(Vehicle::YellowJacket, true, level);
+            let ptr = r.cpu.word(at + 4);
+            let [x, y, z] = [16, 20, 24].map(|off| r.cpu.word(at + off) as i32);
+            println!("{level:?} slot {slot} kind {kind} at {x},{y},{z}");
+            for i in 0..10 {
+                let m = 0x801a9c10 + 0x3e8 * i;
+                put(&mut r.cpu, m + 0x34, (-12i32) as u32);
+                put(&mut r.cpu, m + 0x24, 0x800d0000 + 0x110 * i);
+                put(&mut r.cpu, m + 0x100, 0x800d1000 + 0x110 * i);
+                r.cpu.put(m + 0x30, &[i as u8]);
+            }
+            r.cpu.put(0x801085d0, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            r.sync();
+            let mut phases = std::collections::BTreeSet::new();
+            for t in 0..5600 {
+                let dx = match t {
+                    0..=11 => 1200,
+                    12..=83 => 1199,
+                    _ => 100000,
+                };
+                let pos = [x + dx, y, z];
+                vec3(&mut r.player.state, 0x388, pos);
+                vec3_cpu(&mut r.cpu, PLAYER + 0x388, pos);
+                if t == 90 {
+                    r.cpu.call(0x8014b010, &[slot + 1]);
+                    unsafe extern "C" {
+                        fn bulDispatchDamage(
+                            id: i32,
+                            tag: i32,
+                            sub: i32,
+                            dmg: i32,
+                            dir: *const i32,
+                            owner: i32,
+                        );
+                    }
+                    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+                    unsafe {
+                        tm1_use_scene(r.scene.native.as_ptr());
+                        bulDispatchDamage(8, kind as i32, slot as i32 + 1, 1, std::ptr::null(), 0);
+                        tm1_use_scene(std::ptr::null_mut());
+                    }
+                    assert_eq!(r.scene.damage_branch(ptr), 4);
+                    assert_eq!(r.cpu.ram[(ptr as usize & 0x1fffff) + 7], 4);
+                    phases.insert(4);
+                }
+                r.cpu.call(0x8014aaa0, &[]);
+                r.scene.phase(&mut r.player, &mut r.police, 3, 3);
+                let branch = r.cpu.ram[(ptr as usize & 0x1fffff) + 7];
+                assert_eq!(
+                    r.scene.damage_branch(ptr),
+                    branch,
+                    "{level:?} {kind} tick {t}"
+                );
+                assert_eq!(
+                    r.player.seed, r.cpu.random_state,
+                    "{level:?} {kind} RNG tick {t}"
+                );
+                if t < 85 {
+                    compare_projectiles(&r, Vehicle::YellowJacket, t);
+                }
+                phases.insert(branch);
+            }
+            assert_eq!(
+                phases.into_iter().collect::<Vec<_>>(),
+                (0..7).collect::<Vec<_>>()
+            );
+            assert_eq!(r.scene.damage_branch(ptr), 0);
+        }
+    }
+    assert_eq!(kinds.into_iter().collect::<Vec<_>>(), [753, 754, 755]);
 }

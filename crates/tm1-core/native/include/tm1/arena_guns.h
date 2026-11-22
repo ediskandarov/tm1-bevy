@@ -16,6 +16,10 @@ typedef struct Bullet {
 
 void s_create_bullet(s32 owner, VECTOR3* dir, VECTOR3* pos, s32 kind, s32 damage, s32 life, s32 arg6);
 Bullet *arena_bullets(void);
+void create_bullet(s32, VECTOR3*, VECTOR3*, s32);
+void arena_flash(VECTOR3*);
+void arena_cop_missile(int, int, const VECTOR3*);
+void tm1_move_static_cops(const VECTOR3*);
 void arena_move_bullets(void);
 void arena_update_guns(Car *,u8);
 void arena_update_ai_guns(AICar *);

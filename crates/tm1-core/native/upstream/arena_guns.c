@@ -132,8 +132,7 @@ void arena_move_bullets(void)
                         do_puff(&q);
                     }
                     if (b->unk30 != 8) {
-                        (void)arena_rand();
-                        arena_effect(&q, 9);
+                        arena_flash(&q);
                     }
                     if (b->kind >= 15)
                         arena_effect(&q, 2);

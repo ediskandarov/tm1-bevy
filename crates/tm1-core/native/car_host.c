@@ -997,7 +997,10 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     tm1_use_scene(scene);
     tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
     tm1_contact_setup(GetAICs3D(0), &ai.motion, &ai.stats);
-    contact_phase(&player, &ai, is_player, fields);
+    if (is_player == 3)
+        tm1_move_static_cops(&player.motion.pos);
+    else
+        contact_phase(&player, &ai, is_player, fields);
     if (!is_player) {
         arena_regenerate_pickups();
         UpdateNumPotHoles();
@@ -1063,6 +1066,8 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     tm1_regenerate_stands();
     if (current_level == LEVEL6_ROOFTOPS)
         tm1_move_rooftop_targets();
+    if (current_level >= LEVEL2_WAREHOUSE)
+        tm1_move_static_cops(&player.motion.pos);
     UpdateNumPotHoles();
     tm1_store_battle(battle);
     *seed = random_state;

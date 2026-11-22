@@ -208,6 +208,10 @@ impl<'a> Dmd<'a> {
         let object = self.sprite_node(0, 651)?;
         self.read_sprite_frames(object, steam, u32le(self.data, object + 16)? as usize)
     }
+    pub fn burn_frames(&self) -> Result<[SpriteFrame; 8]> {
+        let p = self.sprite_node(0, 656)?;
+        self.read_sprite_frames(p, false, u32le(self.data, p + 16)? as usize)
+    }
     pub fn flame_frames(&self) -> Result<[SpriteFrame; 10]> {
         self.sprite_frames(650, true)
     }
@@ -637,7 +641,7 @@ impl<'a> Dmd<'a> {
                     }
                 } else if matches!(
                     kind,
-                    600 | 601 | 610..=613 | 770 | 902 | 1000 | 1002 | 1009 | 1010 | 1017
+                    600 | 601 | 610..=613 | 753..=755 | 770 | 902 | 1000 | 1002 | 1009 | 1010 | 1017
                 ) {
                     for branch in 0..d[p + 6] {
                         let first = scene.polygons.len();

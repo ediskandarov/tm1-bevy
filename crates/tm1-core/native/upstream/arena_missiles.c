@@ -186,6 +186,27 @@ static void start_trail(Missile* m, int color)
     update_trail(m);
 }
 
+// WEAPON.c create_LOS_missile used by TARGETS.c static_cop_fire.
+void arena_cop_missile(int owner, int yaw, const VECTOR3* pos)
+{
+    int index = find_free_missile(0);
+    if (index < 0)
+        return;
+    Missile* m = &mlist[index];
+    m->model = 201;
+    m->cs->pos = *pos;
+    setVector(&m->cs->rot, 0, 0, yaw);
+    RotMatrixYXZ(&m->cs->rot, &m->cs->mat);
+    m->pos = *pos;
+    m->unk2C = m->unk48 = m->unk56 = 0;
+    m->life = 30;
+    m->unk38 = 150;
+    m->damage = 2;
+    m->target = NULL;
+    m->unk50 = owner;
+    start_trail(m, 0x0a320a);
+}
+
 // Common position and orientation writes in INTERACT.c and basic_missile_launch.
 static void mount_missile(Missile* m, CarMotion* motion, VECTOR3 local)
 {

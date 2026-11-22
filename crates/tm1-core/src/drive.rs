@@ -943,6 +943,15 @@ impl CollisionScene {
             battle: [0; 3],
         })
     }
+    pub fn continue_static_cop_cycle(&mut self, previous: &Self) {
+        unsafe extern "C" {
+            fn tm1_continue_static_cop_cycle(
+                scene: *mut std::ffi::c_void,
+                previous: *const std::ffi::c_void,
+            );
+        }
+        unsafe { tm1_continue_static_cop_cycle(self.native.as_ptr(), previous.native.as_ptr()) }
+    }
     pub fn damage_branch(&self, address: u32) -> u8 {
         unsafe extern "C" {
             fn tm1_damage_branch(scene: *const std::ffi::c_void, address: u32) -> i32;
