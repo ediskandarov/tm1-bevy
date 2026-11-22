@@ -1061,6 +1061,7 @@ unsafe extern "C" {
         frame: u32,
         tables: *const i16,
         seed: *mut u32,
+        turbo: *mut u8,
     );
     #[cfg(test)]
     fn tm1_contacts(
@@ -1080,6 +1081,7 @@ pub struct CollisionScene {
     battle: [i16; 3],
     duel_returns: Vec<(usize, i16)>,
     duel_winner: Option<usize>,
+    turbo_requests: [u8; 2],
     duel_gun_requests: [u8; 2],
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
@@ -1123,6 +1125,7 @@ impl CollisionScene {
             duel_returns: Vec::new(),
             duel_winner: None,
             duel_gun_requests: [0; 2],
+            turbo_requests: [0; 2],
         })
     }
     pub fn continue_stage_state(&mut self, previous: &Self) {
@@ -1288,7 +1291,14 @@ impl CollisionScene {
         self.step_bout_with_pads(player, opponents, u32::from(input.ps1_buttons()), fields)
     }
 
-    /// Step both human actors and the arena using one clock and one RNG.
+    pub fn turbo_sound_requests(&self) -> [Option<bool>; 2] {
+        self.turbo_requests.map(|v| match v {
+            1 => Some(true),
+            2 => Some(false),
+            _ => None,
+        })
+    }
+
     pub fn duel_gun_requests(&self) -> [Option<bool>; 2] {
         self.duel_gun_requests.map(|request| match request {
             1 => Some(true),
@@ -1314,6 +1324,7 @@ impl CollisionScene {
                 table: *const i16,
                 seed: *mut u32,
                 requests: *mut u8,
+                turbo: *mut u8,
             );
         }
         assert_eq!(self.opponent_count, 0);
@@ -1343,6 +1354,7 @@ impl CollisionScene {
                 first.trig.as_ptr(),
                 &mut first.seed,
                 self.duel_gun_requests.as_mut_ptr(),
+                self.turbo_requests.as_mut_ptr(),
             );
         }
         second.frame = first.frame;
@@ -1399,6 +1411,7 @@ impl CollisionScene {
                 player.frame,
                 player.trig.as_ptr(),
                 &mut player.seed,
+                self.turbo_requests.as_mut_ptr(),
             );
         }
         player.cap_turbo_reserve();

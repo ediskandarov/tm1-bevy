@@ -7,6 +7,7 @@ use tm1_core::drive::{
 #[derive(Clone, Copy, PartialEq)]
 pub enum ExclusiveVoice {
     MachineGuns(Vehicle),
+    Turbo,
     Recharge,
     Hover,
     Pickup(i32),
@@ -75,6 +76,7 @@ pub struct Drive {
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
     pub sounds: Vec<BattleSound>,
+    pub turbo_requests: Vec<bool>,
     remainder: Duration,
     pub pause: Option<crate::pause::Page>,
     pub settings: crate::pause::Settings,
@@ -258,6 +260,7 @@ impl Drive {
             camera: tm1_core::drive::VehicleCamera::new(&player, tm1_core::drive::CarView::Chase),
             player,
             sounds: Vec::new(),
+            turbo_requests: Vec::new(),
             remainder: Duration::ZERO,
             pause: None,
             pause_sound: None,
@@ -291,6 +294,7 @@ pub fn advance(
     mut timings: Local<Vec<f64>>,
 ) {
     drive.sounds.clear();
+    drive.turbo_requests.clear();
     drive.pause_sound = None;
     if capture.holding_battle_frame() {
         return;
@@ -557,6 +561,9 @@ pub fn advance(
         state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
+        state
+            .turbo_requests
+            .extend(state.contacts.turbo_sound_requests()[0]);
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter
         {

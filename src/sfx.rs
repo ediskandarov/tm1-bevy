@@ -10,6 +10,7 @@ use tm1_assets::{disc::Disc, sound::program};
 #[derive(Resource)]
 pub struct Sounds {
     sources: Vec<AudioSource>,
+    turbo: Vec<PreparedTone>,
     rival_engines: Vec<(AudioSource, f32, std::time::Duration)>,
     voices: Vec<Handle<AudioSource>>,
     engine_range: f32,
@@ -70,6 +71,69 @@ impl Sample {
     }
 }
 
+// Program 26 is the four-tone sound at ID 0x82 in the JP sound table.
+const TURBO_PROGRAM: usize = 26;
+
+struct PreparedTone {
+    wave: AudioSource,
+    looping_clip: Option<looping::LoopingPcm>,
+    priority: u8,
+    range: f32,
+    loop_start: std::time::Duration,
+}
+
+struct Layer {
+    source: Handle<AudioSource>,
+    looping_clip: Option<Handle<looping::LoopingPcm>>,
+    priority: u8,
+    range: f32,
+    loop_start: std::time::Duration,
+}
+
+impl PreparedTone {
+    fn new(tone: tm1_assets::sound::Tone, engine: bool, looping: bool) -> Result<Self> {
+        let priority = tone.priority;
+        let first_loop_frame = tone.loop_start.filter(|_| looping).map(|frame| {
+            let note = if engine { tone.low } else { 60 };
+            let rate = 2.0_f32.powf((f32::from(note) - f32::from(tone.center)) / 12.);
+            (frame as f64 / f64::from(rate)).ceil() as usize
+        });
+        let sample = Sample::from_tones(vec![tone], engine);
+        Ok(Self {
+            wave: sample.wave(0.)?,
+            looping_clip: first_loop_frame
+                .map(|frame| looping::LoopingPcm::new(&sample.mix, frame)),
+            priority,
+            range: sample.range,
+            loop_start: sample.loop_start,
+        })
+    }
+    fn register(self, world: &mut World) -> Layer {
+        Layer {
+            source: world.resource_mut::<Assets<AudioSource>>().add(self.wave),
+            looping_clip: self.looping_clip.map(|clip| {
+                world
+                    .resource_mut::<Assets<looping::LoopingPcm>>()
+                    .add(clip)
+            }),
+            priority: self.priority,
+            range: self.range,
+            loop_start: self.loop_start,
+        }
+    }
+}
+impl Layer {
+    fn play(&self, entity: &mut bevy::ecs::system::EntityCommands) {
+        if let Some(clip) = &self.looping_clip {
+            entity.insert(AudioPlayer(clip.clone()));
+        } else {
+            entity.insert(AudioPlayer::new(self.source.clone()));
+        }
+    }
+}
+#[derive(Resource)]
+pub struct TurboSounds(Vec<Layer>);
+
 pub(crate) fn engine_speed(range: f32, rev: i32) -> f32 {
     let pitch_steps = (range as i32 * 128 * rev.clamp(0, 99)) / 99;
     2f32.powf(pitch_steps as f32 / (128. * 12.))
@@ -90,6 +154,17 @@ fn battle_programs(
 }
 
 impl Sounds {
+    pub fn install_turbo(&mut self, world: &mut World) {
+        world.init_resource::<Assets<AudioSource>>();
+        world.init_resource::<Assets<looping::LoopingPcm>>();
+        let layers = self
+            .turbo
+            .drain(..)
+            .map(|tone| tone.register(world))
+            .collect();
+        world.insert_resource(TurboSounds(layers));
+    }
+
     fn register(&mut self, assets: &mut Assets<AudioSource>) {
         self.voices = std::mem::take(&mut self.sources)
             .into_iter()
@@ -147,6 +222,10 @@ impl Sounds {
         }
         Ok(Self {
             sources,
+            turbo: program(&bank, TURBO_PROGRAM)?
+                .into_iter()
+                .map(|tone| PreparedTone::new(tone, false, true))
+                .collect::<Result<_>>()?,
             rival_engines,
             voices: Vec::new(),
             engine_range,
@@ -197,6 +276,7 @@ pub fn start(
 pub fn update(
     mut commands: Commands,
     sounds: Res<Sounds>,
+    turbo: Res<TurboSounds>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
     mut engine: Query<&mut AudioSink, With<Engine>>,
@@ -306,7 +386,8 @@ pub fn update(
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
         ));
     }
-    if drive.sounds.is_empty() {
+
+    if drive.turbo_requests.is_empty() && drive.sounds.is_empty() {
         return;
     }
     let mut remaining = 22usize.saturating_sub(shots.iter().count() + active_engines);
@@ -314,6 +395,32 @@ pub fn update(
         .iter()
         .filter_map(|(entity, _, shot)| shot.0.filter(|_| !reset).map(|key| (key, entity)))
         .collect();
+    let turbo_key = crate::driving::ExclusiveVoice::Turbo;
+    for &boosting in &drive.turbo_requests {
+        if boosting {
+            if active.iter().any(|&(key, _)| key == turbo_key) {
+                continue;
+            }
+            for tone in turbo.0.iter().take(remaining) {
+                let mut voice = commands.spawn((
+                    crate::campaign::StageEntity,
+                    OneShot(Some(turbo_key)),
+                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+                ));
+                tone.play(&mut voice);
+                active.push((turbo_key, voice.id()));
+                remaining -= 1;
+            }
+        } else {
+            active.retain(|&(key, entity)| {
+                if key == turbo_key {
+                    commands.entity(entity).despawn();
+                    remaining += 1;
+                }
+                key != turbo_key
+            });
+        }
+    }
     for sound in &drive.sounds {
         let id = sound.id;
         let (pan, attenuation) = mix_position(sound.position);
@@ -356,5 +463,99 @@ pub fn update(
                 active.push((key, entity));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod boost_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn turbo_tones_follow_fuel_and_duel_slot_order() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::ExclusiveVoice::Turbo;
+        use KeyCode::*;
+        let mut world = crate::contest::menu_world();
+        let disc = &world.resource::<Campaign>().0;
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let base = u32::from_le_bytes(exe[24..28].try_into().unwrap());
+        let record = 2048 + (0x8016fefc - base) as usize + 0x82 * 6;
+        assert_eq!(&exe[record..record + 4], &[0, 0, TURBO_PROGRAM as u8, 0]);
+        let cars = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        let stage = Stage::load(
+            disc,
+            Level::Warehouse,
+            cars[0],
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_millis(50));
+        let solo = |world: &mut World, held| {
+            let mut keys = ButtonInput::default();
+            if held {
+                keys.press(KeyT);
+            }
+            world.insert_resource(keys);
+            world.run_system_once(crate::driving::advance).unwrap();
+            world.run_system_once(update).unwrap();
+            let mut voices = world
+                .query::<(Entity, &OneShot, Has<AudioPlayer<looping::LoopingPcm>>)>()
+                .iter(world)
+                .filter(|(_, voice, _)| voice.0 == Some(Turbo))
+                .map(|(e, _, loops)| (e, loops))
+                .collect::<Vec<_>>();
+            voices.sort();
+            voices
+        };
+        solo(&mut world, false); // Acquire window focus before the first driving step.
+        let voices = solo(&mut world, true);
+        assert_eq!(voices.len(), 4);
+        assert_eq!(voices.iter().filter(|v| v.1).count(), 3);
+        assert_eq!(solo(&mut world, true), voices);
+        assert!(solo(&mut world, false).is_empty());
+        assert_eq!(solo(&mut world, true).len(), 4);
+        for _ in 0..130 {
+            solo(&mut world, true);
+        }
+        assert!(solo(&mut world, true).is_empty());
+
+        crate::duel::start(
+            &mut world,
+            Level::Warehouse,
+            cars,
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        let duel = |world: &mut World, keys: &[KeyCode]| {
+            let mut input = ButtonInput::default();
+            for key in keys {
+                input.press(*key);
+            }
+            world.insert_resource(input);
+            world.run_system_once(crate::duel::advance).unwrap();
+            world.run_system_once(duel::mix).unwrap();
+            world
+                .query_filtered::<Entity, (
+                    With<crate::duel::DuelEffect>,
+                    With<AudioPlayer<looping::LoopingPcm>>,
+                )>()
+                .iter(world)
+                .collect::<Vec<_>>()
+        };
+        // Both requests address sound 0x82; the second slot can stop the first slot.
+        assert!(duel(&mut world, &[KeyT]).is_empty());
+        let voices = duel(&mut world, &[KeyT, Slash]);
+        assert_eq!(voices.len(), 3);
+        assert_eq!(duel(&mut world, &[KeyT, Slash]), voices);
+        assert_eq!(duel(&mut world, &[Slash]).len(), 3);
+        assert!(duel(&mut world, &[]).is_empty());
     }
 }

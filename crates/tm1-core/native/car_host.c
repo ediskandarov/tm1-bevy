@@ -9,13 +9,19 @@ _Static_assert(offsetof(PlayerCar, motion) == 0x380, "JP motion offset");
 extern s16 gFieldsLastFrame, gUpdateRate;
 extern u32 gFrameCount;
 
+// Bound only during a serialized human driving update. Recharge can skip the call.
+static u8* turbo_request;
 void uasoundStopTurboBoost(void)
 {
+    if (turbo_request)
+        *turbo_request = 2;
 }
 void uasoundPlayTurboBoost(s32 a, s32 b)
 {
     (void)a;
     (void)b;
+    if (turbo_request)
+        *turbo_request = 1;
 }
 
 static const s16* trig;
@@ -1052,8 +1058,9 @@ static void move_arena_targets(VECTOR3* position)
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo)
 {
+    *turbo = 0;
     PlayerCar player;
     AICar cars[8];
     memcpy(&player, player_state, sizeof(player));
@@ -1078,7 +1085,9 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         for (int i = 0; i < count && player.flags[27]; i++)
             if (cars[i].uaIndex == player.stats.unk30)
                 crushed = &cars[i];
+        turbo_request = turbo;
         tm1_drive_step((u8*)&player, (u8*)crushed, buttons, fields, frame, tables, seed);
+        turbo_request = NULL;
         trig = tables;
         tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
         contact_phase(&player, cars, 1, fields);
@@ -1126,9 +1135,10 @@ void arena_player_gun_sound(s32 slot, int firing)
 }
 
 void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[2])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[2], u8 turbo[2])
 {
     memset(requests, 0, 2);
+    memset(turbo, 0, 2);
     duel_gun_requests = requests;
     PlayerCar cars[2];
     memcpy(&cars[0], first, sizeof(PlayerCar));
@@ -1147,7 +1157,9 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
         PlayerCar* car = &cars[i];
         if (!tm1_recharge_player(car)) {
             *seed = random_state;
+            turbo_request = &turbo[i];
             tm1_drive_step((u8*)car, NULL, buttons, fields, frame, table, seed);
+            turbo_request = NULL;
             trig = table;
             tm1_contact_setup(GetPlayerCs3D(i), &car->motion, &car->stats);
             contact_phase(car, NULL, 1, fields);

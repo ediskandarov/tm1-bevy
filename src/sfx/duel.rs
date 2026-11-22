@@ -1,5 +1,5 @@
 //! Tone allocation for the shared SPU during split-screen play.
-use super::{Sample, battle_programs, engine_speed};
+use super::{Layer, PreparedTone, TURBO_PROGRAM, battle_programs, engine_speed};
 use crate::{
     campaign::StageEntity,
     driving::ExclusiveVoice,
@@ -7,22 +7,14 @@ use crate::{
 };
 use anyhow::Result;
 use bevy::{audio::Volume, prelude::*};
-use std::time::Duration;
 use tm1_assets::sound::program;
 use tm1_core::drive::Vehicle;
-
-struct Layer {
-    looping_clip: Option<Handle<super::looping::LoopingPcm>>,
-    source: Handle<AudioSource>,
-    priority: u8,
-    range: f32,
-    loop_start: Duration,
-}
 
 #[derive(Resource)]
 pub struct DuelBank {
     programs: Vec<Vec<Layer>>,
     second_engine: Vec<Layer>,
+    turbo: Vec<Layer>,
 }
 
 #[derive(Component)]
@@ -47,45 +39,26 @@ pub enum Request {
         position: [i32; 3],
     },
     Stop(ExclusiveVoice),
+    Turbo,
 }
 
 impl DuelBank {
     pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
         world.init_resource::<Assets<super::looping::LoopingPcm>>();
-        let mut layers = |id, engine, gun| -> Result<Vec<Layer>> {
+        let mut layers = |id, engine, looping| -> Result<Vec<Layer>> {
             program(bank, id)?
                 .into_iter()
-                .map(|tone| {
-                    let priority = tone.priority;
-                    let first_loop_frame = tone.loop_start.map(|frame| {
-                        let note = if engine { tone.low } else { 60 };
-                        let rate = 2.0_f32.powf((f32::from(note) - f32::from(tone.center)) / 12.);
-                        (frame as f64 / f64::from(rate)).ceil() as usize
-                    });
-                    let sample = Sample::from_tones(vec![tone], engine);
-                    Ok(Layer {
-                        looping_clip: first_loop_frame.filter(|_| gun || engine).map(|frame| {
-                            world
-                                .resource_mut::<Assets<super::looping::LoopingPcm>>()
-                                .add(super::looping::LoopingPcm::new(&sample.mix, frame))
-                        }),
-                        source: world
-                            .resource_mut::<Assets<AudioSource>>()
-                            .add(sample.wave(0.)?),
-                        priority,
-                        range: sample.range,
-                        loop_start: sample.loop_start,
-                    })
-                })
+                .map(|tone| Ok(PreparedTone::new(tone, engine, looping)?.register(world)))
                 .collect()
         };
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
-            .map(|(i, id)| layers(id, i == 0, i == 1))
+            .map(|(i, id)| layers(id, i == 0, i <= 1))
             .collect::<Result<_>>()?;
         Ok(Self {
             programs,
-            second_engine: layers(cars[1].sound_programs().0, true, false)?,
+            second_engine: layers(cars[1].sound_programs().0, true, true)?,
+            turbo: layers(TURBO_PROGRAM, false, true)?,
         })
     }
 
@@ -126,11 +99,7 @@ impl DuelBank {
                     .with_speed(engine_speed(layer.range, 30))
                     .with_volume(Volume::Linear(0.28 * gain)),
             ));
-            if let Some(clip) = &layer.looping_clip {
-                voice.insert(AudioPlayer(clip.clone()));
-            } else {
-                voice.insert(AudioPlayer::new(layer.source.clone()));
-            }
+            layer.play(&mut voice);
         }
     }
 
@@ -183,13 +152,14 @@ pub fn mix(
     let gain = duel.settings.effects_gain();
     let listener = duel.cars[0].position();
     for request in &duel.sounds {
-        let (id, key, volume, position) = match *request {
+        let (layers, key, volume, position) = match *request {
+            Request::Turbo => (&bank.turbo, Some(ExclusiveVoice::Turbo), 1., listener),
             Request::Play {
                 id,
                 key,
                 volume,
                 position,
-            } => (id, key, volume, position),
+            } => (&bank.programs[id], key, volume, position),
             Request::Stop(key) => {
                 groups.retain(|&(group, entity)| {
                     if group != key {
@@ -235,7 +205,7 @@ pub fn mix(
             .zip(listener)
             .map(|(p, l)| (i64::from(p) - i64::from(l)).pow(2))
             .sum();
-        for layer in &bank.programs[id] {
+        for layer in layers {
             let mut voice = commands.spawn((
                 StageEntity,
                 DuelEffect,
@@ -246,13 +216,7 @@ pub fn mix(
                 },
                 PlaybackSettings::DESPAWN.with_volume(volume),
             ));
-            if matches!(key, Some(ExclusiveVoice::MachineGuns(_)))
-                && let Some(clip) = &layer.looping_clip
-            {
-                voice.insert(AudioPlayer(clip.clone()));
-            } else {
-                voice.insert(AudioPlayer::new(layer.source.clone()));
-            }
+            layer.play(&mut voice);
             let entity = voice.id();
             ranked.push((false, layer.priority, distance, entity, false));
             if let Some(key) = key {
@@ -290,6 +254,7 @@ pub fn mix(
 mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+    use std::time::Duration;
     use tm1_core::drive::{ContactVoice, Difficulty, Level};
 
     #[test]

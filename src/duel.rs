@@ -404,6 +404,13 @@ pub fn advance(
             );
         }
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
+        for boosting in duel.scene.turbo_sound_requests().into_iter().flatten() {
+            duel.sounds.push(if boosting {
+                crate::sfx::duel::Request::Turbo
+            } else {
+                crate::sfx::duel::Request::Stop(crate::driving::ExclusiveVoice::Turbo)
+            });
+        }
         for (car, request) in duel.cars.iter().zip(duel.scene.duel_gun_requests()) {
             let key = crate::driving::ExclusiveVoice::MachineGuns(car.vehicle());
             if let Some(firing) = request {
