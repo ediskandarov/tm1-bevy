@@ -226,6 +226,27 @@ pub fn setup(
         Visibility::Hidden,
         Transform::from_xyz(0., 0., 8.),
     ));
+    for notice in [BattleNotice::Boss, BattleNotice::Lost] {
+        let mut image = cockpit_image.clone();
+        let mut pixels = [0, 0, 0, 128].repeat(320 * 240);
+        match notice {
+            BattleNotice::Boss => boss_text(&arena.fonts, &mut pixels),
+            BattleNotice::Lost => arena.fonts.centered(
+                &mut pixels,
+                tm1_assets::screen::Face::Text,
+                119,
+                "YOU LOSE!",
+            ),
+        }
+        image.data = Some(pixels);
+        commands.spawn((
+            crate::campaign::StageEntity,
+            notice,
+            Sprite::from_image(images.add(image)),
+            Visibility::Hidden,
+            Transform::from_xyz(0., 0., 4.),
+        ));
+    }
     let mut lettering = cockpit_image.clone();
     lettering.data = Some(vec![0; 320 * 240 * 4]);
     commands.spawn((
@@ -454,53 +475,57 @@ pub fn setup(
     ));
     commands.spawn((
         crate::campaign::StageEntity,
-        BossBackdrop,
+        LostLifeTint,
         Visibility::Hidden,
-        Sprite::from_color(Color::srgba(0.07, 0.07, 0.07, 0.86), Vec2::ONE),
+        Sprite::from_color(Color::BLACK, Vec2::ONE),
         Transform::from_xyz(0., 0., 3.),
-    ));
-    commands.spawn((
-        crate::campaign::StageEntity,
-        BossMessage,
-        Visibility::Hidden,
-        Text2d::new(BOSS_MESSAGE),
-        TextLayout::default().with_justify(Justify::Center),
-        TextFont::from_font_size(12.),
-        Transform::from_xyz(0., 0., 4.),
     ));
 }
 #[derive(Component)]
-pub struct BossBackdrop;
-pub const BOSS_MESSAGE: &str = "CONGRATULATIONS!\n\nYou have made it to the\nFINAL round.  Prepare to\nbattle MINION, last year's\nTwisted Metal winner!";
+pub struct LostLifeTint;
 #[derive(Component)]
-pub struct BossMessage;
-pub fn boss_intro(
+pub enum BattleNotice {
+    Boss,
+    Lost,
+}
+pub fn boss_text(fonts: &tm1_assets::screen::Fonts, pixels: &mut [u8]) {
+    for (y, text) in [
+        (70, "CONGRATULATIONS!"),
+        (100, "You have made it to the"),
+        (130, "FINAL round.  Prepare to"),
+        (160, "battle MINION, last year's"),
+        (190, "Twisted Metal winner!"),
+    ] {
+        fonts.centered(pixels, tm1_assets::screen::Face::Text, y, text);
+    }
+}
+pub fn battle_notice(
     window: Single<&Window>,
     drive: Res<crate::driving::Drive>,
-    mut backdrop: Single<(&mut Visibility, &mut Sprite), With<BossBackdrop>>,
-    mut message: Single<
-        (&mut Visibility, &mut Transform),
-        (With<BossMessage>, Without<BossBackdrop>),
-    >,
+    mut backdrop: Single<(&mut Visibility, &mut Sprite), With<LostLifeTint>>,
+    mut notices: Query<(&BattleNotice, &mut Visibility, &mut Sprite), Without<LostLifeTint>>,
 ) {
-    let visible = if drive.showing_boss_intro() {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    *backdrop.0 = if drive.lost_life_elapsed().is_some() {
-        Visibility::Inherited
-    } else {
-        visible
-    };
-    backdrop.1.color = if let Some(elapsed) = drive.lost_life_elapsed() {
-        Color::srgba((elapsed.as_secs_f32() * 2.).min(1.), 0., 0., 0.55)
-    } else {
-        Color::srgba(0.07, 0.07, 0.07, 0.86)
-    };
-    backdrop.1.custom_size = Some(Vec2::new(window.width(), window.height()));
-    *message.0 = visible;
-    message.1.scale = Vec3::splat((window.width() / 320.).min(window.height() / 240.));
+    let size = Some(Vec2::new(window.width(), window.height()));
+    *backdrop.0 = Visibility::Hidden;
+    if let Some(elapsed) = drive.lost_life_elapsed() {
+        *backdrop.0 = Visibility::Visible;
+        let field = (elapsed.as_secs_f64() * 60.).floor() as u32 + 1;
+        let red = 255 - (30 - field.min(30)) * 255 / 30;
+        backdrop.1.color = Color::srgba_u8(red as u8, 0, 0, 128);
+        backdrop.1.custom_size = size;
+    }
+    for (notice, mut visibility, mut sprite) in &mut notices {
+        let show = match notice {
+            BattleNotice::Lost => drive.lives == 0,
+            BattleNotice::Boss => drive.showing_boss_intro(),
+        };
+        *visibility = if show {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+        sprite.custom_size = size;
+    }
 }
 #[derive(Component)]
 pub struct HudLabel;
@@ -622,15 +647,16 @@ pub fn hud(
         1.,
     );
     transform.scale = Vec3::splat(scale);
-    let state = if drive.lives == 0 {
-        "YOU LOSE!   R · Restart"
-    } else if drive.player.health().0 <= 0 {
-        "WRECKED   R · Restart"
-    } else if drive.cleared() {
-        "ARENA CLEARED   R · Restart"
-    } else {
-        ""
-    };
+    let state =
+        if drive.lives == 0 || drive.lost_life_elapsed().is_some() || drive.showing_boss_intro() {
+            ""
+        } else if drive.player.health().0 <= 0 {
+            "WRECKED   R · Restart"
+        } else if drive.cleared() {
+            "ARENA CLEARED   R · Restart"
+        } else {
+            ""
+        };
     let message = state.to_owned();
     if label.0 != message {
         label.0 = message;

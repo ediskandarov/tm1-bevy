@@ -174,8 +174,33 @@ impl Stage {
     }
 }
 
+#[derive(Component)]
+struct LostGame;
+
 pub fn advance(world: &mut World) {
     let drive = world.resource::<driving::Drive>();
+    if drive.lives == 0 {
+        let gain = drive.settings.effects_gain();
+        if world
+            .query_filtered::<Entity, With<LostGame>>()
+            .iter(world)
+            .next()
+            .is_none()
+        {
+            let sounds = world.resource::<sfx::Sounds>();
+            let engine = sounds.ending_engine(gain);
+            let signature = sounds.lost_game_signature();
+            world.spawn((StageEntity, LostGame, engine));
+            world.spawn((
+                signature,
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
+            ));
+        } else if let Err(err) = crate::contest::open(world) {
+            error!("Opening title after defeat failed: {err:#}");
+            world.write_message(AppExit::error());
+        }
+        return;
+    }
     if drive.pause == Some(crate::pause::Page::Aborted) && drive.abort_delay.is_zero() {
         if let Err(err) = crate::contest::open(world) {
             error!("Opening title after abort failed: {err:#}");

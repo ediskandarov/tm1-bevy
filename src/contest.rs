@@ -110,14 +110,7 @@ impl Contest {
                         *channel /= 2;
                     }
                 }
-                for (i, text) in crate::render::BOSS_MESSAGE
-                    .lines()
-                    .filter(|s| !s.is_empty())
-                    .enumerate()
-                {
-                    self.fonts
-                        .centered(&mut frame, Face::Text, 70 + i as i32 * 30, text);
-                }
+                crate::render::boss_text(&self.fonts, &mut frame);
             }
             Page::Wrong => {
                 line(115, Face::Text, "WRONG PASSWORD");
@@ -392,6 +385,9 @@ mod tests {
         world.insert_resource(crate::smoke::Capture::new(None, false, false));
         world.run_system_once(crate::driving::advance).unwrap();
         world.run_system_once(crate::driving::advance).unwrap();
+        world.resource_mut::<ButtonInput<KeyCode>>().press(Enter);
+        world.run_system_once(crate::driving::advance).unwrap();
+        world.insert_resource(ButtonInput::<KeyCode>::default());
         let drive = world.resource::<crate::driving::Drive>();
         assert_eq!(drive.opponents.len(), 4);
         assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
@@ -416,6 +412,24 @@ mod tests {
         let drive = world.resource::<crate::driving::Drive>();
         assert!(drive.showing_boss_intro());
         assert_eq!(drive.opponents.len(), 3);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn last_life_returns_to_title_and_allows_a_fresh_contest() {
+        let mut world = menu_world();
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+        world.resource_mut::<crate::driving::Drive>().lives = 0;
+        campaign::advance(&mut world);
+        assert!(!world.contains_resource::<Contest>());
+        campaign::advance(&mut world);
+        assert!(matches!(world.resource::<Contest>().page, Page::Title));
+        assert_eq!(world.resource::<Contest>().level, Level::Arena);
+        update(&mut world);
+        press(&mut world, KeyCode::Enter);
+        press(&mut world, KeyCode::Enter);
+        assert_eq!(world.resource::<crate::driving::Drive>().lives, 3);
     }
 
     #[test]

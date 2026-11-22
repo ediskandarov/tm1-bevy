@@ -9,6 +9,12 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The full retail menu and multiplayer are outstanding.
 
+## Defeat and Minion introduction
+
+Losing the last life interrupts the level music, plays the engine rev and Sweet Tooth signature, shows the original “YOU LOSE!” lettering over the battle and returns to the title. A new contest starts in Arena with three lives. The retail title transition also plays `UAMOVIES/TMTTL15S.STR`; the port currently goes directly to the title image. A disc-backed test traverses the defeat, title and fresh contest in one Bevy world.
+
+The Rooftops boss introduction uses the five original lines, font and screen coordinates from `screenBossCar`. Held input must be released before its five-second timer starts. The intermediate lost-life overlay follows the 30-field red ramp and 60-field hold in `screenLostALife`. The Bevy overlay uses alpha blending over the live render target. To capture the boss message on Metal, use `--level rooftops --demo-boss-screenshot local/boss-rooftops.png 36`.
+
 ## Contest ending
 
 After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. After credits, Easy and Medium return to the title screen. Hard continues to Arena 5 with the same driver, remaining lives, inventory and opponent deck.

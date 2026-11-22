@@ -101,7 +101,13 @@ fn main() -> Result<()> {
         !pause_demo || !menu,
         "pause capture requires a running encounter"
     );
-    let demo = pause_demo
+    let boss_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-boss-screenshot"));
+    ensure!(
+        !boss_demo || (!menu && level == Level::Rooftops),
+        "boss capture requires Rooftops"
+    );
+    let demo = boss_demo
+        || pause_demo
         || mirror_demo
         || cockpit_demo
         || helicopter_demo
@@ -155,6 +161,11 @@ fn main() -> Result<()> {
         }));
     if let Some(stage) = stage {
         stage.install(app.world_mut());
+        if boss_demo {
+            app.world_mut()
+                .resource_mut::<driving::Drive>()
+                .start_with_minion();
+        }
         if pause_demo {
             app.world_mut().resource_mut::<driving::Drive>().pause = Some(pause::Page::Choices(0));
         }
@@ -196,7 +207,7 @@ fn main() -> Result<()> {
                 render::mirror_display,
                 render::hud_letters,
                 render::hud,
-                render::boss_intro,
+                render::battle_notice,
                 pause::draw,
             )
                 .chain()

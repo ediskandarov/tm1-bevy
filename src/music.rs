@@ -80,6 +80,7 @@ pub fn control(
     sink.set_volume(Volume::Linear(0.35 * drive.settings.music_gain()));
     let pause = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
+        || drive.lives == 0
         || !window.focused;
     if pause != sink.is_paused() {
         if pause {

@@ -25,6 +25,7 @@ pub struct Drive {
     was_focused: bool,
     victory_fields: u16,
     boss_intro: Option<Duration>,
+    boss_input_released: bool,
     minion_at_start: bool,
     pub lives: u8,
     death_fields: u16,
@@ -71,12 +72,14 @@ impl Drive {
     fn advance_victory_delay(&mut self, fields: u16) {
         self.victory_fields += fields;
         if self.victory_fields > 180 && self.awaiting_minion() {
+            self.boss_input_released = false;
             self.boss_intro = Some(Duration::from_secs(5));
             self.victory_fields = 0;
         }
     }
     pub fn start_with_minion(&mut self) {
         self.minion_at_start = true;
+        self.boss_input_released = false;
         self.boss_intro = Some(Duration::from_secs(5));
     }
     pub fn showing_boss_intro(&self) -> bool {
@@ -109,9 +112,9 @@ impl Drive {
     }
     fn tick_lost_life(&mut self, delta: Duration, selected: bool) {
         let elapsed = self.lost_life.unwrap() + delta;
-        if elapsed >= Duration::from_millis(1500)
-            || (selected && elapsed < Duration::from_millis(500))
-        {
+        let skipped = selected && self.lost_life.unwrap() < Duration::from_millis(500);
+        if elapsed >= Duration::from_millis(1500) || skipped {
+            self.pause_sound = skipped.then_some(true);
             self.contacts.respawn_player(&mut self.player);
             if self.helicopter_active
                 && let Some(heli) = &mut self.helicopter
@@ -165,6 +168,7 @@ impl Drive {
             was_focused: false,
             victory_fields: 0,
             boss_intro: None,
+            boss_input_released: false,
             minion_at_start: false,
             lives: 3,
             death_fields: 0,
@@ -192,6 +196,9 @@ pub fn advance(
     let just_pressed = |button| pad.is_some_and(|p| p.just_pressed(button));
     let regained = window.focused && !drive.was_focused;
     drive.was_focused = window.focused;
+    if drive.lives == 0 {
+        return;
+    }
     if window.focused
         && drive.pause != Some(crate::pause::Page::Aborted)
         && (keys.just_pressed(KeyCode::KeyR) || just_pressed(GamepadButton::Select))
@@ -205,12 +212,10 @@ pub fn advance(
         drive.helicopter = None;
         drive.helicopter_active = false;
         drive.victory_fields = 0;
+        drive.boss_input_released = false;
         drive.boss_intro = drive.minion_at_start.then(|| Duration::from_secs(5));
         drive.death_fields = 0;
         drive.lost_life = None;
-        if drive.lives == 0 {
-            drive.lives = 3;
-        }
         let kinds: Vec<_> = drive
             .opponents
             .iter()
@@ -278,7 +283,7 @@ pub fn advance(
         drive.remainder = Duration::ZERO;
         return;
     }
-    if window.focused && start {
+    if window.focused && start && !drive.showing_boss_intro() && drive.lost_life.is_none() {
         drive.pause = Some(Page::Choices(0));
         drive.remainder = Duration::ZERO;
         return;
@@ -301,7 +306,7 @@ pub fn advance(
     if window.title != title {
         window.title = title;
     }
-    if drive.lives == 0 || drive.stage_finished() {
+    if drive.stage_finished() {
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -317,7 +322,14 @@ pub fn advance(
         };
         let selected = keys.just_pressed(KeyCode::Enter) || just_pressed(GamepadButton::South);
         if drive.showing_boss_intro() {
-            drive.tick_boss_intro(elapsed, selected);
+            if !drive.boss_input_released {
+                drive.boss_input_released = keys.get_pressed().next().is_none()
+                    && pad.is_none_or(|p| p.get_pressed().next().is_none());
+            }
+            if drive.boss_input_released {
+                drive.pause_sound = selected.then_some(true);
+                drive.tick_boss_intro(elapsed, selected);
+            }
         } else {
             drive.tick_lost_life(elapsed, selected);
         }
@@ -873,6 +885,6 @@ mod tests {
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyR);
         tick(&mut app, 50);
-        assert_eq!(snapshot(&app), start);
+        assert_eq!(snapshot(&app), wrecked);
     }
 }

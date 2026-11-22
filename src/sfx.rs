@@ -27,6 +27,11 @@ impl Sounds {
         AudioPlayer::new(self.voices[5 * 5 + 2].clone())
     }
 
+    pub fn lost_game_signature(&self) -> AudioPlayer {
+        let program = self.voices.len() / 5 - 3;
+        AudioPlayer::new(self.voices[program * 5 + 2].clone())
+    }
+
     pub fn load(
         disc: &Disc,
         vehicle: tm1_core::drive::Vehicle,
@@ -57,7 +62,7 @@ impl Sounds {
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .chain(opponents.iter().map(|&car| programs(car).1))
-            .chain([52, 57, 58])
+            .chain([52, programs(SweetTooth).1, 57, 58])
             .enumerate()
         {
             let tones = program(&bank, prog)?;
@@ -137,7 +142,7 @@ pub fn update(
     mut restart: Local<u32>,
 ) {
     let reset = *restart != drive.restart_count;
-    let pause = drive.pause.is_some() || !window.focused;
+    let pause = drive.lives == 0 || drive.pause.is_some() || !window.focused;
     let gain = drive.settings.effects_gain();
     if let Ok(mut sink) = engine.single_mut() {
         sink.set_volume(Volume::Linear(0.28 * gain));
