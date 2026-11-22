@@ -36,7 +36,7 @@ After both picks, choose **START** to play or **OPTIONS** to change the battlegr
 
 Press P or the numeric keypad Enter to pause both views. Either player can navigate the pause menu. Choose CONTROLLER OPTIONS with Space for player one or Comma for player two. AUDIO adjusts the shared music and effects mix. START resumes the round and QUIT returns to the title movie.
 
-After the round, Enter starts a rematch and keeps the score. Esc returns to the title. To launch a specific match directly, use the second car’s slug after `--duel`.
+After the round, the score stays on screen while the same arena reloads. The next round starts automatically with both cars repaired and the score preserved. Enter skips the score display. Esc returns to the title. To launch a specific match directly, use the second car’s slug after `--duel`.
 
 ```sh
 cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car yellow-jacket --duel outlaw

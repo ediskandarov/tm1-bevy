@@ -181,7 +181,7 @@ fn main() -> Result<()> {
     };
     if duel_car.is_some() {
         eprintln!(
-            "P1: WASD, Space guns, F weapon, E cycle, C camera. P2: arrows, Comma guns, Period weapon, L cycle, O camera. P or keypad Enter pauses. Enter rematch, Esc title."
+            "P1: WASD, Space guns, F weapon, E cycle, C camera. P2: arrows, Comma guns, Period weapon, L cycle, O camera. P or keypad Enter pauses. Enter skips the score, Esc returns to title."
         );
     } else {
         eprintln!(

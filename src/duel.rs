@@ -38,6 +38,7 @@ pub struct Duel {
     score: [u32; 2],
     pub(crate) settings: crate::pause::Settings,
     winner: Option<usize>,
+    score_time_left: Duration,
     pub(crate) pause: Option<crate::pause::Page>,
     control_slot: usize,
     abort_elapsed: Duration,
@@ -57,7 +58,11 @@ pub fn start(
         .duel_database()
         .ok_or_else(|| anyhow::anyhow!("unavailable two-player stage"))?;
     let data = disc.read(&format!("UA2PLAY/{stem}.DMD"))?;
-    let textures = Vram::from_tms(&disc.read(&format!("UA2PLAY/{stem}.TMS"))?)?;
+    let texture_data = disc.read(&format!("UA2PLAY/{stem}.TMS"))?;
+    // FILEIO reads these two files at double speed while SCREEN leaves the score visible.
+    let sectors = texture_data.len().div_ceil(2048) + data.len().div_ceil(2048);
+    let score_time_left = Duration::from_secs_f64(sectors as f64 / 150.);
+    let textures = Vram::from_tms(&texture_data)?;
     let dmd = Dmd::parse(&data)?;
     ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
     let mut geometry = dmd.extract_kind(1)?;
@@ -121,6 +126,7 @@ pub fn start(
         remainder: Duration::ZERO,
         score,
         winner: None,
+        score_time_left,
         pause: None,
         control_slot: 0,
         abort_elapsed: Duration::ZERO,
@@ -183,7 +189,13 @@ pub fn pause_menu(
 ) {
     use crate::pause::{Action, Page};
     use KeyCode::*;
-    if duel.winner.is_some() || !window.focused {
+    if duel.winner.is_some() {
+        for (entity, ..) in &mut audio {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+    if !window.focused {
         return;
     }
     let before = duel.pause;
@@ -331,6 +343,11 @@ pub fn advance(
     {
         return;
     }
+    if duel.winner.is_some() {
+        duel.score_time_left = duel.score_time_left.saturating_sub(time.delta());
+        hud.0.custom_size = Some(Vec2::new(window.width(), window.height()));
+        return;
+    }
     if duel.wait_release {
         if keys.any_pressed([Space, Comma, Enter, Escape, KeyP, NumpadEnter]) {
             return;
@@ -425,7 +442,7 @@ pub fn advance(
         let (sprite, visibility) = &mut *hud;
         if **visibility == Visibility::Hidden {
             use tm1_assets::screen::Face;
-            let mut pixels = [0, 0, 0, 175].repeat(320 * 240);
+            let mut pixels = [0, 0, 0, 128].repeat(320 * 240);
             for (slot, car) in duel.cars.iter().enumerate() {
                 let base = slot as i32 * 114;
                 let face = if slot == winner {
@@ -452,8 +469,8 @@ pub fn advance(
                     (220, "WINS", duel.score[slot]),
                     (270, "LOSSES", duel.score[1 - slot]),
                 ] {
-                    fonts.centered_at(&mut pixels, Face::Text, x, 64 + base, label);
-                    fonts.centered_at(&mut pixels, Face::Text, x, 84 + base, &count.to_string());
+                    fonts.centered_at(&mut pixels, Face::Control, x, 64 + base, label);
+                    fonts.centered_at(&mut pixels, Face::Control, x, 84 + base, &count.to_string());
                 }
             }
             images.get_mut(&sprite.image).unwrap().data = Some(pixels);
@@ -483,7 +500,9 @@ pub fn round_menu(world: &mut World) {
             world.remove_resource::<Duel>();
         }
         result
-    } else if duel.winner.is_some() && keys.just_pressed(KeyCode::Enter) {
+    } else if duel.winner.is_some()
+        && (duel.score_time_left.is_zero() || keys.just_pressed(KeyCode::Enter))
+    {
         start(
             world,
             duel.cars[0].level(),
@@ -497,5 +516,84 @@ pub fn round_menu(world: &mut World) {
     if let Err(e) = result {
         error!("Duel transition failed: {e:#}");
         world.write_message(AppExit::error());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_auto_rematch_after_rooftop_fall() {
+        use super::*;
+        use crate::contest::menu_world;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = menu_world();
+        let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        start(&mut world, Level::Rooftops, kinds, Difficulty::Hard, [2, 3]).unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let initial_positions = world
+            .resource::<Duel>()
+            .cars
+            .each_ref()
+            .map(tm1_core::drive::PlayerVehicle::position);
+        let hud_entity = world
+            .query_filtered::<Entity, With<DuelHud>>()
+            .single(&world)
+            .unwrap();
+        for tick in 0..4800 {
+            let mut keys = ButtonInput::default();
+            for key in [KeyCode::KeyW, KeyCode::Space, KeyCode::KeyF, KeyCode::KeyT] {
+                keys.press(key);
+            }
+            if (tick / 35) % 5 == 1 {
+                keys.press(KeyCode::KeyD);
+            }
+            if (tick / 65) % 3 == 2 {
+                keys.press(KeyCode::KeyA);
+            }
+            world.insert_resource(keys);
+            world.run_system_once(advance).unwrap();
+            if *world.get::<Visibility>(hud_entity).unwrap() == Visibility::Visible {
+                break;
+            }
+        }
+        assert_eq!(
+            *world.get::<Visibility>(hud_entity).unwrap(),
+            Visibility::Visible,
+            "driver did not fall"
+        );
+        assert!(world.resource::<Duel>().cars[0].health().0 <= 0);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        world.run_system_once(pause_menu).unwrap();
+        assert_eq!(
+            world
+                .query_filtered::<Entity, With<DuelMusic>>()
+                .iter(&world)
+                .count(),
+            0
+        );
+        round_menu(&mut world);
+        assert!(world.get_entity(hud_entity).is_ok());
+        assert_eq!(world.resource::<Duel>().score, [2, 4]);
+        for _ in 0..400 {
+            world.run_system_once(advance).unwrap();
+            round_menu(&mut world);
+            if world.get_entity(hud_entity).is_err() {
+                break;
+            }
+        }
+        assert!(world.get_entity(hud_entity).is_err());
+        let round = world.resource::<Duel>();
+        assert_eq!(round.score, [2, 4]);
+        assert!(round.winner.is_none());
+        for (slot, car) in round.cars.iter().enumerate() {
+            assert_eq!(car.position(), initial_positions[slot]);
+            assert_eq!(car.vehicle(), kinds[slot]);
+            assert_eq!(car.health().0, car.health().1);
+            assert_eq!(car.difficulty(), Difficulty::Hard);
+        }
     }
 }

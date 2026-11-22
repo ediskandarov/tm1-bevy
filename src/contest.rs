@@ -1310,35 +1310,37 @@ pub fn start_battle(world: &mut World) -> Result<()> {
 }
 
 #[cfg(test)]
+pub(crate) fn menu_world() -> World {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let mut world = World::new();
+    world.init_resource::<Assets<Image>>();
+    world.init_resource::<Assets<Mesh>>();
+    world.init_resource::<Assets<ColorMaterial>>();
+    world.init_resource::<Assets<crate::additive::Additive>>();
+    world.init_resource::<Assets<AudioSource>>();
+    world.insert_resource(Campaign(disc));
+    world.init_resource::<ButtonInput<KeyCode>>();
+    world.spawn(Window {
+        focused: true,
+        ..default()
+    });
+    show(
+        &mut world,
+        Vehicle::YellowJacket,
+        Level::Arena,
+        Difficulty::Medium,
+        None,
+    )
+    .unwrap();
+    update(&mut world);
+    world.init_resource::<Time<Real>>();
+    world
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    fn menu_world() -> World {
-        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let mut world = World::new();
-        world.init_resource::<Assets<Image>>();
-        world.init_resource::<Assets<Mesh>>();
-        world.init_resource::<Assets<ColorMaterial>>();
-        world.init_resource::<Assets<crate::additive::Additive>>();
-        world.init_resource::<Assets<AudioSource>>();
-        world.insert_resource(Campaign(disc));
-        world.init_resource::<ButtonInput<KeyCode>>();
-        world.spawn(Window {
-            focused: true,
-            ..default()
-        });
-        show(
-            &mut world,
-            Vehicle::YellowJacket,
-            Level::Arena,
-            Difficulty::Medium,
-            None,
-        )
-        .unwrap();
-        update(&mut world);
-        world.init_resource::<Time<Real>>();
-        world
-    }
     fn press(world: &mut World, key: KeyCode) {
         let mut keys = ButtonInput::default();
         keys.press(key);
