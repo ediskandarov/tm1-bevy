@@ -2605,8 +2605,8 @@ fn compare_battle_controls(
         r.cpu.call(entry, &[]);
     }
     for at in [
-        0x801417d0, 0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84, 0x801371cc,
-        0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
+        0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84, 0x801371cc, 0x80137190,
+        0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -2736,6 +2736,26 @@ fn compare_battle_controls(
         put(&mut r.cpu, 0x8019cd78 + slot * 12, tire(slot));
         r.cpu.put(tire(slot) + 6, &[251, 0]);
     }
+    // Register three shadow groups for each model as the original database scanner does.
+    let shadow = |kind: Vehicle, stage: u32| 0x8000d400 + (kind as u32 / 10 * 3 + stage) * 40;
+    let rivals = if lineup.is_empty() {
+        std::slice::from_ref(&r.police)
+    } else {
+        &lineup
+    };
+    for (kind, on) in std::iter::once((vehicle, r.player.shadow_visible())).chain(
+        rivals
+            .iter()
+            .map(|car| (car.vehicle(), car.shadow_visible())),
+    ) {
+        for stage in 0..3 {
+            let node = shadow(kind, stage);
+            r.cpu.put(node, &[1, 0, (kind as u8) + 3, 0]);
+            r.cpu.put(node + 22, &((stage + 1) as u16).to_le_bytes());
+            r.cpu.call(0x8014174c, &[node]);
+        }
+        r.cpu.call(0x801417d0, &[kind as u32, u32::from(on)]);
+    }
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -2851,6 +2871,24 @@ fn compare_battle_controls(
                 }
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
+        }
+        let rivals = if lineup.is_empty() {
+            std::slice::from_ref(&r.police)
+        } else {
+            &lineup
+        };
+        for (kind, on) in std::iter::once((vehicle, r.player.shadow_visible())).chain(
+            rivals
+                .iter()
+                .map(|car| (car.vehicle(), car.shadow_visible())),
+        ) {
+            for stage in 0..3 {
+                assert_eq!(
+                    u8::from(on),
+                    r.cpu.ram[((shadow(kind, stage) + 20) & 0x1fffff) as usize],
+                    "{kind:?} shadow stage {stage} tick {tick}"
+                );
+            }
         }
         let steps = r.scene.wheel_steps();
         for slot in 1..=13 {

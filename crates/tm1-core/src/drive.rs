@@ -1328,6 +1328,9 @@ impl CollisionScene {
 }
 
 impl PlayerVehicle {
+    pub fn shadow_visible(&self) -> bool {
+        self.state[0xa0 + 25] != 0
+    }
     pub fn body_stage(&self) -> usize {
         body_stage(self.health(), self.state[0x13f] as i8)
     }
@@ -1383,6 +1386,9 @@ impl Opponent {
     }
     pub fn health_tier(&self) -> u8 {
         self.state[2]
+    }
+    pub fn shadow_visible(&self) -> bool {
+        self.state[0x66 + 25] != 0
     }
     pub fn body_stage(&self) -> usize {
         body_stage(self.health(), self.state[0x213] as i8)

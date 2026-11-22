@@ -20,6 +20,12 @@ use bevy::camera::visibility::RenderLayers;
 pub struct VehicleMesh(usize);
 #[derive(Component)]
 pub struct BodyStage(usize);
+struct CarPose {
+    origin: Vec3,
+    matrix: [[i16; 3]; 3],
+    body_stage: usize,
+    shadow_visible: bool,
+}
 #[derive(Component)]
 pub struct WorldCamera;
 #[derive(Component)]
@@ -370,7 +376,8 @@ pub fn setup(
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
             for polygon in &arena.scene.polygons[range.clone()] {
-                if polygon.wheel.is_some()
+                if polygon.car_shadow
+                    || polygon.wheel.is_some()
                     || !polygon.animation.is_empty()
                     || polygon.billboard.is_some()
                     || polygon.semi_transparent
@@ -820,15 +827,19 @@ pub fn update(
     let angle = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
     let vehicle_rotation = Quat::from_rotation_y(-angle);
     let matrix = drive.player.rotation();
-    let poses: Vec<_> = std::iter::once((origin, matrix, drive.player.body_stage()))
-        .chain(drive.opponents.iter().map(|ai| {
-            (
-                world(ai.position().map(|v| v as f32)),
-                ai.rotation(),
-                ai.body_stage(),
-            )
-        }))
-        .collect();
+    let poses: Vec<_> = std::iter::once(CarPose {
+        origin,
+        matrix,
+        body_stage: drive.player.body_stage(),
+        shadow_visible: drive.player.shadow_visible(),
+    })
+    .chain(drive.opponents.iter().map(|ai| CarPose {
+        origin: world(ai.position().map(|v| v as f32)),
+        matrix: ai.rotation(),
+        body_stage: ai.body_stage(),
+        shadow_visible: ai.shadow_visible(),
+    }))
+    .collect();
     let hide_player =
         !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
     let rotate = |local: Vec3| {
@@ -902,11 +913,11 @@ pub fn update(
     }
     let lights = drive.contacts.car_lights();
     for (vehicle, stage, mut visibility, mut entity, mut material) in &mut vehicles {
-        let Some(&(origin, matrix, selected)) = poses.get(vehicle.0) else {
+        let Some(pose) = poses.get(vehicle.0) else {
             *visibility = Visibility::Hidden;
             continue;
         };
-        if stage.0 != selected || (vehicle.0 == 0 && hide_player) {
+        if stage.0 != pose.body_stage || (vehicle.0 == 0 && hide_player) {
             *visibility = Visibility::Hidden;
             continue;
         }
@@ -917,10 +928,12 @@ pub fn update(
         }
         let basis = |p: [f32; 3]| {
             world(std::array::from_fn(|i| {
-                (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
+                (0..3)
+                    .map(|j| pose.matrix[j][i] as f32 * p[j] / 4096.)
+                    .sum()
             }))
         };
-        entity.translation = origin;
+        entity.translation = pose.origin;
         entity.rotation = Quat::from_mat3(&Mat3::from_cols(
             basis([1., 0., 0.]),
             basis([0., 0., 1.]),
@@ -1005,7 +1018,7 @@ fn draw_view(
     drive: &crate::driving::Drive,
     meshes: &mut Assets<Mesh>,
     view: &ViewMeshes,
-    poses: &[(Vec3, [[i16; 3]; 3], usize)],
+    poses: &[CarPose],
     lights: &[u8; 9],
     hide_player: bool,
     eye: Vec3,
@@ -1023,7 +1036,7 @@ fn draw_view(
             let car = arena
                 .body_ranges
                 .partition_point(|ranges| ranges[2].end <= index);
-            let (origin, matrix, _) = poses[car];
+            let pose = &poses[car];
             let p = if let Some(Wheel::Hammerhead { pivot, axis }) =
                 arena.scene.polygons[index].wheel
             {
@@ -1038,9 +1051,11 @@ fn draw_view(
             } else {
                 p
             };
-            origin
+            pose.origin
                 + world(std::array::from_fn(|i| {
-                    (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
+                    (0..3)
+                        .map(|j| pose.matrix[j][i] as f32 * p[j] / 4096.)
+                        .sum()
                 }))
         } else {
             world(p)
@@ -1061,7 +1076,11 @@ fn draw_view(
             .iter()
             .zip(poses)
             .skip(usize::from(hide_player))
-            .flat_map(|(ranges, pose)| ranges[pose.2].clone()),
+            .flat_map(|(ranges, pose)| {
+                ranges[pose.body_stage]
+                    .clone()
+                    .filter(|&i| pose.shadow_visible || !arena.scene.polygons[i].car_shadow)
+            }),
     );
     let mut hidden_world = vec![false; arena.vehicle_start];
     for controller in &arena.scene.visibility {
@@ -1104,6 +1123,7 @@ fn draw_view(
             continue;
         }
         if i >= arena.vehicle_start
+            && !p.car_shadow
             && p.wheel.is_none()
             && p.animation.is_empty()
             && p.billboard.is_none()

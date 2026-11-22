@@ -47,6 +47,10 @@ fn supported_disc_arena_and_audio() {
     for kind in (10..=120).step_by(10) {
         let [intact, damaged, critical] = db.vehicle_bodies(kind).unwrap();
         for stage in [&intact, &damaged, &critical] {
+            assert!(
+                stage.polygons.iter().any(|p| p.car_shadow),
+                "missing shadow for {kind}"
+            );
             let wheels = stage.polygons.iter().filter_map(|p| p.wheel);
             if kind == 40 {
                 let pivots = wheels

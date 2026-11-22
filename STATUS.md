@@ -31,6 +31,8 @@ Player and AI updates feed longitudinal velocity into the original wheel animati
 
 JP executable tests compare all four Hammerhead matrices and the three ordinary switch slots through stops, reversals and threshold crossings. The battle replays also compare wheel state after each simulation step. Metal captures of Warehouse at steps 50 and 54 used a temporary side camera to inspect the changing spokes. The normal chase view is reproducible with `--level warehouse --car hammerhead --demo-screenshot local/warehouse-hammerhead-wheels.png 50`.
 
+The battle renderer reads each car’s shadow flag and selects the original DMD shadow group for its current damage model in both views. The flag turns off on Rooftops and during the applicable vehicle damage states. The battle replays register three shadow groups per model with the JP executable and compare their child counts with the native player and AI flags after every step. The Arena disc test checks all three damage models for each of the twelve selectable vehicles.
+
 ## Vehicle damage lighting
 
 The selected camera mode reaches the car update before each battle step. A cockpit hit sets the original red or white full-screen primitive. The damage timer uses the number of video fields per step. Each simulation step selects the next primitive and applies the original integer color fade. A JP executable replay compares the submitted polygon color and semitransparency flag for both buffers, including replacement of an active flash. The Bevy cockpit and instruments draw above the flash. The semitransparent buffer uses Bevy alpha blending. A Metal capture of the opaque flash during the Warehouse encounter is reproducible with `--level warehouse --demo-cockpit-screenshot local/warehouse-cockpit-hit.png 156`.

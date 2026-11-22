@@ -81,6 +81,7 @@ pub enum Wheel {
 pub struct Polygon {
     pub animation: Vec<AnimationFrame>,
     pub wheel: Option<Wheel>,
+    pub car_shadow: bool,
     pub billboard: Option<[f32; 2]>,
     pub pickup: Option<u8>,
     pub arena_switches: Vec<(u8, u8)>,
@@ -167,7 +168,7 @@ impl Transform {
 #[derive(Clone, Copy)]
 struct BodySelection {
     switch: Option<(u32, u8)>,
-    headlights_kind: Option<u16>,
+    vehicle_kind: Option<u16>,
     headlights: bool,
 }
 
@@ -442,7 +443,7 @@ impl<'a> Dmd<'a> {
             };
             selection = Some(BodySelection {
                 switch,
-                headlights_kind: Some(kind + 4),
+                vehicle_kind: Some(kind),
                 headlights,
             });
         }
@@ -479,7 +480,7 @@ impl<'a> Dmd<'a> {
                     root,
                     Some(BodySelection {
                         switch: Some((node, branch)),
-                        headlights_kind: None,
+                        vehicle_kind: None,
                         headlights: true,
                     }),
                 )
@@ -526,8 +527,8 @@ impl<'a> Dmd<'a> {
         let mut children = Vec::new();
         let mut transform = transform;
         let mut wheel = None;
-        let battle_body =
-            selection.is_some_and(|s| s.switch.is_some() && s.headlights_kind.is_some());
+        let mut car_shadow = false;
+        let battle_body = selection.is_some_and(|s| s.switch.is_some() && s.vehicle_kind.is_some());
         let mut list = |count: usize, start: usize| -> Result<()> {
             bytes(
                 d,
@@ -549,9 +550,18 @@ impl<'a> Dmd<'a> {
                 if d[p + 21] & 2 == 0 {
                     let kind = u16le(d, p + 2)?;
                     let sub = u16le(d, p + 22)?;
+                    car_shadow = battle_body
+                        && selection
+                            .and_then(|body| body.vehicle_kind)
+                            .is_some_and(|vehicle| vehicle.checked_add(3) == Some(kind))
+                        && (1..=3).contains(&sub);
                     let count = match selection {
+                        _ if car_shadow => 1,
                         Some(body)
-                            if body.headlights_kind == Some(kind) && (1..=3).contains(&sub) =>
+                            if body
+                                .vehicle_kind
+                                .is_some_and(|vehicle| vehicle.checked_add(4) == Some(kind))
+                                && (1..=3).contains(&sub) =>
                         {
                             if body.headlights {
                                 2
@@ -795,6 +805,11 @@ impl<'a> Dmd<'a> {
         for child in children {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
         }
+        if car_shadow {
+            for poly in &mut scene.polygons[start..] {
+                poly.car_shadow = true;
+            }
+        }
         if wheel.is_some() {
             for poly in &mut scene.polygons[start..] {
                 poly.wheel = wheel;
@@ -903,6 +918,7 @@ impl<'a> Dmd<'a> {
             scene.polygons.push(Polygon {
                 animation: Vec::new(),
                 wheel: None,
+                car_shadow: false,
                 billboard,
                 pickup,
                 arena_switches: Vec::new(),
