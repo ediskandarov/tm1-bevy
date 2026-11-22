@@ -6,7 +6,7 @@ use bevy::{
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicU16, AtomicU32, Ordering},
     },
     time::Duration,
 };
@@ -26,10 +26,62 @@ impl Levels {
     }
 }
 
+/// The game thread writes the SPU pitch register. The audio thread samples it
+/// once per stereo frame, without moving the voice's oscillator phase.
+#[derive(Clone)]
+pub(super) struct PitchRegister(Arc<AtomicU16>);
+impl PitchRegister {
+    pub fn set(&self, value: u16) {
+        self.0.store(value.min(0x4000), Ordering::Relaxed);
+    }
+    pub fn get(&self) -> u16 {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct Motor {
+    pcm: Arc<[i16]>,
+    loop_at: usize,
+    volume: f32,
+    pan: [f32; 2],
+}
+impl Motor {
+    pub fn new(mut tone: tm1_assets::sound::Tone) -> anyhow::Result<Self> {
+        tone.prepare_loop();
+        let loop_at = tone
+            .loop_start
+            .ok_or_else(|| anyhow::anyhow!("missing VAB engine loop"))?;
+        let pan = f32::from(tone.pan) / 64.;
+        Ok(Self {
+            pcm: tone.pcm.into(),
+            loop_at,
+            volume: f32::from(tone.volume) / 127.,
+            pan: [(2. - pan).min(1.), pan.min(1.)],
+        })
+    }
+    pub fn voice(&self, pitch: u16) -> (StereoPcm, PitchRegister) {
+        let register = PitchRegister(Arc::new(AtomicU16::new(pitch.min(0x4000))));
+        (
+            StereoPcm {
+                data: PcmData::Engine(self.clone(), register.clone()),
+                levels: None,
+            },
+            register,
+        )
+    }
+}
+#[derive(Clone)]
+enum PcmData {
+    Stereo {
+        samples: Arc<[f32]>,
+        loop_sample: Option<usize>,
+    },
+    Engine(Motor, PitchRegister),
+}
 #[derive(Asset, TypePath, Clone)]
 pub struct StereoPcm {
-    samples: Arc<[f32]>,
-    loop_sample: Option<usize>,
+    data: PcmData,
     levels: Option<Levels>,
 }
 
@@ -37,12 +89,14 @@ impl StereoPcm {
     pub(super) fn new(stereo: &[[f32; 2]], first_loop_frame: Option<usize>) -> Self {
         assert!(first_loop_frame.is_none_or(|frame| frame < stereo.len()));
         Self {
-            samples: stereo
-                .iter()
-                .flatten()
-                .map(|s| s.clamp(-32768., 32767.) / 32768.)
-                .collect(),
-            loop_sample: first_loop_frame.map(|frame| 2 * frame),
+            data: PcmData::Stereo {
+                samples: stereo
+                    .iter()
+                    .flatten()
+                    .map(|s| s.clamp(-32768., 32767.) / 32768.)
+                    .collect(),
+                loop_sample: first_loop_frame.map(|frame| 2 * frame),
+            },
             levels: None,
         }
     }
@@ -58,6 +112,8 @@ impl StereoPcm {
 pub struct Playback {
     clip: StereoPcm,
     cursor: usize,
+    phase: usize,
+    right: f32,
     frame_levels: u32,
 }
 
@@ -67,6 +123,8 @@ impl Decodable for StereoPcm {
         Playback {
             clip: self.clone(),
             cursor: 0,
+            phase: 0,
+            right: 0.,
             frame_levels: 0,
         }
     }
@@ -74,10 +132,34 @@ impl Decodable for StereoPcm {
 impl Iterator for Playback {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.cursor == self.clip.samples.len() {
-            self.cursor = self.clip.loop_sample?;
-        }
-        let mut sample = self.clip.samples[self.cursor];
+        let mut sample = match &self.clip.data {
+            PcmData::Stereo {
+                samples,
+                loop_sample,
+            } => {
+                if self.cursor == samples.len() {
+                    self.cursor = (*loop_sample)?;
+                }
+                samples[self.cursor]
+            }
+            PcmData::Engine(motor, register) => {
+                if self.cursor & 1 == 0 {
+                    let v = super::interpolation::interpolate(&motor.pcm, self.phase) as f32
+                        * motor.volume;
+                    let channels = motor
+                        .pan
+                        .map(|pan| (v * pan).clamp(-32768., 32767.) / 32768.);
+                    self.right = channels[1];
+                    self.phase += usize::from(register.get());
+                    if self.phase >= motor.pcm.len() * 4096 {
+                        self.phase -= (motor.pcm.len() - motor.loop_at) * 4096;
+                    }
+                    channels[0]
+                } else {
+                    self.right
+                }
+            }
+        };
         if let Some(levels) = &self.clip.levels {
             // Latch both channels at the start of each stereo frame.
             if self.cursor % 2 == 0 {
@@ -86,7 +168,7 @@ impl Iterator for Playback {
             let gain = (self.frame_levels >> (16 * (self.cursor % 2))) as u16;
             sample *= f32::from(gain) / (33. * 99.);
         }
-        self.cursor += 1;
+        self.cursor = self.cursor.wrapping_add(1);
         Some(sample)
     }
 }
@@ -95,10 +177,13 @@ impl Source for Playback {
         None
     }
     fn total_duration(&self) -> Option<Duration> {
-        self.clip
-            .loop_sample
-            .is_none()
-            .then(|| Duration::from_secs_f64(self.clip.samples.len() as f64 / 88200.))
+        match &self.clip.data {
+            PcmData::Stereo {
+                samples,
+                loop_sample: None,
+            } => Some(Duration::from_secs_f64(samples.len() as f64 / 88200.)),
+            _ => None,
+        }
     }
     fn channels(&self) -> ChannelCount {
         ChannelCount::new(2).unwrap()

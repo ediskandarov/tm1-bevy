@@ -45,9 +45,9 @@ pub fn capture(
     mut cameras: Query<&mut bevy::camera::RenderTarget, With<Camera>>,
     mut offscreen: Local<Option<bevy::camera::RenderTarget>>,
     sinks: Query<&AudioSink>,
-    rival_engines: Query<&AudioSink, With<crate::sfx::RivalEngine>>,
+    rival_engines: Query<(&AudioSink, &crate::sfx::EngineTone), With<crate::sfx::RivalEngine>>,
     pads: Query<&Gamepad>,
-    engine: Query<&AudioSink, With<crate::sfx::Engine>>,
+    engine: Query<(&AudioSink, &crate::sfx::EngineTone), With<crate::sfx::Engine>>,
     music: Query<&AudioSink, With<crate::music::ArenaMusic>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
     mut exit: MessageWriter<AppExit>,
@@ -70,18 +70,18 @@ pub fn capture(
                 sinks.iter().count(),
                 pads.iter().count()
             );
-            for sink in &rival_engines {
+            for (sink, tone) in &rival_engines {
                 eprintln!(
-                    "Rival engine playback {:?}, speed {:.3}",
+                    "Rival engine playback {:?}, SPU pitch {:#06x}",
                     sink.position(),
-                    sink.speed()
+                    tone.pitch_register()
                 );
             }
-            for engine in &engine {
+            for (engine, tone) in &engine {
                 eprintln!(
-                    "Player engine playback {:?}, speed {:.3}",
+                    "Player engine playback {:?}, SPU pitch {:#06x}",
                     engine.position(),
-                    engine.speed()
+                    tone.pitch_register()
                 );
             }
             if let Ok(music) = music.single() {

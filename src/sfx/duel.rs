@@ -1,7 +1,7 @@
 //! Tone allocation for the shared SPU during split-screen play.
 use super::{
-    Candidate, EffectTone, Layer, PreparedTone, Sample, TURBO_PROGRAM, VoiceSequence,
-    battle_programs, engine_speed, pcm::Levels, pcm::StereoPcm, rank_voices,
+    Candidate, EffectTone, EngineSample, Sample, TURBO_PROGRAM, VoiceSequence, battle_programs,
+    pcm::Levels, pcm::StereoPcm, rank_voices,
 };
 use crate::{
     campaign::StageEntity,
@@ -10,13 +10,13 @@ use crate::{
 };
 use anyhow::Result;
 use bevy::{audio::Volume, prelude::*};
-use tm1_assets::sound::program;
 use tm1_core::drive::Vehicle;
 
 #[derive(Resource)]
 pub struct DuelBank {
     programs: Vec<Vec<EffectTone>>,
-    engines: [Vec<Layer>; 2],
+    engines: [Vec<EngineSample>; 2],
+    score_engines: Vec<Handle<StereoPcm>>,
     turbo: Vec<EffectTone>,
     menu: [Handle<AudioSource>; 2],
 }
@@ -26,6 +26,7 @@ pub struct DuelEngine {
     slot: usize,
     source: Handle<StereoPcm>,
     pitch: super::EnginePitch,
+    register: super::pcm::PitchRegister,
 }
 
 #[derive(Component)]
@@ -46,13 +47,18 @@ impl Voice {
 impl DuelBank {
     pub fn load(bank: &[u8], cars: [Vehicle; 2], world: &mut World) -> Result<Self> {
         world.init_resource::<Assets<super::pcm::StereoPcm>>();
-        let mut engines = |car: Vehicle| -> Result<Vec<Layer>> {
-            program(bank, car.sound_programs().0)?
-                .into_iter()
-                .map(|tone| Ok(PreparedTone::new(tone, true, true)?.register(world)))
-                .collect()
-        };
-        let engines = [engines(cars[0])?, engines(cars[1])?];
+        let engines = [
+            EngineSample::load(bank, cars[0])?,
+            EngineSample::load(bank, cars[1])?,
+        ];
+        let score_engines = engines[0]
+            .iter()
+            .map(|tone| {
+                world
+                    .resource_mut::<Assets<StereoPcm>>()
+                    .add(tone.voice(30))
+            })
+            .collect();
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
             .map(|(i, id)| EffectTone::load(bank, id, i == 1 || id == 38))
@@ -65,6 +71,7 @@ impl DuelBank {
         Ok(Self {
             programs,
             engines,
+            score_engines,
             turbo: EffectTone::load(bank, TURBO_PROGRAM, true)?,
             menu: [menu(57)?, menu(58)?],
         })
@@ -74,16 +81,15 @@ impl DuelBank {
         let mut sequence = VoiceSequence::default();
         for (slot, layers) in self.engines.iter().enumerate() {
             for layer in layers {
-                let source = layer
-                    .looping_clip
-                    .as_ref()
-                    .expect("engine loop validated during load");
+                let (clip, register) = layer.motor.voice(layer.pitch.register(0));
+                let source = world.resource_mut::<Assets<StereoPcm>>().add(clip);
                 world.spawn((
                     StageEntity,
                     DuelEngine {
                         slot,
                         source: source.clone(),
                         pitch: layer.pitch,
+                        register,
                     },
                     Voice {
                         order: sequence.next(),
@@ -101,15 +107,13 @@ impl DuelBank {
     }
 
     pub fn play_score_engine(&self, commands: &mut Commands, gain: f32) {
-        for layer in &self.engines[0] {
-            let mut voice = commands.spawn((
+        for clip in &self.score_engines {
+            commands.spawn((
                 StageEntity,
                 crate::duel::ScoreEngine,
-                PlaybackSettings::DESPAWN
-                    .with_speed(engine_speed(layer.pitch, 30))
-                    .with_volume(Volume::Linear(0.28 * gain)),
+                AudioPlayer(clip.clone()),
+                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.28 * gain)),
             ));
-            layer.play(&mut voice);
         }
     }
 
@@ -124,13 +128,11 @@ pub fn mix(
     bank: Res<DuelBank>,
     mut clips: ResMut<Assets<StereoPcm>>,
     mut sequence: ResMut<VoiceSequence>,
-    mut playing: Query<(
+    playing: Query<(
         Entity,
         &Voice,
         Option<&DuelEngine>,
         Has<AudioPlayer<StereoPcm>>,
-        &mut PlaybackSettings,
-        Option<&mut AudioSink>,
     )>,
 ) {
     if duel.pause.is_some() || duel.finished() {
@@ -144,7 +146,7 @@ pub fn mix(
     // Keep engines eligible when a higher-priority effect temporarily takes their voices.
     let mut ranked = Vec::new();
     let mut groups = Vec::new();
-    for (entity, voice, engine, _, _, _) in &playing {
+    for (entity, voice, engine, _) in &playing {
         ranked.push(Candidate {
             entity,
             order: voice.order,
@@ -240,18 +242,17 @@ pub fn mix(
     for (rank, candidate) in ranked.into_iter().enumerate() {
         let entity = candidate.entity;
         if candidate.engine {
-            let Ok((_, _, Some(engine), audible, mut settings, sink)) = playing.get_mut(entity)
-            else {
+            let Ok((_, _, Some(engine), audible)) = playing.get(entity) else {
                 continue;
             };
-            settings.speed = engine_speed(engine.pitch, duel.cars[engine.slot].rev());
+            engine
+                .register
+                .set(engine.pitch.register(duel.cars[engine.slot].rev()));
             if rank < 24 {
                 if !audible {
                     commands
                         .entity(entity)
                         .insert(AudioPlayer(engine.source.clone()));
-                } else if let Some(sink) = sink {
-                    sink.set_speed(settings.speed);
                 }
             } else if audible {
                 commands

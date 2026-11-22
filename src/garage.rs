@@ -86,15 +86,13 @@ impl Garage {
             for tone in engine {
                 let handle = world
                     .resource_mut::<Assets<crate::sfx::pcm::StereoPcm>>()
-                    .add(tone.clip.clone());
+                    .add(tone.voice(30));
                 voices.push(
                     world
                         .spawn((
                             crate::campaign::StageEntity,
                             AudioPlayer(handle),
-                            PlaybackSettings::ONCE
-                                .with_speed(crate::sfx::engine_speed(tone.pitch, 30))
-                                .with_volume(Volume::Linear(0.28 * gain)),
+                            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28 * gain)),
                         ))
                         .id(),
                 );
