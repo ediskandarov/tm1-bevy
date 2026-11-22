@@ -916,7 +916,8 @@ void tm1_heli_camera(u8* state, const u8* target, const s16* table,
     mathMulTransVec(&player.motion.mat2, &offset, &out);
     s32 dx = player.motion.pos.vx + out.vx - heli.motion.pos.vx;
     s32 dy = player.motion.pos.vy + out.vy - heli.motion.pos.vy;
-    s32 dz = player.motion.pos.vz + out.vz - heli.motion.pos.vz;
+    s32 camera_height = enter ? heli.motion.pos.vz : pose[2];
+    s32 dz = player.motion.pos.vz + out.vz - camera_height;
     pose[3] = -ratan2(dz, arena_sqrt(dx * dx + dy * dy));
     pose[4] = ratan2(dx, dy);
     if (!enter) {
@@ -925,7 +926,11 @@ void tm1_heli_camera(u8* state, const u8* target, const s16* table,
     }
     pose[0] = heli.motion.pos.vx;
     pose[1] = heli.motion.pos.vy;
-    pose[2] = heli.motion.pos.vz;
+    // UASetCameraPosition keeps the first sub-roof camera height while the
+    // helicopter actor continues descending. CarViewUpdate aims from that height.
+    if (enter || current_level != LEVEL6_ROOFTOPS || heli.motion.pos.vz >= 6800 || camera_height > 6800) {
+        pose[2] = heli.motion.pos.vz;
+    }
     memcpy(state,&heli,sizeof(heli));
     arena_player = NULL;
     trig = NULL;

@@ -660,13 +660,14 @@ fn helicopter_camera_original() {
         put(&mut r.cpu, 0x8018c3b4, level as u32);
         r.cpu.call(points, &[]);
         r.cpu.random_state = r.player.initial_seed;
+        put(&mut r.cpu, 0x8018c378, level as u32 + 1);
         let mut heli = Helicopter::new(&mut r.player);
         r.cpu.call(0x80124d34, &[HELI, u32::MAX, 1]);
         let trigger = r.cpu.call(0x8011c2d0, &[HELI, 0]);
         put(&mut r.cpu, HELI + 0x20c + 0x64, trigger);
         r.cpu.call(0x80120f60, &[HELI]);
         r.cpu.put(HELI + 1, &[0]);
-        for entry in [0x8014fc14, 0x8015060c, 0x801505c4, 0x8010ad84] {
+        for entry in [0x8015060c, 0x801505c4, 0x8010ad84] {
             r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         let camera = RENDER_SCRATCH;
@@ -683,6 +684,14 @@ fn helicopter_camera_original() {
                 },
                 fields,
             );
+            if level == Level::Rooftops && (45..113).contains(&tick) {
+                let height: i32 = if tick < 100 {
+                    6000 - (tick as i32 - 45) * 60
+                } else {
+                    12000
+                };
+                r.player.state[0x390..0x394].copy_from_slice(&height.to_le_bytes());
+            }
             r.cpu.put(PLAYER, &r.player.state);
             put(&mut r.cpu, PLAYER + 0xf4, 4);
             vec3_cpu(&mut r.cpu, PLAYER + 0x48 + 3 * 12, [0, -640, 320]);
@@ -693,14 +702,29 @@ fn helicopter_camera_original() {
             if matches!(tick, 0 | 113) {
                 heli.update(&r.player, fields, true);
                 r.cpu.call(0x8014f3b4, &[]);
+                let previous =
+                    std::array::from_fn(|i| r.cpu.word(HELI + 0x444 + 4 * i as u32) as i32);
+                vec3_cpu(&mut r.cpu, camera + 0x5c, previous);
             }
-            let previous = std::array::from_fn(|i| r.cpu.word(HELI + 0x444 + 4 * i as u32) as i32);
-            vec3_cpu(&mut r.cpu, camera + 0x5c, previous);
             r.cpu.call(0x80116bcc, &[PLAYER]);
             r.cpu.call(0x8014ea98, &[0]);
             heli.update(&r.player, fields, false);
             let pos: [i32; 3] =
-                std::array::from_fn(|i| r.cpu.word(HELI + 0x444 + 4 * i as u32) as i32);
+                std::array::from_fn(|i| r.cpu.word(camera + 0x5c + 4 * i as u32) as i32);
+            for i in 0..3 {
+                let offset = 0x444 + i * 4;
+                assert_eq!(
+                    &heli.state[offset..offset + 4],
+                    &r.cpu.word(HELI + offset as u32).to_le_bytes(),
+                    "{level:?} tick {tick} helicopter axis {i}"
+                );
+            }
+            if level == Level::Rooftops && tick == 90 {
+                assert!(pos[2] < 6800 && pos[2] > r.cpu.word(HELI + 0x44c) as i32);
+            }
+            if level == Level::Rooftops && tick == 112 {
+                assert!(pos[2] >= 6800);
+            }
             assert_eq!(heli.pose[..3], pos, "{level:?} tick {tick}");
             assert_eq!(heli.pose[3], r.cpu.word(PLAYER + 4) as i16 as i32);
             assert_eq!(heli.pose[4], r.cpu.word(PLAYER + 8) as i16 as i32);
