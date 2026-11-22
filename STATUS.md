@@ -7,7 +7,13 @@ The player completed a manual keyboard playthrough, heard game sounds and reache
 Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Warthog, Mr. Grimm, Pit Viper, Thumper, Spectre and Road Kill
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
-Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Car endings, the original front end and multiplayer are outstanding.
+Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The original front end and multiplayer are outstanding.
+
+## Contest ending
+
+After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. Completing or skipping the credits currently starts a fresh Arena contest with the same vehicle.
+
+The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. Password entry, the title movie and difficulty-specific bonus progression remain open.
 
 ## Warehouse
 

@@ -12,16 +12,19 @@ impl Music {
     pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
         // shellSoundForThisLevel selects the stage track. soundStartPlayDA
         // starts 150 sectors after INDEX 01 and ends before the next pregap.
-        let track = disc.audio_track(match level {
+        let track = match level {
             tm1_core::drive::Level::Rooftops => 8,
             tm1_core::drive::Level::Cyburbia => 6,
             tm1_core::drive::Level::Freeway => 2,
             tm1_core::drive::Level::Arena => 3,
             tm1_core::drive::Level::Warehouse | tm1_core::drive::Level::CityPark => 4,
-        })?;
-        let pcm = &track[150 * 2352..];
-        Ok(Self(Some(stereo_wave(pcm)?)))
+        };
+        Ok(Self(Some(self::track(disc, track)?)))
     }
+}
+pub fn track(disc: &Disc, number: usize) -> Result<AudioSource> {
+    let track = disc.audio_track(number)?;
+    stereo_wave(&track[150 * 2352..])
 }
 pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
     ensure!(pcm.len() % 4 == 0, "incomplete stereo CD frame");

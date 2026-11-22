@@ -22,4 +22,5 @@ pub(crate) fn u16le(data: &[u8], offset: usize) -> Result<u16> {
 pub(crate) fn u32le(data: &[u8], offset: usize) -> Result<u32> {
     Ok(u32::from_le_bytes(bytes(data, offset, 4)?.try_into()?))
 }
+pub mod screen;
 pub mod sound;

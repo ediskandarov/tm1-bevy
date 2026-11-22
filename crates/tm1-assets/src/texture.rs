@@ -91,7 +91,7 @@ impl Vram {
         Ok(color)
     }
 }
-fn rgb555(word: u16) -> [u8; 4] {
+pub(crate) fn rgb555(word: u16) -> [u8; 4] {
     let expand = |v: u16| ((v << 3) | (v >> 2)) as u8;
     [
         expand(word & 31),

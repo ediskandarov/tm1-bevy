@@ -88,3 +88,28 @@ fn supported_disc_arena_and_audio() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn ending_assets() {
+    let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let fonts = tm1_assets::screen::Fonts::load(&disc).unwrap();
+    for name in ["SCRNCALY", "SCRNCOP", "SCRNLARO", "SCRNROAD"] {
+        let mut pixels =
+            tm1_assets::screen::background(&disc.read(&format!("UASCREEN/{name}.TIM")).unwrap())
+                .unwrap();
+        let before = pixels.clone();
+        fonts.centered(
+            &mut pixels,
+            tm1_assets::screen::Face::Text,
+            70,
+            "CONGRATULATIONS!",
+        );
+        assert_ne!(before.as_slice(), pixels.as_slice());
+    }
+    let data = disc.read("UADMD/CARSEND.DMD").unwrap();
+    let db = Dmd::parse(&data).unwrap();
+    for kind in (10..=120).step_by(10) {
+        assert!(!db.extract_kind(kind).unwrap().polygons.is_empty());
+    }
+}

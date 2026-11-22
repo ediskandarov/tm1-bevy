@@ -2,6 +2,7 @@
 mod additive;
 mod campaign;
 mod driving;
+mod ending;
 mod gpu_timing;
 mod music;
 mod render;
@@ -116,23 +117,36 @@ fn main() -> Result<()> {
                 render::hud,
                 render::boss_intro,
             )
-                .chain(),
+                .chain()
+                .run_if(not(resource_exists::<ending::Ending>)),
         )
         .add_systems(
             Update,
             (
                 smoke::capture,
-                sfx::update.after(driving::advance),
-                music::control.after(driving::advance),
+                sfx::update
+                    .after(driving::advance)
+                    .run_if(not(resource_exists::<ending::Ending>)),
+                music::control
+                    .after(driving::advance)
+                    .run_if(not(resource_exists::<ending::Ending>)),
             ),
         )
         .add_systems(
             Update,
             campaign::advance
+                .run_if(not(resource_exists::<ending::Ending>))
                 .after(render::boss_intro)
                 .after(sfx::update)
                 .after(music::control)
                 .after(smoke::capture),
+        )
+        .add_systems(
+            Update,
+            (ending::update, ending::finish)
+                .chain()
+                .after(campaign::advance)
+                .run_if(resource_exists::<ending::Ending>),
         )
         .run();
     ensure!(exit.is_success(), "arena exited with {exit:?}");

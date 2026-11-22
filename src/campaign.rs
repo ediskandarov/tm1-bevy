@@ -118,6 +118,10 @@ pub fn advance(world: &mut World) {
         return;
     }
     let Some(level) = drive.player.level().next() else {
+        if let Err(e) = crate::ending::begin(world) {
+            error!("Loading ending failed: {e:#}");
+            world.write_message(AppExit::error());
+        }
         return;
     };
     let disc = &world.resource::<Campaign>().0;
@@ -131,6 +135,10 @@ pub fn advance(world: &mut World) {
         }
     };
     stage.drive.lives = lives;
+    replace(world, stage);
+}
+
+pub fn clear_stage(world: &mut World) {
     let entities: Vec<_> = world
         .query_filtered::<Entity, With<StageEntity>>()
         .iter(world)
@@ -138,6 +146,10 @@ pub fn advance(world: &mut World) {
     for entity in entities {
         world.despawn(entity);
     }
+}
+
+pub fn replace(world: &mut World, stage: Stage) {
+    clear_stage(world);
     stage.install(world);
     world
         .run_system_once(render::setup)

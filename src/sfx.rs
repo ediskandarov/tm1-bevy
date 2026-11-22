@@ -14,6 +14,19 @@ pub struct Sounds {
 }
 
 impl Sounds {
+    pub fn ending_engine(&self) -> (AudioPlayer, PlaybackSettings) {
+        (
+            AudioPlayer::new(self.voices[2].clone()),
+            PlaybackSettings::LOOP
+                .with_speed(2f32.powf(self.engine_range * 30. / (99. * 12.)))
+                .with_volume(Volume::Linear(0.28)),
+        )
+    }
+
+    pub fn signature(&self) -> AudioPlayer {
+        AudioPlayer::new(self.voices[5 * 5 + 2].clone())
+    }
+
     pub fn load(
         disc: &Disc,
         vehicle: tm1_core::drive::Vehicle,
