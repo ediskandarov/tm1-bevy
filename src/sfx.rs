@@ -756,6 +756,86 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn simultaneous_pedestrian_screams_share_retail_voices() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::{BattleRequest, BattleSound, Drive, effect_sample, effect_voice};
+
+        let mut world = crate::contest::menu_world();
+        let disc = &world.resource::<Campaign>().0;
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        let program_id = (cpu.word(0x8016fefc + 6 * 0x89 + 2) & 0xffff) as usize;
+        let tones = program(&disc.read("SND/UACORE.VAB").unwrap(), program_id).unwrap();
+        let single = 0x801963a8 + 28 * 0x89;
+        cpu.put(single, &0x89u32.to_le_bytes());
+        cpu.put(single + 4, &[tones.len() as u8, tones[0].program_volume]);
+        cpu.put(single + 20, &1u32.to_le_bytes());
+        cpu.put(0x8016fecc + 24, &(3357u32 * 3357).to_le_bytes());
+        // Supply the disc tone attributes and stand in for the SDK audio device.
+        for (index, tone) in tones.iter().enumerate() {
+            cpu.put(
+                0x801972dc + 0x84 * index as u32 + 6,
+                &[
+                    tone.priority,
+                    0,
+                    tone.volume,
+                    tone.pan,
+                    tone.center,
+                    tone.fine,
+                ],
+            );
+        }
+        for endpoint in [0x801671c8, 0x80166fac, 0x8016efe4, 0x8016c494, 0x8016f674] {
+            cpu.put(endpoint, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]); // return zero
+        }
+        cpu.put(0x8016bbc8, &[8, 0, 224, 3, 0x21, 0x10, 0x80, 0]); // return chosen voice
+        let stage = Stage::load(
+            disc,
+            Level::Warehouse,
+            Vehicle::RoadKill,
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        let id = effect_sample(36, world.resource::<Drive>().recharge_sound()).unwrap();
+        let mut previous = Vec::new();
+        for count in [2, 3, 1] {
+            let mut requests = Vec::new();
+            for _ in 0..count {
+                cpu.call(0x801085d0, &[]);
+                requests.push(BattleRequest::Play(BattleSound {
+                    id,
+                    exclusive: effect_voice(36),
+                    volume_percent: 99,
+                    range: 0,
+                    channels: [33; 2],
+                }));
+            }
+            let mut key_ons = 0;
+            cpu.call_observed(0x80105ebc, &[], 0x80000080, |cpu| {
+                if cpu.pc() == 0x8016bbc8 {
+                    assert_eq!(cpu.r[6] as usize, program_id);
+                    key_ons += 1;
+                }
+            });
+            world.resource_mut::<Drive>().sounds = requests;
+            world.run_system_once(update).unwrap();
+            let mut voices: Vec<_> = world
+                .query_filtered::<Entity, With<OneShot>>()
+                .iter(&world)
+                .collect();
+            voices.sort();
+            assert_eq!(voices.len(), tones.len());
+            assert_eq!(
+                voices.iter().filter(|v| !previous.contains(*v)).count(),
+                key_ons
+            );
+            previous = voices;
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn hover_guns_and_car_guns_stop_independently_in_queue_order() {
         use crate::campaign::{Campaign, Entry, Stage};
         use crate::driving::{BattleRequest, BattleSound, Drive, ExclusiveVoice};

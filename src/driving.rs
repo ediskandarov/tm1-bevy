@@ -10,6 +10,7 @@ pub enum ExclusiveVoice {
     MachineGuns(Vehicle),
     Turbo,
     Recharge,
+    Scream,
     Hover,
     HoverGuns,
     WeaponLaunch(u8),
@@ -51,6 +52,7 @@ pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
         55 | 56 => Some(ExclusiveVoice::ScaledEffect(104)),
         29 | 30 | 33 | 37 => Some(ExclusiveVoice::ScaledEffect(105)),
         26 => Some(ExclusiveVoice::Recharge),
+        36 => Some(ExclusiveVoice::Scream),
         401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
         _ => None,
     }
@@ -98,7 +100,7 @@ pub(crate) fn car_sample(
     }
 }
 
-fn effect_sample(kind: i32, recharge: usize) -> Option<usize> {
+pub(crate) fn effect_sample(kind: i32, recharge: usize) -> Option<usize> {
     Some(match kind {
         26 => recharge,
         36 => recharge + 1,
