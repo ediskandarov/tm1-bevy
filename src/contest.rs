@@ -3,7 +3,7 @@ use crate::campaign::{self, Campaign, Stage};
 use anyhow::Result;
 use bevy::prelude::*;
 use tm1_assets::screen::{self, Face, Fonts};
-use tm1_core::drive::{Level, Vehicle};
+use tm1_core::drive::{Difficulty, Level, Vehicle};
 
 #[derive(Component)]
 struct ContestScreen;
@@ -26,6 +26,7 @@ pub struct Contest {
     page: Page,
     vehicle: usize,
     level: Level,
+    difficulty: Difficulty,
     slots: [u8; 5],
     cursor: usize,
     released: bool,
@@ -64,7 +65,8 @@ impl Contest {
                 line(61, Face::Text, "LEFT RIGHT  CAR");
                 line(115, Face::Text, Vehicle::ROSTER[self.vehicle].name());
                 line(142, Face::Text, self.level.name());
-                line(185, Face::Text, "P  PASSWORD");
+                line(165, Face::Text, &format!("D  {:?}", self.difficulty));
+                line(188, Face::Text, "P  PASSWORD");
                 line(211, Face::Text, "ENTER  PLAY");
             }
             Page::Password => {
@@ -113,6 +115,8 @@ impl Contest {
                 }
                 if key(KeyCode::Escape) {
                     self.page = Page::Title;
+                } else if key(KeyCode::KeyD) {
+                    self.difficulty = self.difficulty.next();
                 } else if key(KeyCode::KeyP) {
                     self.page = Page::Password;
                     self.slots = [b' '; 5];
@@ -168,10 +172,15 @@ impl Contest {
     }
 }
 pub fn open(world: &mut World) -> Result<()> {
-    let vehicle = world.resource::<crate::driving::Drive>().player.vehicle();
-    show(world, vehicle, Level::Arena)
+    let player = &world.resource::<crate::driving::Drive>().player;
+    show(world, player.vehicle(), Level::Arena, player.difficulty())
 }
-pub fn show(world: &mut World, vehicle: Vehicle, level: Level) -> Result<()> {
+pub fn show(
+    world: &mut World,
+    vehicle: Vehicle,
+    level: Level,
+    difficulty: Difficulty,
+) -> Result<()> {
     let disc = &world.resource::<Campaign>().0;
     let theme = crate::music::track(disc, 2)?;
     let mut menu = Contest {
@@ -185,6 +194,7 @@ pub fn show(world: &mut World, vehicle: Vehicle, level: Level) -> Result<()> {
         page: Page::Title,
         vehicle: Vehicle::ROSTER.iter().position(|v| *v == vehicle).unwrap(),
         level,
+        difficulty,
         slots: [b' '; 5],
         cursor: 0,
         released: false,
@@ -222,14 +232,19 @@ pub fn update(world: &mut World) {
             return;
         }
         if menu.input(keys) {
-            start = Some((menu.level, Vehicle::ROSTER[menu.vehicle]));
+            start = Some((menu.level, Vehicle::ROSTER[menu.vehicle], menu.difficulty));
         } else if let Some(mut img) = world.resource_mut::<Assets<Image>>().get_mut(&menu.image) {
             img.data = Some(menu.frame());
         }
         menu.sync_theme(world);
     });
-    if let Some((level, vehicle)) = start {
-        match Stage::load(&world.resource::<Campaign>().0, level, vehicle, None) {
+    if let Some((level, vehicle, difficulty)) = start {
+        match Stage::load(
+            &world.resource::<Campaign>().0,
+            level,
+            vehicle,
+            campaign::Entry::New(difficulty),
+        ) {
             Ok(stage) => {
                 world.remove_resource::<Contest>();
                 campaign::replace(world, stage);
@@ -262,11 +277,18 @@ mod tests {
             focused: true,
             ..default()
         });
-        show(&mut world, Vehicle::YellowJacket, Level::Arena).unwrap();
+        show(
+            &mut world,
+            Vehicle::YellowJacket,
+            Level::Arena,
+            Difficulty::Medium,
+        )
+        .unwrap();
         update(&mut world);
         for key in [
             KeyCode::Enter,
             KeyCode::ArrowRight,
+            KeyCode::KeyD,
             KeyCode::KeyP,
             KeyCode::Enter,
             KeyCode::Enter,
@@ -288,6 +310,7 @@ mod tests {
         }
         assert!(!world.contains_resource::<Contest>());
         let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.player.difficulty(), Difficulty::Hard);
         assert_eq!(drive.player.level(), Level::Arena5);
         assert_eq!(drive.player.vehicle(), Vehicle::Darkside);
         assert_eq!(drive.opponents.len(), 5);

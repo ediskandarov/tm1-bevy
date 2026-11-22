@@ -2,6 +2,7 @@
 unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
     fn tm1_bind_level(level: i32);
+    fn tm1_bind_difficulty(difficulty: i32);
     fn tm1_campaign_player(state: *mut u8, table: *const i16, seed: *mut u32, new_life: i32);
     fn tm1_new_life(scene: *mut std::ffi::c_void);
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
@@ -16,6 +17,23 @@ unsafe extern "C" {
     );
 }
 
+#[repr(i32)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Difficulty {
+    Easy,
+    #[default]
+    Medium,
+    Hard,
+}
+impl Difficulty {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Easy => Self::Medium,
+            Self::Medium => Self::Hard,
+            Self::Hard => Self::Easy,
+        }
+    }
+}
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
@@ -221,7 +239,7 @@ impl Vehicle {
     }
 }
 /// Arena draws exclude the player and previously drawn cars until the deck resets.
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct ArenaDeck {
     used: u16,
     draws: u8,
@@ -258,6 +276,7 @@ pub enum RadarSignal {
 
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
+    difficulty: Difficulty,
     level: Level,
     vehicle: Vehicle,
     trig: Box<[i16]>,
@@ -304,6 +323,15 @@ impl PlayerVehicle {
         Self::seeded(exe, vehicle, level, 1)
     }
     pub fn seeded(exe: &[u8], vehicle: Vehicle, level: Level, initial_seed: u32) -> Option<Self> {
+        Self::contest(exe, vehicle, level, initial_seed, Difficulty::Medium)
+    }
+    pub fn contest(
+        exe: &[u8],
+        vehicle: Vehicle,
+        level: Level,
+        initial_seed: u32,
+        difficulty: Difficulty,
+    ) -> Option<Self> {
         if exe.get(..8)? != b"PS-X EXE" {
             return None;
         }
@@ -321,11 +349,13 @@ impl PlayerVehicle {
         {
             let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
             unsafe {
+                tm1_bind_difficulty(difficulty as i32);
                 tm1_bind_level(level as i32);
                 tm1_player_init(state.as_mut_ptr(), &mut seed, vehicle as i32)
             };
         }
         Some(Self {
+            difficulty,
             level,
             vehicle,
             state,
@@ -346,14 +376,18 @@ impl PlayerVehicle {
         self.state = self.initial_state;
     }
     pub fn for_next_stage(&self, level: Level) -> Self {
+        self.for_next_stage_seeded(level, self.seed)
+    }
+    pub fn for_next_stage_seeded(&self, level: Level, mut seed: u32) -> Self {
         let mut state = self.state;
-        let mut seed = self.seed;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(level as i32);
             tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0);
         }
         Self {
+            difficulty: self.difficulty,
             state,
             initial_state: state,
             initial_seed: seed,
@@ -365,11 +399,18 @@ impl PlayerVehicle {
             trig: self.trig.clone(),
         }
     }
+    pub fn difficulty(&self) -> Difficulty {
+        self.difficulty
+    }
     pub fn level(&self) -> Level {
         self.level
     }
     pub fn vehicle(&self) -> Vehicle {
         self.vehicle
+    }
+    pub fn random(&mut self) -> u32 {
+        self.seed = self.seed.wrapping_mul(1103515245).wrapping_add(12345);
+        (self.seed >> 16) & 32767
     }
     pub fn rng_state(&self) -> u32 {
         self.seed
@@ -472,6 +513,7 @@ impl PlayerVehicle {
         self.frame = self.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(self.difficulty as i32);
             tm1_bind_level(self.level as i32);
             tm1_use_scene(scene);
             tm1_drive_step(
@@ -541,6 +583,7 @@ impl Opponent {
         player.used_starts = used;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_place_boss(
                 boss.state.as_mut_ptr(),
@@ -574,6 +617,7 @@ impl Opponent {
     ) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_ai_step(
                 scene,
@@ -684,6 +728,7 @@ impl CollisionScene {
     pub fn respawn_player(&mut self, player: &mut PlayerVehicle) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_campaign_player(
                 player.state.as_mut_ptr(),
@@ -724,6 +769,7 @@ impl CollisionScene {
         player.frame = player.frame.wrapping_add(1);
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_active_opponents(self.native.as_ptr(), opponents.len() as i32);
             tm1_bout_step(
@@ -745,6 +791,7 @@ impl CollisionScene {
         assert!((1..=5).contains(&fields));
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            tm1_bind_difficulty(player.difficulty as i32);
             tm1_bind_level(player.level as i32);
             tm1_contacts(
                 self.native.as_ptr(),

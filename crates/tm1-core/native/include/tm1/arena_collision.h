@@ -34,7 +34,7 @@ void do_puff(VECTOR3*);
 void InitMonsterSmash(Car*,u8,Car*,u8,s16);
 #define DIFFICULTY_EASY 0
 #define DIFFICULTY_HARD 2
-static inline s32 uaGetDifficulty(void) { return 1; }
+s32 uaGetDifficulty(void);
 static inline u8 uaHasPlayerBeatThisLevel(void) { return 0; }
 s32 uaIsCarMatID(s16,s8*,u16*);
 void SetFXSheet(s32,s32,s32,s32);

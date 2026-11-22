@@ -356,7 +356,8 @@ void tm1_regenerate_stands(void)
     if (!current->stand_slots || current->active_stands)
         return;
     if (current->regen_timer < 0) {
-        current->regen_timer = 4000;
+        static const int health_delay[] = { 2000, 4000, 8000 };
+        current->regen_timer = health_delay[uaGetDifficulty()];
     } else if (current->regen_timer == 0) {
         current->active_stands = current->stand_slots;
         current->regen_timer = -1;
@@ -656,7 +657,8 @@ u32 tm1_pickup_address(CollisionScene* s, int i)
 }
 void arena_regenerate_pickups(void)
 {
-    if (current->pickup_timer < 250) {
+    static const int weapon_delay[] = { 150, 250, 350 };
+    if (current->pickup_timer < weapon_delay[uaGetDifficulty()]) {
         current->pickup_timer++;
         return;
     }

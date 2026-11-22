@@ -11,7 +11,7 @@ the arena encounter. Warehouse is playable against all three original opponents 
 
 ```sh
 cargo run --locked --offline -- "$TM1_CUE"
-cargo run --locked --offline -- "$TM1_CUE" --level arena-5
+cargo run --locked --offline -- "$TM1_CUE" --level arena-5 --difficulty hard
 cargo run --locked --offline -- "$TM1_CUE" --car sweet-tooth
 cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car road-kill
 cargo run --locked --offline -- "$TM1_CUE" --level freeway --car outlaw
@@ -20,7 +20,7 @@ cargo run --locked --offline -- "$TM1_CUE" --level cyburbia --car outlaw
 cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 ```
 
-With only the CUE argument, press Enter at the title, use Left or Right to select your vehicle, then Enter to start. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Use 21422 to play Arena 5. The pause HUD shows the keyboard digits for the current stage. Explicit car and level arguments start the fight directly.
+With only the CUE argument, press Enter at the title, use Left or Right to select your vehicle, then Enter to start. D cycles through Medium, Hard and Easy before starting. Finishing Rooftops on Hard continues into Arena 5 after the credits with the remaining lives and inventory. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Use 21422 to play Arena 5. The pause HUD shows the keyboard digits for the current stage. Explicit car and level arguments start the fight directly.
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,
 `outlaw`, `crimson-fury`, `warthog`, `mr-grimm`, `pit-viper`, `thumper`,

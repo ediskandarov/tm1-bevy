@@ -1,6 +1,6 @@
 # Playable arena status
 
-The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of twelve vehicles and fights a computer-controlled opponent on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health costs one life. R restores the stage-entry checkpoint. CDDA and decoded VAB voices play through Bevy.
+The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of twelve vehicles and fights a computer-controlled opponent on the selected difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health costs one life. R restores the stage-entry checkpoint. CDDA and decoded VAB voices play through Bevy.
 
 The player completed a manual keyboard playthrough, heard game sounds and reached the **Arena cleared** victory screen. Keyboard play is the accepted input configuration for this milestone.
 
@@ -11,9 +11,15 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 ## Contest ending
 
-After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. Completing or skipping the credits returns to the title screen.
+After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. After credits, Easy and Medium return to the title screen. Hard continues to Arena 5 with the same driver, remaining lives, inventory and opponent deck.
 
-The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The title movie, non-stage access codes and difficulty-specific bonus progression remain open.
+The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The title movie and non-stage access codes remain open.
+
+## Difficulty
+
+D on the vehicle selection screen cycles the difficulty. AI strength scales to 60, 100 or 120 on Easy, Medium or Hard. The weapon profiles change special and directional attack chances. Incoming player damage uses the retail integer scaling, and both weapon pickup and health stand regeneration use the selected delays. Difficulty persists across respawns, stage transitions and the return to the title.
+
+The retail comparison covers AI spawn records across all three difficulties and battle traces on Easy and Hard in Arena, Warehouse and the Rooftops boss encounter. A frontend test starts the Hard credits with one life and checks the transition to the five-opponent bonus contest.
 
 ## Arena 5 and stage passwords
 

@@ -5,6 +5,7 @@ use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
+    pub deck: tm1_core::drive::ArenaDeck,
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
     pub sounds: Vec<(usize, [i32; 3])>,
@@ -102,6 +103,7 @@ impl Drive {
         Self {
             opponents,
             contacts,
+            deck: Default::default(),
             player,
             sounds: Vec::new(),
             remainder: Duration::ZERO,
@@ -304,7 +306,13 @@ mod tests {
         use bevy::ecs::system::RunSystemOnce;
         use tm1_core::drive::Level;
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let stage = Stage::load(&disc, Level::Arena, Vehicle::YellowJacket, None).unwrap();
+        let stage = Stage::load(
+            &disc,
+            Level::Arena,
+            Vehicle::YellowJacket,
+            crate::campaign::Entry::New(Default::default()),
+        )
+        .unwrap();
         let mut world = World::new();
         world.init_resource::<Assets<Image>>();
         world.init_resource::<Assets<Mesh>>();

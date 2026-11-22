@@ -154,6 +154,23 @@ u8 GetCtlPad(s16 button, s16 which)
     return down;
 }
 
+static _Thread_local s32 difficulty = 1;
+void tm1_bind_difficulty(s32 value)
+{
+    difficulty = value;
+}
+
+s32 uaGetDifficulty(void)
+{
+    return difficulty;
+}
+
+s32 GetAICarStrength(void)
+{
+    static const s32 strength[] = { 60, 100, 120 };
+    return strength[difficulty];
+}
+
 static int current_level = -1;
 
 s32 shellGetCurrentLevel(void)

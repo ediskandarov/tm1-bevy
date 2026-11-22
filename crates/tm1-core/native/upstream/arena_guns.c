@@ -727,6 +727,15 @@ void arena_ai_weapon_profile(AICar* car)
     car->weap.specialChance = p->special_chance;
     car->weap.foreChance = p->fore_chance;
     car->weap.aftChance = p->aft_chance;
+    if (uaGetDifficulty() == DIFFICULTY_EASY) {
+        car->weap.specialChance = p->special_chance >= 25 ? p->special_chance - 15 : 10;
+        car->weap.foreChance = p->fore_chance >= 20 ? p->fore_chance - 10 : 10;
+        car->weap.aftChance = p->aft_chance >= 20 ? p->aft_chance - 10 : 10;
+    } else if (uaGetDifficulty() == DIFFICULTY_HARD) {
+        car->weap.specialChance += 20;
+        car->weap.foreChance = p->fore_chance < 85 ? p->fore_chance + 10 : 95;
+        car->weap.aftChance = p->aft_chance < 85 ? p->aft_chance + 10 : 95;
+    }
 }
 
 void AICarChooseForeWeapon(AICar* car)

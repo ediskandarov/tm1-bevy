@@ -46,10 +46,10 @@ pub struct Ending {
     track: Option<AudioSource>,
 }
 impl Ending {
-    fn load(disc: &Disc, vehicle: Vehicle, seed: u32, height: i32) -> Result<Self> {
+    fn load(disc: &Disc, vehicle: Vehicle, random: u32, height: i32) -> Result<Self> {
         let fonts = Fonts::load(disc)?;
         let mut reward = screen::background(&disc.read("UASCREEN/SCRNCALY.TIM")?)?;
-        let draw = (seed.wrapping_mul(1103515245).wrapping_add(12345) >> 16) & 3;
+        let draw = random & 3;
         let (prize, password) = [
             ("Infinite Weapons", "< =@@"),
             ("Minion and Friends", "<>@=<"),
@@ -278,11 +278,15 @@ pub(crate) struct EndingScreen;
 #[derive(Component)]
 pub(crate) struct EndingEngine;
 pub fn begin(world: &mut World) -> Result<()> {
+    let random = world
+        .resource_mut::<crate::driving::Drive>()
+        .player
+        .random();
     let player = &world.resource::<crate::driving::Drive>().player;
     let mut ending = Ending::load(
         &world.resource::<Campaign>().0,
         player.vehicle(),
-        player.rng_state(),
+        random,
         i32::from_le_bytes(player.state()[0x138 + 0x6c..0x138 + 0x70].try_into()?),
     )?;
     crate::campaign::clear_stage(world);
@@ -408,7 +412,14 @@ pub fn finish(world: &mut World) {
         return;
     }
     world.remove_resource::<Ending>();
-    if let Err(e) = crate::contest::open(world) {
+    if world
+        .resource::<crate::driving::Drive>()
+        .player
+        .difficulty()
+        == tm1_core::drive::Difficulty::Hard
+    {
+        crate::campaign::advance_to(world, tm1_core::drive::Level::Arena5);
+    } else if let Err(e) = crate::contest::open(world) {
         error!("Opening contest screen failed: {e:#}");
         world.write_message(AppExit::error());
     }
@@ -417,6 +428,45 @@ pub fn finish(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn hard_credits_continue_with_remaining_lives() {
+        use crate::campaign::{Entry, Stage};
+        use tm1_core::drive::{Difficulty, Level};
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let stage = Stage::load(
+            &disc,
+            Level::Rooftops,
+            Vehicle::RoadKill,
+            Entry::New(Difficulty::Hard),
+        )
+        .unwrap();
+        let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<ColorMaterial>>();
+        world.init_resource::<Assets<crate::additive::Additive>>();
+        world.init_resource::<Assets<AudioSource>>();
+        world.insert_resource(Campaign(disc));
+        crate::campaign::replace(&mut world, stage);
+        world.resource_mut::<crate::driving::Drive>().lives = 1;
+        begin(&mut world).unwrap();
+        let mut ending = world.resource_mut::<Ending>();
+        for _ in 0..5 {
+            ending.field(true, false, false);
+        }
+        ending.field(false, false, false);
+        ending.field(true, false, false);
+        finish(&mut world);
+        let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.player.level(), Level::Arena5);
+        assert_eq!(drive.player.difficulty(), Difficulty::Hard);
+        assert_eq!(drive.player.vehicle(), Vehicle::RoadKill);
+        assert_eq!(drive.opponents.len(), 5);
+        assert_eq!(drive.lives, 1);
+        assert!(!world.contains_resource::<Ending>());
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

@@ -2,7 +2,7 @@ use crate::{driving, music, render, sfx};
 use anyhow::{Result, ensure};
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
 use tm1_assets::{disc::Disc, scene::Dmd, texture::Vram};
-use tm1_core::drive::{Level, PlayerVehicle, Vehicle};
+use tm1_core::drive::{Difficulty, Level, PlayerVehicle, Vehicle};
 
 #[derive(Resource)]
 pub struct Campaign(pub Disc);
@@ -10,6 +10,10 @@ pub struct Campaign(pub Disc);
 #[derive(Component)]
 pub struct StageEntity;
 
+pub enum Entry<'a> {
+    New(Difficulty),
+    Continue(&'a driving::Drive),
+}
 pub struct Stage {
     arena: render::Arena,
     drive: driving::Drive,
@@ -18,12 +22,7 @@ pub struct Stage {
     clear: ClearColor,
 }
 impl Stage {
-    pub fn load(
-        disc: &Disc,
-        level: Level,
-        vehicle: Vehicle,
-        previous: Option<&PlayerVehicle>,
-    ) -> Result<Self> {
+    pub fn load(disc: &Disc, level: Level, vehicle: Vehicle, entry: Entry<'_>) -> Result<Self> {
         let stage = level.database(vehicle);
         let data = disc.read(&format!("UADMD/{stage}.DMD"))?;
         let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
@@ -36,16 +35,17 @@ impl Stage {
         for issue in &scene.omitted_nodes {
             eprintln!("Preview omission: {issue}");
         }
-        let mut seed = 1;
-        let opponent_kinds = level.opponents(
-            vehicle,
-            &mut tm1_core::drive::ArenaDeck::default(),
-            &mut seed,
-        );
-        let player = match previous {
-            Some(previous) => previous.for_next_stage(level),
-            None => PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
-                .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?,
+        let (mut seed, mut deck) = match entry {
+            Entry::Continue(drive) => (drive.player.rng_state(), drive.deck),
+            Entry::New(_) => (1, Default::default()),
+        };
+        let opponent_kinds = level.opponents(vehicle, &mut deck, &mut seed);
+        let player = match entry {
+            Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
+            Entry::New(difficulty) => {
+                PlayerVehicle::contest(&disc.read("SIPS_600.07")?, vehicle, level, seed, difficulty)
+                    .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?
+            }
         };
         let headlights = !matches!(level, Level::Cyburbia | Level::Rooftops);
         let player_mesh = dmd.vehicle_bodies_with_lights(vehicle as u16, headlights)?;
@@ -88,9 +88,11 @@ impl Stage {
             dmd.radar_arrows()?,
             textures,
         )?;
+        let mut drive = driving::Drive::new(player, contacts, &opponent_kinds);
+        drive.deck = deck;
         Ok(Self {
             arena,
-            drive: driving::Drive::new(player, contacts, &opponent_kinds),
+            drive,
             music: music::Music::level(disc, level)?,
             sounds: sfx::Sounds::load(disc, vehicle, &models)?,
             clear: ClearColor(match level {
@@ -132,9 +134,14 @@ pub fn advance(world: &mut World) {
         }
         return;
     };
+    advance_to(world, level);
+}
+
+pub fn advance_to(world: &mut World, level: Level) {
+    let drive = world.resource::<driving::Drive>();
     let disc = &world.resource::<Campaign>().0;
     let lives = drive.lives;
-    let mut stage = match Stage::load(disc, level, drive.player.vehicle(), Some(&drive.player)) {
+    let mut stage = match Stage::load(disc, level, drive.player.vehicle(), Entry::Continue(drive)) {
         Ok(stage) => stage,
         Err(err) => {
             error!("Loading {level:?} failed: {err:#}");

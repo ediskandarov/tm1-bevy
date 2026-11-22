@@ -18,19 +18,30 @@ fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
     let cue = anyhow::Context::context(
         args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops] [--car <vehicle>] [--screenshot <path.png>]",
+        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops|arena-5] [--difficulty easy|medium|hard] [--car <vehicle>] [--screenshot <path.png>]",
     )?;
     let mut flag = args.next();
     let mut menu = flag.is_none();
-    use tm1_core::drive::{Level, Vehicle};
+    use tm1_core::drive::{Difficulty, Level, Vehicle};
+    let mut difficulty = Difficulty::Medium;
     let mut level = Level::Arena;
     let mut vehicle = Vehicle::YellowJacket;
     while matches!(
         flag.as_ref().and_then(|s| s.to_str()),
-        Some("--car" | "--level" | "--menu")
+        Some("--car" | "--level" | "--menu" | "--difficulty")
     ) {
         if flag.as_deref() == Some(std::ffi::OsStr::new("--menu")) {
             menu = true;
+            flag = args.next();
+            continue;
+        }
+        if flag.as_deref() == Some(std::ffi::OsStr::new("--difficulty")) {
+            difficulty = match args.next().as_ref().and_then(|s| s.to_str()) {
+                Some("easy") => Difficulty::Easy,
+                Some("medium") => Difficulty::Medium,
+                Some("hard") => Difficulty::Hard,
+                _ => anyhow::bail!("--difficulty requires easy, medium or hard"),
+            };
             flag = args.next();
             continue;
         }
@@ -94,7 +105,12 @@ fn main() -> Result<()> {
     let stage = if menu {
         None
     } else {
-        Some(campaign::Stage::load(&disc, level, vehicle, None)?)
+        Some(campaign::Stage::load(
+            &disc,
+            level,
+            vehicle,
+            campaign::Entry::New(difficulty),
+        )?)
     };
     eprintln!(
         "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview, V radar."
@@ -114,7 +130,7 @@ fn main() -> Result<()> {
         stage.install(app.world_mut());
         app.add_systems(Startup, (render::setup, music::start, sfx::start));
     } else {
-        contest::show(app.world_mut(), vehicle, level)?;
+        contest::show(app.world_mut(), vehicle, level, difficulty)?;
     }
     app.add_plugins(additive::AdditivePlugin);
     if demo {

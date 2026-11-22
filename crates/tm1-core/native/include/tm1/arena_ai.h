@@ -16,7 +16,7 @@ PlayerCar *GetPlayerInfo(s16);
 AICar *GetAICarInfo(s16);
 void GetPlayerPosition(s16,VECTOR3 *);
 static inline s16 GetClosestPlayer(VECTOR3 *p,s16 ignored) { (void)p; (void)ignored; return 0; }
-static inline s32 GetAICarStrength(void) { return 100; }
+s32 GetAICarStrength(void);
 s32 shellGetCurrentLevel(void);
 static inline u8 uaUsingLanes(void) { return shellGetCurrentLevel() >= LEVEL2_WAREHOUSE && shellGetCurrentLevel() <= LEVEL5_CYBURBIA; }
 

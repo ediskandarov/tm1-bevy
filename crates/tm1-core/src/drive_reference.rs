@@ -29,6 +29,14 @@ impl Reference {
         Self::on_level(vehicle, retail_particles, Level::Arena)
     }
     fn on_level(vehicle: Vehicle, retail_particles: bool, level: Level) -> Self {
+        Self::on_difficulty(vehicle, retail_particles, level, Difficulty::Medium)
+    }
+    fn on_difficulty(
+        vehicle: Vehicle,
+        retail_particles: bool,
+        level: Level,
+        difficulty: Difficulty,
+    ) -> Self {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let data = disc
             .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
@@ -46,10 +54,11 @@ impl Reference {
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
         let mut cpu = Cpu::new(&exe);
+        cpu.call(0x80150224, &[difficulty as u32]);
         let scene =
             CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(opponent as u16))
                 .unwrap();
-        let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
+        let mut player = PlayerVehicle::contest(&exe, vehicle, level, 1, difficulty).unwrap();
         let mut police = PoliceCar::for_vehicle(&mut player, opponent);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
@@ -76,7 +85,6 @@ impl Reference {
             (0x801a22a8, 1),
             (0x80170238, 3),
             (0x8017023a, 20),
-            (0x8018c36c, 1),
         ] {
             cpu.put(at, &v.to_le_bytes());
         }
@@ -216,37 +224,41 @@ fn group_spawn_original() {
 
     cpu.put(0x80170238, &3u16.to_le_bytes());
     cpu.put(0x8017023a, &20u16.to_le_bytes());
-    for (level, init_points) in [
-        (Level::Warehouse, 0x801262ec),
-        (Level::Freeway, 0x801268f8),
-        (Level::CityPark, 0x80127694),
-        (Level::Cyburbia, 0x801281b8),
-        (Level::Rooftops, 0x8012b5a4),
-    ] {
-        put(&mut cpu, 0x8018c3b4, level as u32);
-        for vehicle in Vehicle::ROSTER {
-            let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
-            let cards = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
-            cpu.call(init_points, &[]);
-            cpu.random_state = player.seed;
-            let opponents = Opponent::spawn_bout(&mut player, &cards);
-            for (slot, opponent) in opponents.iter().enumerate() {
-                let addr = POLICE + 0x560 * slot as u32;
-                put(
-                    &mut cpu,
-                    0x8019f788 + 4 * slot as u32,
-                    POLICE_CS + 0x200 * slot as u32,
-                );
-                cpu.put(addr, &[0; 0x560]);
-                cpu.put(addr + 6, &(slot as u16).to_le_bytes());
-                cpu.call(0x80124d34, &[addr, opponent.vehicle as u32, 1]);
-                cpu.call(0x80142064, &[addr]);
-                let base = (addr & 0x1fffff) as usize;
-                for (i, &v) in opponent.state.iter().enumerate() {
-                    assert_eq!(v, cpu.ram[base + i], "{vehicle:?} slot {slot} byte {i:#x}");
+    for difficulty in [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard] {
+        cpu.call(0x80150224, &[difficulty as u32]);
+        for (level, init_points) in [
+            (Level::Warehouse, 0x801262ec),
+            (Level::Freeway, 0x801268f8),
+            (Level::CityPark, 0x80127694),
+            (Level::Cyburbia, 0x801281b8),
+            (Level::Rooftops, 0x8012b5a4),
+        ] {
+            put(&mut cpu, 0x8018c3b4, level as u32);
+            for vehicle in Vehicle::ROSTER {
+                let mut player =
+                    PlayerVehicle::contest(&exe, vehicle, level, 1, difficulty).unwrap();
+                let cards = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
+                cpu.call(init_points, &[]);
+                cpu.random_state = player.seed;
+                let opponents = Opponent::spawn_bout(&mut player, &cards);
+                for (slot, opponent) in opponents.iter().enumerate() {
+                    let addr = POLICE + 0x560 * slot as u32;
+                    put(
+                        &mut cpu,
+                        0x8019f788 + 4 * slot as u32,
+                        POLICE_CS + 0x200 * slot as u32,
+                    );
+                    cpu.put(addr, &[0; 0x560]);
+                    cpu.put(addr + 6, &(slot as u16).to_le_bytes());
+                    cpu.call(0x80124d34, &[addr, opponent.vehicle as u32, 1]);
+                    cpu.call(0x80142064, &[addr]);
+                    let base = (addr & 0x1fffff) as usize;
+                    for (i, &v) in opponent.state.iter().enumerate() {
+                        assert_eq!(v, cpu.ram[base + i], "{vehicle:?} slot {slot} byte {i:#x}");
+                    }
                 }
+                assert_eq!(cpu.random_state, player.seed);
             }
-            assert_eq!(cpu.random_state, player.seed);
         }
     }
 }
@@ -1455,7 +1467,25 @@ fn start_retail_death(cpu: &mut Cpu, car: u32, player: bool) {
 }
 
 fn compare_battle(vehicle: Vehicle, charge: i16, level: Level, boss: bool) {
-    let mut r = Reference::on_level(vehicle, true, level);
+    compare_battle_skill(vehicle, charge, level, boss, Difficulty::Medium);
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn difficulty_encounters_original() {
+    for difficulty in [Difficulty::Easy, Difficulty::Hard] {
+        compare_battle_skill(Vehicle::YellowJacket, 20, Level::Arena, false, difficulty);
+        compare_battle_skill(Vehicle::Outlaw, 20, Level::Warehouse, false, difficulty);
+        compare_battle_skill(Vehicle::RoadKill, 20, Level::Rooftops, true, difficulty);
+    }
+}
+fn compare_battle_skill(
+    vehicle: Vehicle,
+    charge: i16,
+    level: Level,
+    boss: bool,
+    difficulty: Difficulty,
+) {
+    let mut r = Reference::on_difficulty(vehicle, true, level, difficulty);
     r.cpu.call(0x80137268, &[]);
     let crush = level == Level::Arena && vehicle == Vehicle::Hammerhead;
     let mut engaged = false;
