@@ -708,6 +708,13 @@ mod tests {
         let base = u32::from_le_bytes(exe[24..28].try_into().unwrap());
         let table = 2048 + (0x8016fefc - base) as usize;
         let program_for = |id: usize| exe[table + 6 * id + 2] as usize;
+        let bank = battle_programs(Vehicle::YellowJacket, &[]).collect::<Vec<_>>();
+        for (weapon, id) in [0x15, 0x1b, 0x24, 0x1e, 0x21, 0x18].into_iter().enumerate() {
+            assert_eq!(
+                bank[crate::driving::missile_sample(weapon as u8)],
+                program_for(id)
+            );
+        }
         // IDs follow the original car sound order, including Minion's separate signature.
         let cars = [
             Vehicle::SweetTooth,

@@ -1398,6 +1398,11 @@ pub enum BattleEvent {
         weapon: u8,
         position: [i32; 3],
     },
+    MissileSound {
+        weapon: u8,
+        launch: bool,
+        position: [i32; 3],
+    },
     WeaponImpact {
         weapon: u8,
         position: [i32; 3],
@@ -1446,6 +1451,21 @@ extern "C" fn tm1_record_drop_launch(
 ) {
     log.push(BattleEvent::DropLaunch {
         weapon: weapon as u8,
+        position: [x, y, z],
+    });
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_missile_sound(
+    log: &mut Vec<BattleEvent>,
+    weapon: i32,
+    launch: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) {
+    log.push(BattleEvent::MissileSound {
+        weapon: weapon as u8,
+        launch: launch != 0,
         position: [x, y, z],
     });
 }

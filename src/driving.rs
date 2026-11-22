@@ -46,7 +46,6 @@ pub(crate) fn effect_volume(kind: i32) -> i32 {
 }
 pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
     match kind {
-        12..=17 => Some(ExclusiveVoice::WeaponLaunch((kind - 12) as u8)),
         1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
         54 => Some(ExclusiveVoice::ScaledEffect(4)),
         55 | 56 => Some(ExclusiveVoice::ScaledEffect(104)),
@@ -56,6 +55,10 @@ pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
         _ => None,
     }
 }
+pub(crate) fn missile_sample(weapon: u8) -> usize {
+    [4, 7, 8, 9, 10, 11][usize::from(weapon)]
+}
+
 pub(crate) fn hover_sample(
     sound: tm1_core::drive::HoverSound,
     motor: usize,
@@ -63,7 +66,7 @@ pub(crate) fn hover_sample(
     use tm1_core::drive::HoverSound;
     match sound {
         HoverSound::Guns(firing) => (ExclusiveVoice::HoverGuns, firing.then_some(1)),
-        HoverSound::Launch => (ExclusiveVoice::WeaponLaunch(0), Some(4)),
+        HoverSound::Launch => (ExclusiveVoice::WeaponLaunch(0), Some(missile_sample(0))),
         HoverSound::Motor => (ExclusiveVoice::Hover, Some(motor)),
     }
 }
@@ -102,12 +105,11 @@ fn effect_sample(kind: i32, recharge: usize) -> Option<usize> {
         401..=406 | 410..=414 | 430 => recharge + 4,
         11 => 6,
         10 => 5,
-        18..=25 | 13..=17 => (kind - 6) as usize,
+        18..=25 => (kind - 6) as usize,
         54 => 2,
         1 | 28 => recharge + 2,
         55 | 56 => recharge + 9,
         33 | 2 | 37 | 29 | 30 => 3,
-        12 => 4,
         _ => return None,
     })
 }
@@ -216,6 +218,18 @@ pub(crate) fn battle_audio(
                         matches!(kind, 29 | 30 | 33 | 37),
                     ));
                 }
+            }
+            BattleEvent::MissileSound {
+                weapon,
+                launch,
+                position,
+            } => {
+                let id = missile_sample(weapon);
+                let key = ExclusiveVoice::WeaponLaunch(weapon);
+                if launch {
+                    emit(BattleRequest::Stop(key));
+                }
+                emit(play(id, Some(key), 99, position, false));
             }
             BattleEvent::DropLaunch { weapon, position } => {
                 let offset = match weapon {

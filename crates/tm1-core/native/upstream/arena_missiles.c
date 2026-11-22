@@ -269,7 +269,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
                 m->life = 80;
                 m->damage = 10;
                 m->unk48 = WEAPON_SINGING_MISSILE;
-                arena_record_effect(&m->pos, 12 + WEAPON_SINGING_MISSILE);
+                arena_missile_sound(&m->pos, WEAPON_SINGING_MISSILE, 1);
                 break;
             case UA_MAD_MAX:
                 m->unk2C = 1;
@@ -277,7 +277,7 @@ void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* mot
                 m->damage = 16;
                 m->unk48 = WEAPON_SPECIAL;
                 m->model = 312;
-                arena_record_effect(&m->pos, 12 + WEAPON_HOMING_MISSILE);
+                arena_missile_sound(&m->pos, WEAPON_HOMING_MISSILE, 1);
                 do_smoke(&m->pos);
                 break;
             }
@@ -328,7 +328,9 @@ void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* 
     pad->ammo[pad->cur]--;
     pad->totalAmmo--;
     start_trail(m, trail_color[slot]);
-    arena_record_effect(&cs->pos, 12 + slot);
+    if (slot == WEAPON_FIRE_MISSILE || rear)
+        arena_missile_sound(&cs->pos, WEAPON_HOMING_MISSILE, 1);
+    arena_missile_sound(&cs->pos, slot, 1);
 }
 void move_missile(Missile* m)
 {
@@ -364,6 +366,7 @@ void move_missile(Missile* m)
         m->cs->pos.vy += d.vy;
         m->cs->pos.vz += d.vz;
         m->life = m->life - 1;
+        arena_missile_sound(&m->cs->pos, m->unk48, 0);
         if (m->unk56 >= 16) {
             m->cs->pos.vz -= 16;
             m->unk56 -= 16;

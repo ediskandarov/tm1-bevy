@@ -19,6 +19,7 @@ extern void tm1_record_guns(void*, int, int, int, int, int);
 extern void tm1_record_turbo(void*, int);
 extern void tm1_record_actor(void*, int);
 extern void tm1_record_drop_launch(void*, int, int, int, int);
+extern void tm1_record_missile_sound(void*, int, int, int, int, int);
 extern void tm1_record_weapon_impact(void*, int, int, int, int);
 extern void tm1_record_hover(void*, int, int, int, int);
 
@@ -39,6 +40,11 @@ void arena_drop_launch_sound(const VECTOR3* p, int weapon)
 {
     if (step_audio)
         tm1_record_drop_launch(step_audio, weapon, p->vx, p->vy, p->vz);
+}
+void arena_missile_sound(const VECTOR3* p, int weapon, int launch)
+{
+    if (step_audio && (unsigned)weapon <= WEAPON_REAR_MISSILE)
+        tm1_record_missile_sound(step_audio, weapon, launch, p->vx, p->vy, p->vz);
 }
 void arena_weapon_impact_sound(const VECTOR3* p, int weapon)
 {

@@ -3186,9 +3186,31 @@ fn special_missiles_original() {
                 expected.sort_unstable();
                 assert_eq!(faces[..count], expected, "{vehicle:?} {tick} trail");
                 r.compare();
-                r.cpu.call(0x80110810, &[]);
+                let mut position = [0; 3];
+                let mut flight = Vec::new();
+                r.cpu.call_observed(0x80110810, &[], 0x80000080, |cpu| {
+                    match cpu.pc() {
+                        0x8010461c => position = [0, 4, 8].map(|d| cpu.word(cpu.r[4] + d) as i32),
+                        // The launch/inflight switch has no entry for the Deathspear special.
+                        0x80107c6c if cpu.r[4] <= 5 => flight.push(BattleEvent::MissileSound {
+                            weapon: cpu.r[4] as u8,
+                            launch: false,
+                            position,
+                        }),
+                        _ => {}
+                    }
+                });
                 r.cpu.call(0x80137d2c, &[]);
                 r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+                assert!(
+                    r.scene
+                        .audio
+                        .iter()
+                        .copied()
+                        .filter(|event| matches!(event, BattleEvent::MissileSound { .. }))
+                        .eq(flight),
+                    "{vehicle:?} flight tick {tick}"
+                );
             }
         }
     }
@@ -3222,9 +3244,31 @@ fn regular_missile_impacts_original() {
         r.player.state[ammo..ammo + 2].copy_from_slice(&2i16.to_le_bytes());
         r.sync();
         r.cpu.call(0x80113858, &[PLAYER, 1]);
-        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        let mut launch_requests = Vec::new();
+        let mut position = [0; 3];
+        r.cpu
+            .call_observed(0x8013148c, &[PLAYER, 1], 0x80000080, |cpu| match cpu.pc() {
+                0x8010461c => position = [0, 4, 8].map(|d| cpu.word(cpu.r[4] + d) as i32),
+                0x80107d18 | 0x80107c6c => {
+                    launch_requests.push((cpu.pc() == 0x80107d18, cpu.r[4] as u8, position))
+                }
+                _ => {}
+            });
         r.scene.phase(&mut r.player, &mut r.police, 1, 3);
         r.compare();
+        let mut requests = Vec::new();
+        for event in &r.scene.audio {
+            if let BattleEvent::MissileSound {
+                weapon,
+                position,
+                launch: true,
+            } = *event
+            {
+                requests.extend([(true, weapon, position), (false, weapon, position)]);
+            }
+        }
+        assert!(!launch_requests.is_empty());
+        assert_eq!(requests, launch_requests, "launch slot {slot}");
         assert_eq!(r.player.weapon().1, 1);
         let before = r.police.health().0;
         let mut hits = 0;
@@ -3244,6 +3288,14 @@ fn regular_missile_impacts_original() {
                     0x80137190 => 31,
                     0x8010461c => {
                         source = position(cpu.r[4]);
+                        return;
+                    }
+                    0x80107c6c => {
+                        expected.push(BattleEvent::MissileSound {
+                            weapon: cpu.r[4] as u8,
+                            launch: false,
+                            position: source,
+                        });
                         return;
                     }
                     0x80107dbc => {
@@ -3272,6 +3324,7 @@ fn regular_missile_impacts_original() {
                     matches!(
                         event,
                         BattleEvent::WeaponImpact { .. }
+                            | BattleEvent::MissileSound { .. }
                             | BattleEvent::Effect {
                                 kind: 28 | 55 | 56 | 8 | 31,
                                 ..

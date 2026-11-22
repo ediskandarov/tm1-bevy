@@ -360,6 +360,7 @@ mod tests {
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(50));
         let mut checked_missile = false;
+        let mut flight_positions = std::collections::HashSet::new();
         let mut checked_guns = false;
         for tick in 0..130 {
             let duel = world.resource::<Duel>();
@@ -383,6 +384,14 @@ mod tests {
                         firing: true,
                         position,
                     } if !checked_guns => (1, position),
+                    BattleEvent::MissileSound {
+                        weapon,
+                        launch: false,
+                        position,
+                    } => {
+                        flight_positions.insert(position);
+                        (crate::driving::missile_sample(weapon), position)
+                    }
                     BattleEvent::Effect { kind: 28, position } if index < boundary => {
                         (15, position)
                     }
@@ -400,7 +409,7 @@ mod tests {
                 assert!(duel.sounds.iter().any(|request|matches!(request,BattleRequest::Play(s) if s.id==id && s.range==range && s.channels==expected)),"tick {tick} sample {id}");
                 if id == 1 {
                     checked_guns = true;
-                } else {
+                } else if matches!(event, BattleEvent::Effect { .. }) {
                     checked_missile = true;
                 }
             }
@@ -454,6 +463,7 @@ mod tests {
             }
         }
         assert!(checked_guns && checked_missile);
+        assert!(flight_positions.len() > 1);
     }
 
     #[test]

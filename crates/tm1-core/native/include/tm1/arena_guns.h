@@ -86,6 +86,7 @@ void arena_effect(VECTOR3 *,s32);
 void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos);
 void arena_record_effect(const VECTOR3* pos, int kind);
 void arena_drop_launch_sound(const VECTOR3* pos, int weapon);
+void arena_missile_sound(const VECTOR3* pos, int weapon, int launch);
 void arena_weapon_impact_sound(const VECTOR3* pos, int weapon);
 void arena_record_hover(const VECTOR3* pos, int flags);
 void arena_crush_sound(int slot);
