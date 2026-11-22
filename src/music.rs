@@ -31,10 +31,20 @@ impl StageTrack {
             .tracks
             .get(number)
             .ok_or_else(|| anyhow::anyhow!("missing next CD track"))?;
-        let normal_end = pcm.len();
-        ensure!(normal_end > CD_START, "stage track is too short");
-        pcm.resize(normal_end + next.index01 as usize * SECTOR_BYTES, 0);
-        File::open(&next.path)?.read_exact(&mut pcm[normal_end..])?;
+        let byte_count = pcm.len();
+        ensure!(byte_count > CD_START, "stage track is too short");
+        let next_bin_sector: u64 = disc.tracks[..number]
+            .iter()
+            .map(|t| t.size / SECTOR_BYTES as u64)
+            .sum();
+        // cbready discards the sector within the reported absolute second and
+        // repeats only once that second is strictly beyond EndPos.
+        let until_repeat = 75 - next_bin_sector % 75;
+        let normal_end = byte_count + until_repeat as usize * SECTOR_BYTES;
+        let next_index = next_bin_sector + next.index01;
+        let extended_sectors = next.index01 + 75 - next_index % 75;
+        pcm.resize(byte_count + extended_sectors as usize * SECTOR_BYTES, 0);
+        File::open(&next.path)?.read_exact(&mut pcm[byte_count..])?;
         Ok(Self {
             pcm: pcm.into(),
             normal_end,
@@ -102,7 +112,7 @@ pub struct Music {
 impl Music {
     pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
         // shellSoundForThisLevel selects the stage track. soundStartPlayDA
-        // starts 150 sectors after INDEX 01 and ends before the next pregap.
+        // starts 150 sectors after INDEX 01.
         use tm1_core::drive::Level::*;
         let opening = opening_track(level, false);
         let battle = match level {
@@ -261,17 +271,28 @@ mod tests {
             cpu.put(0x8018bf68, &0u32.to_le_bytes());
             cpu.call_until(0x801057e0, &[number as u32], 0x80105b60);
             let (start, end) = (cpu.r[4], cpu.r[5]);
-            assert_eq!(
-                (end - start) as usize * SECTOR_BYTES,
-                track.normal_end - CD_START
-            );
+            let track_start = start - 150;
+            let repeat = track_start + (track.normal_end / SECTOR_BYTES) as u32;
             cpu.put(0x8018bf68, &4u32.to_le_bytes());
             cpu.call_until(0x801057e0, &[number as u32], 0x80105a1c);
             assert_eq!(start, cpu.word(0x8018c4e4));
-            assert_eq!(
-                (cpu.word(0x8018c4e8) - start) as usize * SECTOR_BYTES,
-                track.pcm.len() - CD_START
-            );
+            let extended_end = cpu.word(0x8018c4e8);
+            let extended_repeat = track_start + (track.pcm.len() / SECTOR_BYTES) as u32;
+            for (limit, wrap) in [(end, repeat), (extended_end, extended_repeat)] {
+                cpu.put(0x8018c4e8, &limit.to_le_bytes());
+                for position in [wrap - 1, wrap] {
+                    let report = 0x80010000;
+                    // CdIntToPos writes minute, second and sector at report[3..6].
+                    cpu.call(0x80156f80, &[position, report + 3]);
+                    if position < wrap {
+                        cpu.call(0x80105c78, &[1, report]);
+                        assert!(cpu.word(0x8018c4ec) <= limit);
+                    } else {
+                        cpu.call_until(0x80105c78, &[1, report], 0x80105cec);
+                        assert!(cpu.word(0x8018c4ec) > limit);
+                    }
+                }
+            }
 
             let mut playback = track.decoder();
             playback.cursor = track.normal_end - 2;
@@ -283,9 +304,15 @@ mod tests {
             assert_eq!(playback.cursor, track.normal_end - 2);
             playback.next();
             let mut next_bin = File::open(&disc.tracks[number].path).unwrap();
-            let mut pregap = vec![0; 150 * SECTOR_BYTES];
-            next_bin.read_exact(&mut pregap).unwrap();
-            for bytes in pregap.chunks_exact(2) {
+            use std::io::{Seek, SeekFrom};
+            let bin_end = disc.tracks[number - 1].size as usize
+                - disc.tracks[number - 1].index01 as usize * SECTOR_BYTES;
+            next_bin
+                .seek(SeekFrom::Start((track.normal_end - bin_end) as u64))
+                .unwrap();
+            let mut extension = vec![0; track.pcm.len() - track.normal_end];
+            next_bin.read_exact(&mut extension).unwrap();
+            for bytes in extension.chunks_exact(2) {
                 assert_eq!(
                     playback.next(),
                     Some(f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.)
