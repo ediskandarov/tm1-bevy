@@ -13,6 +13,16 @@ enum Page {
     Contest,
     Password,
     Wrong,
+    BossPreview(std::time::Duration),
+}
+pub const INFINITE_WEAPONS: &str = "< =@@";
+pub const MINION_AND_FRIENDS: &str = "<>@=<";
+const GOD_MODE: &str = "=<> @";
+#[derive(Default, Clone, Copy)]
+struct PasswordModes {
+    infinite_weapons: bool,
+    god_mode: bool,
+    minion: bool,
 }
 #[derive(Resource)]
 pub struct Contest {
@@ -27,6 +37,7 @@ pub struct Contest {
     vehicle: usize,
     level: Level,
     difficulty: Difficulty,
+    modes: PasswordModes,
     slots: [u8; 5],
     cursor: usize,
     released: bool,
@@ -70,7 +81,8 @@ impl Contest {
                 line(211, Face::Text, "ENTER  PLAY");
             }
             Page::Password => {
-                line(88, Face::Text, "ENTER PASSWORD");
+                line(72, Face::Text, "ENTER PASSWORD");
+                line(98, Face::Text, "SPACE  BLANK");
                 line(125, Face::Text, "1 TRIANGLE   2 SQUARE");
                 line(145, Face::Text, "3 CROSS   4 CIRCLE");
                 // Draw one fixed-width slot per glyph, including spaces in cheat codes.
@@ -92,6 +104,21 @@ impl Contest {
                 }
                 self.fonts
                     .centered(&mut frame, Face::Text, 221, "ENTER  ACCEPT");
+            }
+            Page::BossPreview(_) => {
+                for pixel in frame.chunks_exact_mut(4) {
+                    for channel in &mut pixel[..3] {
+                        *channel /= 2;
+                    }
+                }
+                for (i, text) in crate::render::BOSS_MESSAGE
+                    .lines()
+                    .filter(|s| !s.is_empty())
+                    .enumerate()
+                {
+                    self.fonts
+                        .centered(&mut frame, Face::Text, 70 + i as i32 * 30, text);
+                }
             }
             Page::Wrong => {
                 line(115, Face::Text, "WRONG PASSWORD");
@@ -115,6 +142,8 @@ impl Contest {
                 }
                 if key(KeyCode::Escape) {
                     self.page = Page::Title;
+                    self.modes = Default::default();
+                    self.level = Level::Arena;
                 } else if key(KeyCode::KeyD) {
                     self.difficulty = self.difficulty.next();
                 } else if key(KeyCode::KeyP) {
@@ -132,13 +161,24 @@ impl Contest {
                 if key(KeyCode::Escape) {
                     self.page = Page::Contest;
                 } else if key(KeyCode::Enter) {
-                    if let Some(level) =
-                        Level::from_stage_password(std::str::from_utf8(&self.slots).unwrap())
-                    {
-                        self.level = level;
-                        self.page = Page::Contest;
-                    } else {
-                        self.page = Page::Wrong;
+                    let code = std::str::from_utf8(&self.slots).unwrap();
+                    self.page = Page::Contest;
+                    match code {
+                        INFINITE_WEAPONS => self.modes.infinite_weapons = true,
+                        GOD_MODE => self.modes.god_mode = true,
+                        "<><<@" => self.page = Page::BossPreview(std::time::Duration::from_secs(5)),
+                        MINION_AND_FRIENDS => {
+                            self.modes.minion = true;
+                            self.level = Level::Rooftops;
+                        }
+                        _ => {
+                            if let Some(level) = Level::from_stage_password(code) {
+                                self.level = level;
+                                self.modes.minion = false;
+                            } else {
+                                self.page = Page::Wrong;
+                            }
+                        }
                     }
                 } else if key(KeyCode::ArrowLeft) {
                     self.cursor = (self.cursor + 4) % 5;
@@ -156,6 +196,11 @@ impl Contest {
                 {
                     self.slots[self.cursor] = ch;
                     self.cursor = (self.cursor + 1) % 5;
+                }
+            }
+            Page::BossPreview(_) => {
+                if key(KeyCode::Enter) {
+                    self.page = Page::Contest;
                 }
             }
             Page::Wrong => {
@@ -195,6 +240,7 @@ pub fn show(
         vehicle: Vehicle::ROSTER.iter().position(|v| *v == vehicle).unwrap(),
         level,
         difficulty,
+        modes: Default::default(),
         slots: [b' '; 5],
         cursor: 0,
         released: false,
@@ -228,24 +274,39 @@ pub fn update(world: &mut World) {
             menu.released = keys.get_pressed().next().is_none();
             return;
         }
-        if keys.get_just_pressed().next().is_none() {
+        let expired = if let Page::BossPreview(remaining) = &mut menu.page {
+            *remaining = remaining.saturating_sub(world.resource::<Time<Real>>().delta());
+            remaining.is_zero()
+        } else {
+            false
+        };
+        if expired {
+            menu.page = Page::Contest;
+        }
+        if !expired && keys.get_just_pressed().next().is_none() {
             return;
         }
-        if menu.input(keys) {
-            start = Some((menu.level, Vehicle::ROSTER[menu.vehicle], menu.difficulty));
+        if !expired && menu.input(keys) {
+            start = Some((
+                menu.level,
+                Vehicle::ROSTER[menu.vehicle],
+                menu.difficulty,
+                menu.modes,
+            ));
         } else if let Some(mut img) = world.resource_mut::<Assets<Image>>().get_mut(&menu.image) {
             img.data = Some(menu.frame());
         }
         menu.sync_theme(world);
     });
-    if let Some((level, vehicle, difficulty)) = start {
+    if let Some((level, vehicle, difficulty, modes)) = start {
         match Stage::load(
             &world.resource::<Campaign>().0,
             level,
             vehicle,
             campaign::Entry::New(difficulty),
         ) {
-            Ok(stage) => {
+            Ok(mut stage) => {
+                stage.apply_passwords(modes.infinite_weapons, modes.god_mode, modes.minion);
                 world.remove_resource::<Contest>();
                 campaign::replace(world, stage);
             }
@@ -261,9 +322,7 @@ pub fn update(world: &mut World) {
 mod tests {
     use super::*;
 
-    #[test]
-    #[ignore = "requires the supported TM1_CUE"]
-    fn keyboard_password_starts_bonus_contest() {
+    fn menu_world() -> World {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let mut world = World::new();
         world.init_resource::<Assets<Image>>();
@@ -285,6 +344,70 @@ mod tests {
         )
         .unwrap();
         update(&mut world);
+        world.init_resource::<Time<Real>>();
+        world
+    }
+    fn press(world: &mut World, key: KeyCode) {
+        let mut keys = ButtonInput::default();
+        keys.press(key);
+        world.insert_resource(keys);
+        update(world);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+    }
+    fn password(world: &mut World, keys: &[KeyCode]) {
+        press(world, KeyCode::KeyP);
+        for &key in keys {
+            press(world, key);
+        }
+        press(world, KeyCode::Enter);
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn special_passwords_and_boss_preview() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, Enter);
+        password(&mut world, &[Digit1, Digit3, Digit1, Digit1, Digit4]);
+        assert!(matches!(
+            world.resource::<Contest>().page,
+            Page::BossPreview(_)
+        ));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(std::time::Duration::from_secs(5));
+        update(&mut world);
+        assert!(matches!(world.resource::<Contest>().page, Page::Contest));
+        password(&mut world, &[Digit2, Digit1, Digit3, Space, Digit4]);
+        password(&mut world, &[Digit1, Space, Digit2, Digit4, Digit4]);
+        password(&mut world, &[Digit1, Digit3, Digit4, Digit2, Digit1]);
+        press(&mut world, Enter);
+        let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.player.level(), Level::Rooftops);
+        assert!(drive.showing_boss_intro());
+        assert_eq!(drive.player.state()[0x184], 0);
+        assert_eq!(drive.player.state()[0x4a1], 1);
+        assert!(drive.opponents.iter().all(|ai| ai.health().0 > 0));
+        use bevy::ecs::system::RunSystemOnce;
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world.run_system_once(crate::driving::advance).unwrap();
+        world.run_system_once(crate::driving::advance).unwrap();
+        let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.opponents.len(), 4);
+        assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
+        assert!(drive.opponents.iter().all(|ai| ai.health().0 > 0));
+        world
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyR);
+        world.run_system_once(crate::driving::advance).unwrap();
+        let drive = world.resource::<crate::driving::Drive>();
+        assert!(drive.showing_boss_intro());
+        assert_eq!(drive.opponents.len(), 3);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn keyboard_password_starts_bonus_contest() {
+        let mut world = menu_world();
         for key in [
             KeyCode::Enter,
             KeyCode::ArrowRight,
@@ -302,11 +425,7 @@ mod tests {
             KeyCode::Enter,
             KeyCode::Enter,
         ] {
-            let mut keys = ButtonInput::default();
-            keys.press(key);
-            world.insert_resource(keys);
-            update(&mut world);
-            world.insert_resource(ButtonInput::<KeyCode>::default());
+            press(&mut world, key);
         }
         assert!(!world.contains_resource::<Contest>());
         let drive = world.resource::<crate::driving::Drive>();

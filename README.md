@@ -20,7 +20,16 @@ cargo run --locked --offline -- "$TM1_CUE" --level cyburbia --car outlaw
 cargo run --locked --offline -- "$TM1_CUE" --level rooftops --car road-kill
 ```
 
-With only the CUE argument, press Enter at the title, use Left or Right to select your vehicle, then Enter to start. D cycles through Medium, Hard and Easy before starting. Finishing Rooftops on Hard continues into Arena 5 after the credits with the remaining lives and inventory. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Use 21422 to play Arena 5. The pause HUD shows the keyboard digits for the current stage. Explicit car and level arguments start the fight directly.
+With only the CUE argument, press Enter at the title, use Left or Right to select your vehicle, then Enter to start. D cycles through Medium, Hard and Easy before starting. Finishing Rooftops on Hard continues into Arena 5 after the credits with the remaining lives and inventory. On the selection screen, P opens the stage password editor. Use 1 for triangle, 2 for square, 3 for cross and 4 for circle. Left and Right move between slots. Enter accepts the code and Esc goes back. Space inserts a blank slot. Use 21422 to play Arena 5. The special passwords below can be entered before starting the contest.
+
+| Password keys | Result |
+| --- | --- |
+| 1, Space, 2, 4, 4 | Infinite Weapons refreshes weapon slots before firing. |
+| 2, 1, 3, Space, 4 | God Mode protects player health from incoming damage. |
+| 1, 3, 4, 2, 1 | Minion and Friends starts Rooftops with Minion joining three live rivals. |
+| 1, 3, 1, 1, 4 | Preview Minion's introduction, then return to selection. |
+
+The pause HUD shows the keyboard digits for the current stage. Explicit car and level arguments start the fight directly.
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,
 `outlaw`, `crimson-fury`, `warthog`, `mr-grimm`, `pit-viper`, `thumper`,

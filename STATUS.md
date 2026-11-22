@@ -13,7 +13,7 @@ Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its o
 
 After the Rooftops victory delay, Calypso awards one of four passwords. The screen uses the disc TIM, font atlas and JP executable glyph metrics. The credits load CREDITS.TXT, the selected CARSEND model and its disc backdrop. Outlaw and Road Kill use their own camera motion, signature timing and CDDA tracks. Enter advances the reward and skips the credits. Up and Down change the scroll speed. After credits, Easy and Medium return to the title screen. Hard continues to Arena 5 with the same driver, remaining lives, inventory and opponent deck.
 
-The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The title movie and non-stage access codes remain open.
+The reward and Outlaw credits were captured on Apple M3 Pro Metal using a temporary forced Rooftops victory. The captures verify the two screens independently of a complete campaign playthrough. The ending renderer has not been compared pixel-for-pixel against console output. The title movie and helicopter camera password remain open.
 
 ## Difficulty
 
@@ -26,6 +26,8 @@ The retail comparison covers AI spawn records across all three difficulties and 
 The contest selector accepts the six JP stage passwords. P opens a five-slot editor with four controller symbols, left/right cursor wrap, submission and retry. During a fight, P shows the current stage password in keyboard digits. The bonus Arena 5 password is 21422. XARENA1 supplies the arena, the retail random deck deals five rivals and CDDA track 2 plays. Clearing this bonus contest returns to the title.
 
 The bonus encounter comparison runs all twelve vehicle selections against the JP executable. The frontend test enters an invalid password, retries, enters 21422 and starts a five-opponent fight as Darkside. Metal captures on Apple M3 Pro cover the title and a running bonus encounter.
+
+The contest menu accepts Infinite Weapons, God Mode, Minion and Friends and the boss introduction preview. Infinite Weapons follows the JP per-update refill, including the empty singing missile slot. The password test executes the retail setters, compares player and opponent records after weapon processing, and compares an incoming bullet impact with and without God Mode. The keyboard test combines both modes with the Minion password, waits through the introduction and verifies four living opponents. Restart replays that encounter. Additional controller combinations available within the original God Mode remain outstanding.
 
 ## Warehouse
 

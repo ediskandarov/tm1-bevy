@@ -334,13 +334,19 @@ pub fn setup(
         Sprite::from_color(Color::srgba(0.07, 0.07, 0.07, 0.86), Vec2::ONE),
         Transform::from_xyz(0., 0., 3.),
     ));
-    commands.spawn((crate::campaign::StageEntity, BossMessage, Visibility::Hidden,
-        Text2d::new("CONGRATULATIONS!\n\nYou have made it to the\nFINAL round.  Prepare to\nbattle MINION, last year's\nTwisted Metal winner!"),
-        TextLayout::default().with_justify(Justify::Center), TextFont::from_font_size(12.),
-        Transform::from_xyz(0.,0.,4.)));
+    commands.spawn((
+        crate::campaign::StageEntity,
+        BossMessage,
+        Visibility::Hidden,
+        Text2d::new(BOSS_MESSAGE),
+        TextLayout::default().with_justify(Justify::Center),
+        TextFont::from_font_size(12.),
+        Transform::from_xyz(0., 0., 4.),
+    ));
 }
 #[derive(Component)]
 pub struct BossBackdrop;
+pub const BOSS_MESSAGE: &str = "CONGRATULATIONS!\n\nYou have made it to the\nFINAL round.  Prepare to\nbattle MINION, last year's\nTwisted Metal winner!";
 #[derive(Component)]
 pub struct BossMessage;
 pub fn boss_intro(

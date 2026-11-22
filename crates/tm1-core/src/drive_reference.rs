@@ -492,6 +492,57 @@ fn bullet_impact_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn password_weapon_and_damage_modes_original() {
+    for god_mode in [false, true] {
+        let mut r = Reference::new();
+        vec3(&mut r.player.state, 0x388, [2700, 3050, 400]);
+        vec3(&mut r.police.state, 0x444, [2700, 2000, 400]);
+        r.sync();
+        r.cpu.call(0x8014d418, &[0, 1]);
+        if god_mode {
+            r.cpu.call(0x8014d354, &[0, 1]);
+        }
+        r.player.set_weapon_and_damage_modes(true, god_mode);
+        r.compare();
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        let pos = [2700i32, 2250, 400];
+        let dir = [0i32, 4096, 0];
+        for (at, v) in [(0x800be000, dir), (0x800be020, pos)] {
+            for (i, x) in v.into_iter().enumerate() {
+                put(&mut r.cpu, at + 4 * i as u32, x as u32);
+            }
+        }
+        r.cpu.call(0x8010c930, &[50, 0x800be000, 0x800be020, 1]);
+        {
+            let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe extern "C" {
+                fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
+            }
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                create_bullet(50, dir.as_ptr(), pos.as_ptr(), 1);
+                tm1_use_scene(std::ptr::null_mut());
+            }
+        }
+        let hp = r.player.health().0;
+        for _ in 0..5 {
+            r.cpu.call(0x8010d03c, &[]);
+            r.cpu.call(0x80137d2c, &[]);
+            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            r.compare();
+        }
+        assert_eq!(hp - r.player.health().0, i32::from(!god_mode));
+        r.player.reset();
+        assert_eq!(r.player.state[0x4a1], 1);
+        assert_eq!(r.player.state[0x184], u8::from(!god_mode));
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn vehicle_and_wall_contact_original() {
     for opponent in [true, false] {
         let mut r = Reference::new();

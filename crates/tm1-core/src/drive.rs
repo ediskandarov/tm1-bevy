@@ -369,6 +369,13 @@ impl PlayerVehicle {
     }
 }
 impl PlayerVehicle {
+    pub fn set_weapon_and_damage_modes(&mut self, infinite_weapons: bool, god_mode: bool) {
+        // UASetInfiniteWeapons and UASetGodMode update these fields on playerInfo.
+        for record in [&mut self.state, &mut self.initial_state] {
+            record[0x458 + 0x49] = u8::from(infinite_weapons);
+            record[0x138 + 0x4c..0x138 + 0x50].copy_from_slice(&i32::from(!god_mode).to_le_bytes());
+        }
+    }
     pub fn reset(&mut self) {
         self.seed = self.initial_seed;
         self.frame = 0;

@@ -105,6 +105,14 @@ impl Stage {
             }),
         })
     }
+    pub fn apply_passwords(&mut self, infinite_weapons: bool, god_mode: bool, minion: bool) {
+        self.drive
+            .player
+            .set_weapon_and_damage_modes(infinite_weapons, god_mode);
+        if minion {
+            self.drive.start_with_minion();
+        }
+    }
     pub fn install(self, world: &mut World) {
         world.insert_resource(self.arena);
         world.insert_resource(self.drive);

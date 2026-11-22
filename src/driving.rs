@@ -15,6 +15,7 @@ pub struct Drive {
     was_focused: bool,
     victory_fields: u16,
     boss_intro: Option<Duration>,
+    minion_at_start: bool,
     pub lives: u8,
     death_fields: u16,
     lost_life: Option<Duration>,
@@ -38,6 +39,10 @@ impl Drive {
             self.boss_intro = Some(Duration::from_secs(5));
             self.victory_fields = 0;
         }
+    }
+    pub fn start_with_minion(&mut self) {
+        self.minion_at_start = true;
+        self.boss_intro = Some(Duration::from_secs(5));
     }
     pub fn showing_boss_intro(&self) -> bool {
         self.boss_intro.is_some()
@@ -112,6 +117,7 @@ impl Drive {
             was_focused: false,
             victory_fields: 0,
             boss_intro: None,
+            minion_at_start: false,
             lives: 3,
             death_fields: 0,
             lost_life: None,
@@ -142,7 +148,7 @@ pub fn advance(
         drive.paused = false;
         drive.player.reset();
         drive.victory_fields = 0;
-        drive.boss_intro = None;
+        drive.boss_intro = drive.minion_at_start.then(|| Duration::from_secs(5));
         drive.death_fields = 0;
         drive.lost_life = None;
         if drive.lives == 0 {

@@ -624,7 +624,14 @@ void arena_update_weapons(Car* car, u8 player)
         UpdatePlayerWeaponPadStatus(p);
     else
         UpdateAIWeaponPadStatus(ai);
-    if (pad->timer++ >= 80) {
+    if (pad->reset) {
+        for (int i = 0; i < WEAPON_AMMO_MAX; i++)
+            pad->ammo[i] = 1;
+        pad->ammo[WEAPON_SINGING_MISSILE] = 0;
+        pad->ammo[WEAPON_NONE] = 0;
+        pad->ammo[WEAPON_SPECIAL] = 20;
+        pad->unk46 = 2;
+    } else if (pad->timer++ >= 80) {
         pad->timer = 0;
         if (pad->ammo[WEAPON_SPECIAL] < 20)
             pad->ammo[WEAPON_SPECIAL]++;

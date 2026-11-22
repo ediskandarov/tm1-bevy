@@ -51,8 +51,8 @@ impl Ending {
         let mut reward = screen::background(&disc.read("UASCREEN/SCRNCALY.TIM")?)?;
         let draw = random & 3;
         let (prize, password) = [
-            ("Infinite Weapons", "< =@@"),
-            ("Minion and Friends", "<>@=<"),
+            ("Infinite Weapons", crate::contest::INFINITE_WEAPONS),
+            ("Minion and Friends", crate::contest::MINION_AND_FRIENDS),
             (
                 "Arena with 5 Opponents",
                 tm1_core::drive::Level::Arena5.password().unwrap(),
