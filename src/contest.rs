@@ -78,6 +78,7 @@ pub struct Contest {
     button_sounds: Vec<Handle<AudioSource>>,
     password_from_options: bool,
     cursor_fields: u32,
+    controls_view: crate::pause::DuelControlsView,
     entry: Vec<u8>,
     image: Handle<Image>,
     theme: Handle<AudioSource>,
@@ -369,14 +370,12 @@ impl Contest {
                 );
             }
             Page::DuelControls(slot) => {
-                let mut settings = self.settings;
-                settings.layout = self.duel_layouts[slot];
-                let mut out =
-                    self.controls
-                        .frame(&self.fonts, None, crate::pause::Page::Controls, settings);
-                self.fonts
-                    .centered(&mut out, Face::Control, 32, ["Player 1", "Player 2"][slot]);
-                return out;
+                return self.controls_view.frame(
+                    &self.controls,
+                    &self.fonts,
+                    self.duel_layouts[slot],
+                    slot,
+                );
             }
             Page::DuelStage => {
                 let mut out = self.battlegrounds[self.duel_stage].clone();
@@ -563,10 +562,8 @@ impl Contest {
         let limit = match self.page {
             Page::MainOptions(_) | Page::Audio(_) | Page::Options(_) => 18001,
             Page::DuelJoin | Page::Duel(_) | Page::Battle(_) | Page::Wrong(_) => 1201,
-            Page::DuelGarage { bio: false, .. }
-            | Page::DuelOptions(_)
-            | Page::DuelStage
-            | Page::DuelControls(_) => 18001,
+            Page::DuelGarage { bio: false, .. } | Page::DuelOptions(_) | Page::DuelStage => 18001,
+            Page::Controls | Page::DuelControls(_) => crate::pause::CONTROL_IDLE_FIELDS,
             _ => return false,
         };
         if held {
@@ -587,6 +584,7 @@ impl Contest {
             Page::DuelOptions(_) => self.page = Page::Duel(1),
             Page::DuelStage => self.page = Page::DuelOptions(1),
             Page::DuelControls(_) => self.page = Page::DuelOptions(0),
+            Page::Controls => self.page = Page::Options(1),
             Page::Wrong(_) => self.page = self.after_password(),
             _ => self.page = Page::Battle(0),
         }
@@ -1083,6 +1081,7 @@ pub fn show(
         button_sounds: Vec::new(),
         password_from_options: false,
         cursor_fields: 0,
+        controls_view: Default::default(),
         entry: screen::background(&disc.read("UASCREEN/SCRNFD.TIM")?)?,
         theme: default(),
         theme_entity: None,
@@ -1229,6 +1228,8 @@ pub fn update(world: &mut World) {
             let fields=menu.presentation_fields(menu_delta(world));
             menu.garage.tick(fields);
             fields != 0
+        } else if let Page::DuelControls(slot) = menu.page {
+            menu.controls_view.advance(menu_delta(world), keys, slot)
         } else if menu.page==Page::Password {
             let before=menu.cursor_fields/20;
             let fields=menu.presentation_fields(menu_delta(world));
@@ -1242,6 +1243,9 @@ pub fn update(world: &mut World) {
         }
         let previous = menu.page;
         let start_battle = !expired && menu.input(keys);
+        if previous != menu.page && matches!(menu.page, Page::DuelControls(_)) {
+            menu.controls_view = Default::default();
+        }
         if !expired && let Some(voice) = menu.input_sound(previous, keys) {
             world.spawn((
                 AudioPlayer::new(voice),
@@ -1424,9 +1428,65 @@ mod tests {
             world.resource::<Contest>().duel_cars,
             [Vehicle::CARD_ORDER.len() - 1, 0]
         );
-        for key in [
-            KeyD, Space, ArrowDown, Enter, Comma, ArrowRight, Comma, Space, KeyA, Escape,
-        ] {
+        for key in [KeyD, Space, ArrowDown, Enter, Comma] {
+            press(&mut world, key);
+        }
+        let displayed = |world: &World| {
+            let menu = world.resource::<Contest>();
+            world
+                .resource::<Assets<Image>>()
+                .get(&menu.image)
+                .unwrap()
+                .data
+                .clone()
+                .unwrap()
+        };
+        let base_frame = |world: &World, layout| {
+            let menu = world.resource::<Contest>();
+            let mut settings = menu.settings;
+            settings.layout = layout;
+            menu.controls
+                .frame(&menu.fonts, None, crate::pause::Page::Controls, settings)
+        };
+        let plain = base_frame(&world, 1);
+        let mut labelled = plain.clone();
+        world.resource::<Contest>().fonts.centered_at(
+            &mut labelled,
+            Face::Choice,
+            159,
+            40,
+            "Player 2",
+        );
+        assert_ne!(plain, labelled);
+        let mut blink = 0xf0f0u16;
+        for draw in 0..66 {
+            if draw > 0 {
+                world
+                    .resource_mut::<Time<Real>>()
+                    .advance_by(Duration::from_nanos(33_333_334));
+                update(&mut world);
+            }
+            let expected = if draw >= 60 || blink & 1 != 0 {
+                &labelled
+            } else {
+                &plain
+            };
+            assert!(displayed(&world) == *expected, "control screen draw {draw}");
+            if blink == 0 {
+                blink = 0xf0f0;
+            }
+            blink >>= 1;
+        }
+        press(&mut world, ArrowRight);
+        let mut expected = base_frame(&world, 2);
+        let fonts = &world.resource::<Contest>().fonts;
+        fonts.centered_at(&mut expected, Face::Choice, 159, 40, "Player 2");
+        let released = expected.clone();
+        fonts.at(&mut expected, Face::ArrowActive, 285, 63, ">");
+        assert!(displayed(&world) == expected);
+        update(&mut world);
+        assert!(displayed(&world) == released);
+        for key in [Comma, Space, KeyA, Escape] {
             press(&mut world, key);
         }
         let menu = world.resource::<Contest>();
@@ -1494,8 +1554,19 @@ mod tests {
         assert!(world.resource::<duel::Duel>().pause == Some(Pause::Controls));
         step(&mut world, &[ArrowRight]);
         assert_eq!(world.resource::<duel::Duel>().settings.layout, 2);
-        step(&mut world, &[Escape]);
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(600));
+        step(&mut world, &[]);
+        assert_eq!(world.resource::<duel::Duel>().pause, Some(Pause::Controls));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(34));
+        step(&mut world, &[]);
         assert!(world.resource::<duel::Duel>().pause.is_none());
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
         for _ in 0..8 {
             step(&mut world, &[KeyW, ArrowUp]);
         }

@@ -65,6 +65,9 @@ pub enum Action {
     Select,
     Resume,
 }
+// The control diagram waits for VSync before input and again before display.
+pub const CONTROL_IDLE_FIELDS: u128 = 2 * 18_001;
+
 pub fn options_timed_out(
     page: Page,
     elapsed: &mut std::time::Duration,
@@ -76,7 +79,12 @@ pub fn options_timed_out(
         return false;
     }
     *elapsed += delta;
-    *elapsed >= std::time::Duration::from_secs_f64(18001. / 60.)
+    let fields = if page == Page::Controls {
+        CONTROL_IDLE_FIELDS
+    } else {
+        18_001
+    };
+    elapsed.as_nanos() * 60 >= fields * 1_000_000_000
 }
 
 pub fn navigation_sound(page: Page, action: Action, layout_changed: bool) -> Option<bool> {
@@ -125,6 +133,54 @@ pub fn navigate(page: Page, action: Action, settings: &mut Settings) -> Option<P
         _ => Some(page),
     }
 }
+#[derive(Default)]
+pub struct DuelControlsView {
+    elapsed: std::time::Duration,
+    arrows: [bool; 2],
+}
+
+impl DuelControlsView {
+    fn label_visible(&self) -> bool {
+        // screenChooseControls waits for two VSyncs per ordinary draw loop.
+        let draw = self.elapsed.as_nanos() * 30 / 1_000_000_000;
+        draw >= 60 || (0xf0f0 >> (draw % 16)) & 1 != 0
+    }
+
+    pub fn advance(
+        &mut self,
+        delta: std::time::Duration,
+        keys: &ButtonInput<KeyCode>,
+        slot: usize,
+    ) -> bool {
+        let previous = (self.label_visible(), self.arrows);
+        self.elapsed = self.elapsed.saturating_add(delta);
+        let [left, right] = if slot == 0 {
+            [KeyCode::KeyA, KeyCode::KeyD]
+        } else {
+            [KeyCode::ArrowLeft, KeyCode::ArrowRight]
+        };
+        self.arrows = [
+            keys.pressed(left),
+            !keys.pressed(left) && keys.pressed(right),
+        ];
+        previous != (self.label_visible(), self.arrows)
+    }
+
+    pub fn frame(&self, art: &Art, fonts: &Fonts, layout: u8, slot: usize) -> Vec<u8> {
+        let mut frame = art.controls_frame(fonts, layout, self.arrows);
+        if self.label_visible() {
+            fonts.centered_at(
+                &mut frame,
+                Face::Choice,
+                159,
+                40,
+                ["Player 1", "Player 2"][slot],
+            );
+        }
+        frame
+    }
+}
+
 pub struct Art {
     audio: Vec<u8>,
     controls: Vec<Vec<u8>>,
@@ -139,6 +195,29 @@ impl Art {
                 .collect::<Result<_>>()?,
         })
     }
+    fn controls_frame(&self, fonts: &Fonts, layout: u8, arrows: [bool; 2]) -> Vec<u8> {
+        let mut frame = self.controls[usize::from(layout)].clone();
+        for (visible, pressed, x, glyph) in [
+            (layout > 0, arrows[0], 14, "<"),
+            (layout < 3, arrows[1], 285, ">"),
+        ] {
+            if visible {
+                fonts.at(
+                    &mut frame,
+                    if pressed {
+                        Face::ArrowActive
+                    } else {
+                        Face::Control
+                    },
+                    x,
+                    63,
+                    glyph,
+                );
+            }
+        }
+        frame
+    }
+
     pub fn audio_frame(
         &self,
         fonts: &Fonts,
@@ -198,16 +277,7 @@ impl Art {
         };
         match page {
             Page::Audio(row) => self.audio_frame(fonts, usize::from(row), settings, None),
-            Page::Controls => {
-                let mut out = self.controls[usize::from(settings.layout)].clone();
-                if settings.layout > 0 {
-                    fonts.at(&mut out, Face::Control, 14, 63, "<");
-                }
-                if settings.layout < 3 {
-                    fonts.at(&mut out, Face::Control, 285, 63, ">");
-                }
-                out
-            }
+            Page::Controls => self.controls_frame(fonts, settings.layout, [false; 2]),
             page => {
                 let mut out = [0, 0, 0, 128].repeat(screen::WIDTH * screen::HEIGHT);
                 if let Page::Choices(row) = page {

@@ -41,6 +41,7 @@ pub struct Duel {
     score_time_left: Duration,
     pub(crate) pause: Option<crate::pause::Page>,
     control_slot: usize,
+    controls_view: crate::pause::DuelControlsView,
     abort_elapsed: Duration,
     options_idle: Duration,
     wait_release: bool,
@@ -136,6 +137,7 @@ pub fn start(
         score_time_left,
         pause: None,
         control_slot: 0,
+        controls_view: Default::default(),
         abort_elapsed: Duration::ZERO,
         options_idle: Duration::ZERO,
         wait_release: false,
@@ -290,21 +292,33 @@ pub fn pause_menu(
         duel.pause = Some(Page::Choices(0));
     }
     let (sprite, visibility) = &mut *hud;
-    let changed = before != duel.pause || before_settings != duel.settings;
+    let controls_changed = if duel.pause == Some(Page::Controls) {
+        if before != duel.pause {
+            duel.controls_view = Default::default();
+            false
+        } else {
+            let slot = duel.control_slot;
+            duel.controls_view.advance(time.delta(), &keys, slot)
+        }
+    } else {
+        false
+    };
+    let changed = before != duel.pause || before_settings != duel.settings || controls_changed;
     if let Some(page) = duel.pause {
         sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
         if changed || **visibility == Visibility::Hidden {
-            let mut frame = arena
-                .pause_art
-                .frame(&arena.fonts, None, page, duel.settings);
-            if page == Page::Controls {
-                arena.fonts.centered(
-                    &mut frame,
-                    tm1_assets::screen::Face::Control,
-                    32,
-                    ["Player 1", "Player 2"][duel.control_slot],
-                );
-            }
+            let frame = if page == Page::Controls {
+                duel.controls_view.frame(
+                    &arena.pause_art,
+                    &arena.fonts,
+                    duel.settings.layout,
+                    duel.control_slot,
+                )
+            } else {
+                arena
+                    .pause_art
+                    .frame(&arena.fonts, None, page, duel.settings)
+            };
             images.get_mut(&sprite.image).unwrap().data = Some(frame);
             **visibility = Visibility::Visible;
         }
