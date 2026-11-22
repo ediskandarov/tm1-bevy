@@ -18,6 +18,7 @@ pub struct Garage {
     bios: Vec<Vec<u8>>,
     portraits: Vec<Vec<u8>>,
     textures: Vram,
+    trig: tm1_core::math::TrigTables,
     pub row: usize,
     pub field: u32,
     pub heading: u32,
@@ -57,6 +58,8 @@ impl Garage {
             bios,
             portraits: dmd.occupant_portraits(&textures)?,
             textures,
+            trig: tm1_core::math::TrigTables::from_executable(&disc.read("SIPS_600.07")?)
+                .ok_or_else(|| anyhow::anyhow!("invalid showroom rotation tables"))?,
             row: 0,
             field: 0,
             heading: 1365,
@@ -146,6 +149,22 @@ impl Garage {
     ) -> Vec<u8> {
         self.carousel(fonts, car, false, slot, locked, true)
     }
+    fn display_cars(&self, index: usize, locked: Option<usize>) -> [Option<(usize, [i32; 3])>; 2] {
+        let side = if self.left { -1 } else { 1 };
+        let spin = side * ((self.trig.sine((self.slide * 16384 / 360) as i32) * 30) >> 4);
+        // CarInitDeltas unk6C in screenGetCarsEnum order.
+        let heights = [32, 16, 32, 15, 14, 16, 20, 32, 16, 16, 66, 16];
+        let position = |index: usize, x| (index, [x, 7680, heights[index] * 32 - 4096]);
+        let previous = (self.slide < 22).then(|| {
+            let step = if self.left { 1 } else { 11 };
+            let mut previous = (index + step) % 12;
+            if Some(previous) == locked {
+                previous = (previous + step) % 12;
+            }
+            position(previous, -spin)
+        });
+        [Some(position(index, side * 7680 - spin)), previous]
+    }
     fn carousel(
         &self,
         fonts: &Fonts,
@@ -160,33 +179,17 @@ impl Garage {
         } else {
             self.backdrop.clone()
         };
-        let radians = std::f32::consts::TAU / 4096.;
-        let side = if self.left { -1. } else { 1. };
-        let spin = side * ((self.slide * 16384 / 360) as f32 * radians).sin() * 7680.;
-        let model = Quat::from_rotation_z(self.heading as f32 * radians);
-        let camera = Quat::from_rotation_x(182. * radians);
-        // CarInitDeltas unk6C in screenGetCarsEnum order.
-        let heights = [32., 16., 32., 15., 14., 16., 20., 32., 16., 16., 66., 16.];
-        let mut draw = |index: usize, x: f32| {
-            let origin = Vec3::new(x, 7680., heights[index] * 32. - 4096.);
+        let model = self.trig.rotation_yxz([0, 0, self.heading as i16]);
+        let camera = self.trig.rotation_yxz([182, 0, 0]);
+        for (index, relative) in self.display_cars(i, locked).into_iter().flatten() {
             crate::ending::draw_model(
                 &mut frame,
                 &self.cars[index],
                 &self.textures,
                 self.field,
-                model.inverse() * -origin,
+                crate::ending::model_transform(&camera, &model, relative),
                 8,
-                |p| camera * (origin + model * p),
             );
-        };
-        draw(i, side * 7680. - spin);
-        if self.slide < 22 {
-            let step = if self.left { 1 } else { 11 };
-            let mut previous = (i + step) % 12;
-            if Some(previous) == locked {
-                previous = (previous + step) % 12;
-            }
-            draw(previous, -spin);
         }
         let centers = [42, 277];
         let mut portrait = |car: usize, slot: usize, w: usize, h: usize| {
@@ -257,5 +260,71 @@ impl Garage {
         }
         fonts.sprite_centered_at(&mut frame, Face::Choice, 159, 215, fonts.car_name(i));
         frame
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn showroom_submissions_follow_the_jp_carousel() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut garage = Garage::load(&disc).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        // Supply a writable CS for each lookup and observe submissions to hierProcOne.
+        cpu.put(0x8014f98c, &[8, 0, 224, 3, 1, 128, 2, 60]);
+        for address in [0x8010a774, 0x800fe81c] {
+            cpu.put(address, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        let cs = 0x80010000;
+        for (index, car) in Vehicle::CARD_ORDER.into_iter().enumerate() {
+            for left in [false, true] {
+                garage.reset();
+                garage.left = left;
+                garage.slide = 0;
+                let locked = (index + if left { 1 } else { 11 }) % 12;
+                cpu.put(0x8018c584, &1365u32.to_le_bytes());
+                cpu.put(0x8018c0f0, &0u16.to_le_bytes());
+                cpu.put(0x8018c580, &0u32.to_le_bytes());
+                for _ in 0..24 {
+                    let mut seen = Vec::new();
+                    let mut kind = 0;
+                    cpu.call_observed(
+                        0x8013ba60,
+                        &[0, car as u32, u32::from(left), locked as u32],
+                        0x80000080,
+                        |c| {
+                            if c.pc() == 0x8014f98c {
+                                kind = c.r[4];
+                            }
+                            if c.pc() == 0x800fe81c {
+                                let xyz = [
+                                    c.word(cs + 0x5c) as i32,
+                                    c.word(cs + 0x60) as i32 + 7680,
+                                    c.word(cs + 0x64) as i32 - 4096,
+                                ];
+                                assert_eq!(c.word(cs + 0x58) as u16, garage.heading as u16);
+                                let model = garage.trig.rotation_yxz([0, 0, garage.heading as i16]);
+                                for (j, &expected) in model.rotation.iter().flatten().enumerate() {
+                                    let p = cs + 0x14 + j as u32 * 2;
+                                    assert_eq!((c.word(p & !3) >> (8 * (p & 3))) as i16, expected);
+                                }
+                                seen.push((kind, xyz));
+                            }
+                        },
+                    );
+                    let expected: Vec<_> = garage
+                        .display_cars(index, Some(locked))
+                        .into_iter()
+                        .flatten()
+                        .map(|(i, pos)| (Vehicle::CARD_ORDER[i] as u32, pos))
+                        .collect();
+                    assert_eq!(seen, expected, "{car:?} left={left} slide={}", garage.slide);
+                    garage.tick(1);
+                }
+            }
+        }
     }
 }

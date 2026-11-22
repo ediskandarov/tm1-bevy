@@ -389,7 +389,7 @@ pub struct PlayerVehicle {
     difficulty: Difficulty,
     level: Level,
     vehicle: Vehicle,
-    trig: Box<[i16]>,
+    trig: crate::math::TrigTables,
     initial_seed: u32,
     initial_state: [u8; 0x4a4],
     used_starts: u16,
@@ -466,17 +466,7 @@ impl PlayerVehicle {
         difficulty: Difficulty,
         duel_slot: Option<i32>,
     ) -> Option<Self> {
-        if exe.get(..8)? != b"PS-X EXE" {
-            return None;
-        }
-        let base = u32::from_le_bytes(exe.get(24..28)?.try_into().ok()?);
-        let offset = 2048 + 0x80183f14u32.checked_sub(base)? as usize;
-        let trig: Vec<_> = exe
-            .get(offset..offset + (0x80188d58 - 0x80183f14) + 2050)?
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        let trig = trig.into_boxed_slice();
+        let trig = crate::math::TrigTables::from_executable(exe)?;
 
         let mut state = [0; 0x4a4];
         let mut seed = initial_seed;
@@ -681,12 +671,6 @@ impl PlayerVehicle {
     pub fn frame(&self) -> u32 {
         self.frame
     }
-    fn sine(&self, angle: i32) -> i32 {
-        let phase = (angle & 4095) as usize;
-        let i = phase & 1023;
-        let v = i32::from(self.trig[if phase & 1024 == 0 { i } else { 1024 - i }]);
-        if phase & 2048 == 0 { v } else { -v }
-    }
     /// EXPLODE.c projects a billboard or a vertical strip using the depth of its base.
     pub fn particle_quad(
         &self,
@@ -720,8 +704,8 @@ impl PlayerVehicle {
             fn tm1_fire_angle(tables: *const i16, dy: i32, dx: i32) -> i32;
         }
         let angle = unsafe { tm1_fire_angle(self.trig.as_ptr(), ty - y, tx - x) };
-        let sin = self.sine(angle);
-        let cos = self.sine(angle + 1024);
+        let sin = self.trig.sine(angle);
+        let cos = self.trig.sine(angle + 1024);
         let dx = ((cos - sin) * size) >> 12;
         let dy = ((cos + sin) * size) >> 12;
         Some([
@@ -733,8 +717,8 @@ impl PlayerVehicle {
     }
     /// HUD.c projects horizontal world offsets into the 72 by 44 radar field.
     fn radar_offset(&self, dx: i32, dy: i32, heading: i32) -> [i32; 2] {
-        let s = self.sine(heading);
-        let c = self.sine(heading.wrapping_add(1024));
+        let s = self.trig.sine(heading);
+        let c = self.trig.sine(heading.wrapping_add(1024));
         let x = dx.wrapping_mul(c).wrapping_sub(dy.wrapping_mul(s)) / 0x14d555;
         let y = dx
             .wrapping_mul(s)
@@ -750,31 +734,10 @@ impl PlayerVehicle {
     }
 
     pub fn rotation_yxz(&self, angles: [i16; 3]) -> crate::math::Matrix {
-        unsafe extern "C" {
-            fn tm1_rotation_yxz(
-                table: *const i16,
-                angles: *const i16,
-                matrix: *mut crate::math::Matrix,
-            );
-        }
-        let table = &self.trig[(0x80184d58u32 - 0x80183f14) as usize / 2..];
-        let mut matrix = crate::math::Matrix::default();
-        unsafe { tm1_rotation_yxz(table.as_ptr(), angles.as_ptr(), &mut matrix) };
-        matrix
+        self.trig.rotation_yxz(angles)
     }
-
-    /// Signed X rotation in DMD coordinates, after transposing the SDK matrix.
     pub fn wheel_sin_cos(&self, angle: i64) -> [i16; 2] {
-        let i =
-            (0x80184d58u32 - 0x80183f14) as usize / 2 + 2 * (angle.unsigned_abs() as usize & 4095);
-        [
-            if angle < 0 {
-                -self.trig[i]
-            } else {
-                self.trig[i]
-            },
-            self.trig[i + 1],
-        ]
+        self.trig.sin_cos(angle)
     }
     pub fn cockpit_steering_angle(&self, previous: i32) -> i32 {
         let skid = &self.state[0xc8..];

@@ -1,5 +1,51 @@
 //! Original C arithmetic with explicit PS1 scalar layouts.
 
+#[derive(Clone)]
+pub struct TrigTables(Box<[i16]>);
+
+impl TrigTables {
+    pub fn from_executable(exe: &[u8]) -> Option<Self> {
+        if exe.get(..8)? != b"PS-X EXE" {
+            return None;
+        }
+        let base = u32::from_le_bytes(exe.get(24..28)?.try_into().ok()?);
+        let offset = 2048 + 0x80183f14u32.checked_sub(base)? as usize;
+        let trig: Vec<_> = exe
+            .get(offset..offset + (0x80188d58 - 0x80183f14) + 2050)?
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        Some(Self(trig.into_boxed_slice()))
+    }
+    pub(crate) fn as_ptr(&self) -> *const i16 {
+        self.0.as_ptr()
+    }
+    pub fn sine(&self, angle: i32) -> i32 {
+        let phase = (angle & 4095) as usize;
+        let i = phase & 1023;
+        let v = i32::from(self.0[if phase & 1024 == 0 { i } else { 1024 - i }]);
+        if phase & 2048 == 0 { v } else { -v }
+    }
+    pub fn rotation_yxz(&self, angles: [i16; 3]) -> Matrix {
+        unsafe extern "C" {
+            fn tm1_rotation_yxz(table: *const i16, angles: *const i16, matrix: *mut Matrix);
+        }
+        let table = &self.0[(0x80184d58u32 - 0x80183f14) as usize / 2..];
+        let mut matrix = Matrix::default();
+        unsafe { tm1_rotation_yxz(table.as_ptr(), angles.as_ptr(), &mut matrix) };
+        matrix
+    }
+
+    pub fn sin_cos(&self, angle: i64) -> [i16; 2] {
+        let i =
+            (0x80184d58u32 - 0x80183f14) as usize / 2 + 2 * (angle.unsigned_abs() as usize & 4095);
+        [
+            if angle < 0 { -self.0[i] } else { self.0[i] },
+            self.0[i + 1],
+        ]
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Matrix {

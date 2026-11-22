@@ -157,7 +157,6 @@ impl Ending {
         self.credits.draw(out, &self.fonts);
     }
     fn car_transform(&self, player: &PlayerVehicle) -> (tm1_core::math::Matrix, [i32; 3]) {
-        use tm1_core::math::{Matrix, multiply, multiply_long};
         // screenCarEndingDrawCar advances the CS before the first submission.
         let draw = self.frame as i32 + 1;
         let (eye, angles, spin, y) = match self.vehicle {
@@ -168,39 +167,41 @@ impl Ending {
         let model = player.rotation_yxz(spin.map(|v| (v * draw) as i16));
         let view = player.rotation_yxz(angles);
         let relative = [-eye[0], y - eye[1], self.height - eye[2]];
-        let world_pos = multiply(&model, relative, false);
-        // csUpdMat composes the view with the transposed CS matrix.
-        let mut combined = Matrix {
-            rotation: std::array::from_fn(|i| {
-                std::array::from_fn(|j| {
-                    ((0..3)
-                        .map(|k| i32::from(view.rotation[i][k]) * i32::from(model.rotation[j][k]))
-                        .sum::<i32>()
-                        >> 12) as i16
-                })
-            }),
-            ..Default::default()
-        };
-        combined.translation = multiply_long(&combined, world_pos);
-        (combined, world_pos.map(|v| -v))
+        model_transform(&view, &model, relative)
     }
     fn draw_car(&self, out: &mut [u8], player: &PlayerVehicle) {
-        let (combined, local_eye) = self.car_transform(player);
         draw_model(
             out,
             &self.car,
             &self.textures,
             self.frame,
-            Vec3::from_array(local_eye.map(|v| v as f32)),
+            self.car_transform(player),
             3,
-            |p| {
-                Vec3::from_array(std::array::from_fn(|i| {
-                    let row = Vec3::from_array(combined.rotation[i].map(f32::from));
-                    combined.translation[i] as f32 + row.dot(p) / 4096.
-                }))
-            },
         );
     }
+}
+
+pub(crate) fn model_transform(
+    view: &tm1_core::math::Matrix,
+    model: &tm1_core::math::Matrix,
+    relative: [i32; 3],
+) -> (tm1_core::math::Matrix, [i32; 3]) {
+    use tm1_core::math::{Matrix, multiply, multiply_long};
+    let world_pos = multiply(model, relative, false);
+    // csUpdMat composes the view with the transposed CS matrix.
+    let mut combined = Matrix {
+        rotation: std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                ((0..3)
+                    .map(|k| i32::from(view.rotation[i][k]) * i32::from(model.rotation[j][k]))
+                    .sum::<i32>()
+                    >> 12) as i16
+            })
+        }),
+        ..Default::default()
+    };
+    combined.translation = multiply_long(&combined, world_pos);
+    (combined, world_pos.map(|v| -v))
 }
 
 pub(crate) fn draw_model(
@@ -208,14 +209,13 @@ pub(crate) fn draw_model(
     scene: &Scene,
     textures: &Vram,
     frame: u32,
-    model_eye: Vec3,
+    (combined, local_eye): (tm1_core::math::Matrix, [i32; 3]),
     lod_scale: u32,
-    transform: impl Fn(Vec3) -> Vec3,
 ) {
     let mut depth = vec![f32::INFINITY; WIDTH * HEIGHT];
     let mut hidden = vec![false; scene.polygons.len()];
     for lod in scene.lods.iter().flatten() {
-        lod.hide_other_branches(model_eye.to_array(), lod_scale, &mut hidden);
+        lod.hide_other_branches(local_eye.map(|n| n as f32), lod_scale, &mut hidden);
     }
     for (poly, hidden) in scene.polygons.iter().zip(hidden) {
         if hidden || poly.animation.iter().any(|a| a.selected(frame) != a.child) {
@@ -227,7 +227,10 @@ pub(crate) fn draw_model(
             continue;
         }
         for (i, v) in poly.vertices.iter().enumerate() {
-            let p = transform(Vec3::from(v.position));
+            let p = Vec3::from_array(std::array::from_fn(|axis| {
+                let row = Vec3::from_array(combined.rotation[axis].map(f32::from));
+                combined.translation[axis] as f32 + row.dot(Vec3::from(v.position)) / 4096.
+            }));
             z[i] = p.y;
             // uaInitView selects FOV entry 6 for the single-screen car databases.
             let focal = 228.;
