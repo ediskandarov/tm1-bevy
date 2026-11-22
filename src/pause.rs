@@ -99,6 +99,40 @@ pub fn navigation_sound(page: Page, action: Action, layout_changed: bool) -> Opt
     }
 }
 
+pub fn campaign_action(
+    page: Page,
+    keys: &ButtonInput<KeyCode>,
+    pad: Option<&Gamepad>,
+) -> Option<Action> {
+    let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space])
+        || pad.is_some_and(|p| {
+            p.any_pressed([
+                GamepadButton::South,
+                GamepadButton::Start,
+                GamepadButton::Select,
+            ])
+        });
+    let down = |key, button| keys.pressed(key) || pad.is_some_and(|p| p.pressed(button));
+    if keys.just_pressed(KeyCode::KeyP) {
+        Some(Action::Resume)
+    } else if page == Page::Controls && select {
+        Some(Action::Select)
+    } else if page != Page::Controls && down(KeyCode::ArrowUp, GamepadButton::DPadUp) {
+        Some(Action::Up)
+    } else if page != Page::Controls && down(KeyCode::ArrowDown, GamepadButton::DPadDown) {
+        Some(Action::Down)
+    } else if !matches!(page, Page::Choices(_)) && down(KeyCode::ArrowLeft, GamepadButton::DPadLeft)
+    {
+        Some(Action::Left)
+    } else if !matches!(page, Page::Choices(_))
+        && down(KeyCode::ArrowRight, GamepadButton::DPadRight)
+    {
+        Some(Action::Right)
+    } else {
+        select.then_some(Action::Select)
+    }
+}
+
 pub fn navigate(page: Page, action: Action, settings: &mut Settings) -> Option<Page> {
     use Action::*;
     use Page::*;
@@ -367,7 +401,7 @@ impl Art {
 }
 #[derive(Component, Default)]
 pub struct Overlay {
-    last: Option<(Page, Settings)>,
+    last: Option<(Page, Settings, [bool; 2])>,
 }
 pub fn draw(
     window: Single<&Window>,
@@ -384,15 +418,24 @@ pub fn draw(
     };
     **visibility = Visibility::Visible;
     sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
-    if state.last != Some((page, drive.settings)) {
+    let active = (page, drive.settings, drive.control_arrows);
+    if state.last != Some(active) {
         if let Some(mut image) = images.get_mut(&sprite.image) {
-            image.data = Some(arena.pause_art.frame(
-                &arena.fonts,
-                Some(drive.player.level()),
-                page,
-                drive.settings,
-            ));
+            image.data = Some(if page == Page::Controls {
+                arena.pause_art.controls_frame(
+                    &arena.fonts,
+                    drive.settings.layout,
+                    drive.control_arrows,
+                )
+            } else {
+                arena.pause_art.frame(
+                    &arena.fonts,
+                    Some(drive.player.level()),
+                    page,
+                    drive.settings,
+                )
+            });
         }
-        state.last = Some((page, drive.settings));
+        state.last = Some(active);
     }
 }

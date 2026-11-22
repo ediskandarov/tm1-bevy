@@ -150,7 +150,7 @@ C cycles forward through chase, far chase and cockpit views. Z cycles backward. 
 Space fires the machine gun, E cycles inventory and F fires the selected weapon.
 The arena and both cars use a shared perspective depth buffer.
 On a gamepad the face buttons west/east control acceleration/reverse, north
-activates turbo and south modifies the D-pad turns. Start pauses and Select restarts.
+activates turbo and south modifies the D-pad turns. During battle, Start pauses and Select restarts. In the single-player pause menu, Start, Select and the south button confirm the highlighted choice. On the keyboard, Enter or Space confirms. Release the controls between choices and before returning to battle.
 Right shoulder fires the gun, left shoulder fires the selected weapon and the left analog trigger cycles inventory. The first arena was playtested on keyboard. Physical controller testing is deferred.
 
 The driving comparison runs in release mode against verified player-owned bytes.

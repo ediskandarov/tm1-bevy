@@ -261,6 +261,13 @@ pub(crate) fn battle_audio(
         }
     }
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PauseInput {
+    Ready,
+    WaitRelease,
+    ResumeOnRelease,
+}
+
 #[derive(Resource)]
 pub struct Drive {
     battle_seed: u32,
@@ -287,6 +294,8 @@ pub struct Drive {
     pub pause_sound: Option<bool>,
     pub abort_delay: Duration,
     options_idle: Duration,
+    pause_input: PauseInput,
+    pub(crate) control_arrows: [bool; 2],
     pub restart_count: u32,
     was_focused: bool,
     victory_fields: u16,
@@ -520,6 +529,8 @@ impl Drive {
             settings: Default::default(),
             abort_delay: Duration::ZERO,
             options_idle: Duration::ZERO,
+            pause_input: PauseInput::Ready,
+            control_arrows: [false; 2],
             mirror: false,
             radar: true,
             list_cars: false,
@@ -569,12 +580,16 @@ pub fn advance(
     if window.focused
         && drive.pause != Some(crate::pause::Page::Aborted)
         && (keys.just_pressed(KeyCode::KeyR)
-            || (!drive.showing_boss_intro()
+            || (drive.pause.is_none()
+                && drive.pause_input == PauseInput::Ready
+                && !drive.showing_boss_intro()
                 && drive.lost_life.is_none()
                 && just_pressed(GamepadButton::Select)))
     {
         drive.contacts.reset_projectiles();
         drive.pause = None;
+        drive.pause_input = PauseInput::Ready;
+        drive.control_arrows = [false; 2];
         let state = &mut *drive;
         state.player.reset();
         state.player.set_pad_layout(state.settings.layout);
@@ -603,25 +618,35 @@ pub fn advance(
     }
     use crate::pause::{Action, Page};
     let start = keys.just_pressed(KeyCode::KeyP) || just_pressed(GamepadButton::Start);
+    let pause_input_held = || {
+        use KeyCode::*;
+        crate::pause::duel_pad_held(&keys, 0)
+            || keys.any_pressed([
+                Enter, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, KeyZ, KeyV, KeyL, KeyB, Digit1,
+                Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8,
+            ])
+            || pad.is_some_and(|p| p.get_pressed().next().is_some())
+    };
+    if drive.pause_input != PauseInput::Ready {
+        if window.focused && !pause_input_held() {
+            drive.control_arrows = [false; 2];
+            if drive.pause_input == PauseInput::ResumeOnRelease {
+                drive.pause = None;
+            }
+            drive.pause_input = PauseInput::Ready;
+        }
+        drive.remainder = Duration::ZERO;
+        return;
+    }
     if let Some(page) = drive.pause {
         if window.focused {
             if page == Page::Aborted {
                 drive.abort_delay = drive.abort_delay.saturating_sub(time.delta());
             } else {
-                let action = if start {
-                    Some(Action::Resume)
-                } else {
-                    [
-                        (KeyCode::ArrowUp, GamepadButton::DPadUp, Action::Up),
-                        (KeyCode::ArrowDown, GamepadButton::DPadDown, Action::Down),
-                        (KeyCode::ArrowLeft, GamepadButton::DPadLeft, Action::Left),
-                        (KeyCode::ArrowRight, GamepadButton::DPadRight, Action::Right),
-                        (KeyCode::Enter, GamepadButton::South, Action::Select),
-                    ]
-                    .into_iter()
-                    .find(|(key, pad, _)| keys.just_pressed(*key) || just_pressed(*pad))
-                    .map(|(_, _, a)| a)
-                };
+                let action = crate::pause::campaign_action(page, &keys, pad);
+                if page != Page::Controls && pause_input_held() {
+                    drive.pause_input = PauseInput::WaitRelease;
+                }
                 let expired = crate::pause::options_timed_out(
                     page,
                     &mut drive.options_idle,
@@ -631,7 +656,14 @@ pub fn advance(
                 if let Some(action) = action.or(expired.then_some(Action::Resume)) {
                     let old_layout = drive.settings.layout;
                     drive.pause = crate::pause::navigate(page, action, &mut drive.settings);
+                    if page == Page::Controls {
+                        drive.control_arrows = [
+                            matches!(action, Action::Left),
+                            matches!(action, Action::Right),
+                        ];
+                    }
                     if !expired {
+                        drive.pause_input = PauseInput::WaitRelease;
                         drive.pause_sound = crate::pause::navigation_sound(
                             page,
                             action,
@@ -641,6 +673,10 @@ pub fn advance(
                     if page == Page::Controls && drive.pause.is_none() {
                         let layout = drive.settings.layout;
                         drive.player.set_pad_layout(layout);
+                    }
+                    if drive.pause.is_none() && pause_input_held() {
+                        drive.pause = Some(page);
+                        drive.pause_input = PauseInput::ResumeOnRelease;
                     }
                     if drive.pause == Some(Page::Aborted) {
                         drive.abort_delay = Duration::from_millis(500);
@@ -653,6 +689,7 @@ pub fn advance(
     }
     if window.focused && start && !drive.showing_boss_intro() && drive.lost_life.is_none() {
         drive.pause = Some(Page::Choices(0));
+        drive.pause_input = PauseInput::WaitRelease;
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -1066,10 +1103,35 @@ mod tests {
             app.world_mut()
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .release(key);
+            tick(app, 0);
         };
         let frame = app.world().resource::<Drive>().player.frame();
         use KeyCode::*;
-        for key in [KeyP, ArrowDown, ArrowDown, Enter, ArrowRight] {
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyP);
+        tick(&mut app, 50);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ArrowDown);
+        tick(&mut app, 50);
+        assert_eq!(
+            app.world().resource::<Drive>().pause,
+            Some(Page::Choices(0))
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyP);
+        tick(&mut app, 50);
+        assert_eq!(
+            app.world().resource::<Drive>().pause,
+            Some(Page::Choices(0))
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(ArrowDown);
+        tick(&mut app, 0);
+        for key in [ArrowDown, ArrowDown, Enter, ArrowRight] {
             tap(&mut app, key);
         }
         let drive = app.world().resource::<Drive>();
@@ -1077,9 +1139,37 @@ mod tests {
         assert_eq!((drive.settings.music, drive.settings.effects), (8, 6));
         assert!(drive.settings.music_gain() > 1. && drive.settings.effects_gain() < 1.);
         assert_eq!(drive.player.frame(), frame);
-        for key in [ArrowUp, Enter, KeyP, ArrowUp, Enter, ArrowRight, Enter] {
+        for key in [ArrowUp, Enter, KeyP, ArrowUp, Enter] {
             tap(&mut app, key);
         }
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(ArrowRight);
+        tick(&mut app, 50);
+        assert_eq!(
+            app.world().resource::<Drive>().control_arrows,
+            [false, true]
+        );
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(Space);
+        tick(&mut app, 50);
+        assert_eq!(app.world().resource::<Drive>().pause, Some(Page::Controls));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        tick(&mut app, 0);
+        assert_eq!(app.world().resource::<Drive>().control_arrows, [false; 2]);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(Space);
+        tick(&mut app, 50);
+        tick(&mut app, 1000);
+        assert_eq!(app.world().resource::<Drive>().pause, Some(Page::Controls));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(Space);
+        tick(&mut app, 0);
         let drive = app.world().resource::<Drive>();
         assert_eq!(drive.settings.layout, 2);
         assert_eq!(drive.player.state()[0xc8 + 22], 2);
@@ -1452,7 +1542,19 @@ mod tests {
         tick(&mut app, 50);
         tick(&mut app, 20000);
         assert_eq!(driven, snapshot(&app));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::KeyP);
         app.world_mut().despawn(id);
+        tick(&mut app, 0);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::Enter);
+        tick(&mut app, 50);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .release(KeyCode::Enter);
+        tick(&mut app, 0);
         let mut replacement = Gamepad::default();
         replacement.digital_mut().press(GamepadButton::Select);
         let id = app.world_mut().spawn(replacement).id();
