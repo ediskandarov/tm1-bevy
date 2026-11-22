@@ -170,7 +170,7 @@ impl Vehicle {
         Self::RoadKill,
     ];
     // UA card order differs from the DMD vehicle IDs.
-    const CARD_ORDER: [Vehicle; 12] = [
+    pub const CARD_ORDER: [Vehicle; 12] = [
         Self::SweetTooth,
         Self::YellowJacket,
         Self::Darkside,

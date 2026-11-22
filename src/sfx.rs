@@ -13,6 +13,78 @@ pub struct Sounds {
     engine_loop: std::time::Duration,
 }
 
+pub fn programs(car: tm1_core::drive::Vehicle) -> (usize, usize) {
+    use tm1_core::drive::Vehicle::*;
+    // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
+    match car {
+        SweetTooth => (1, 41),
+        YellowJacket => (0, 43),
+        Darkside => (2, 40),
+        Hammerhead => (3, 45),
+        Warthog => (5, 48),
+        Spectre => (6, 50),
+        RoadKill => (10, 44),
+        Thumper => (8, 49),
+        Outlaw => (7, 39),
+        CrimsonFury => (4, 42),
+        MrGrimm => (11, 47),
+        PitViper => (9, 46),
+        Minion => (55, 56),
+    }
+}
+
+pub struct Sample {
+    mix: Vec<[f32; 2]>,
+    pub range: f32,
+    loop_start: std::time::Duration,
+}
+impl Sample {
+    pub fn load(bank: &[u8], prog: usize, engine: bool) -> Result<Self> {
+        let mut engine_range = 0.;
+        let mut engine_loop = std::time::Duration::ZERO;
+        let tones = program(bank, prog)?;
+        let mut mix = Vec::<[f32; 2]>::new();
+        for t in tones {
+            let note = if engine {
+                engine_range = f32::from(t.high) - f32::from(t.low);
+                t.low
+            } else {
+                60
+            };
+            let rate = 2f32.powf((f32::from(note) - f32::from(t.center)) / 12.);
+            if engine {
+                engine_loop = std::time::Duration::from_secs_f64(
+                    t.loop_start.unwrap_or(0) as f64 / (44100. * f64::from(rate)),
+                );
+            }
+            let n = (t.pcm.len() as f32 / rate).ceil() as usize;
+            mix.resize(mix.len().max(n), [0.; 2]);
+            let pan = f32::from(t.pan) / 64.;
+            let gain = f32::from(t.volume) / 127.;
+            for (i, out) in mix[..n].iter_mut().enumerate() {
+                let at = (i as f32 * rate) as usize;
+                let v = t.pcm[at.min(t.pcm.len() - 1)] as f32 * gain;
+                out[0] += v * (2. - pan).min(1.);
+                out[1] += v * pan.min(1.);
+            }
+        }
+        Ok(Self {
+            mix,
+            range: engine_range,
+            loop_start: engine_loop,
+        })
+    }
+    pub fn wave(&self, pan: f32) -> Result<AudioSource> {
+        let pcm: Vec<_> = self
+            .mix
+            .iter()
+            .flat_map(|[l, r]| [l * (1. - pan.max(0.)), r * (1. + pan.min(0.))])
+            .flat_map(|v| (v.clamp(-32768., 32767.) as i16).to_le_bytes())
+            .collect();
+        crate::music::stereo_wave(&pcm)
+    }
+}
+
 impl Sounds {
     pub fn ending_engine(&self, gain: f32) -> (AudioPlayer, PlaybackSettings) {
         (
@@ -41,23 +113,7 @@ impl Sounds {
         let mut sources = Vec::new();
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
-        use tm1_core::drive::Vehicle::*;
-        // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
-        let programs = |car| match car {
-            SweetTooth => (1, 41),
-            YellowJacket => (0, 43),
-            Darkside => (2, 40),
-            Hammerhead => (3, 45),
-            Warthog => (5, 48),
-            Spectre => (6, 50),
-            RoadKill => (10, 44),
-            Thumper => (8, 49),
-            Outlaw => (7, 39),
-            CrimsonFury => (4, 42),
-            MrGrimm => (11, 47),
-            PitViper => (9, 46),
-            Minion => (55, 56),
-        };
+        use tm1_core::drive::Vehicle::SweetTooth;
         let (engine, special) = programs(vehicle);
         for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
@@ -65,40 +121,14 @@ impl Sounds {
             .chain([52, programs(SweetTooth).1, 57, 58])
             .enumerate()
         {
-            let tones = program(&bank, prog)?;
-            let mut mix = Vec::<[f32; 2]>::new();
-            for t in tones {
-                let note = if id == 0 {
-                    engine_range = f32::from(t.high) - f32::from(t.low);
-                    t.low
-                } else {
-                    60
-                };
-                let rate = 2f32.powf((f32::from(note) - f32::from(t.center)) / 12.);
-                if id == 0 {
-                    engine_loop = std::time::Duration::from_secs_f64(
-                        t.loop_start.unwrap_or(0) as f64 / (44100. * f64::from(rate)),
-                    );
-                }
-                let n = (t.pcm.len() as f32 / rate).ceil() as usize;
-                mix.resize(mix.len().max(n), [0.; 2]);
-                let pan = f32::from(t.pan) / 64.;
-                let gain = f32::from(t.volume) / 127.;
-                for (i, out) in mix[..n].iter_mut().enumerate() {
-                    let at = (i as f32 * rate) as usize;
-                    let v = t.pcm[at.min(t.pcm.len() - 1)] as f32 * gain;
-                    out[0] += v * (2. - pan).min(1.);
-                    out[1] += v * pan.min(1.);
-                }
+            let sample = Sample::load(&bank, prog, id == 0)?;
+            if id == 0 {
+                engine_range = sample.range;
+                engine_loop = sample.loop_start;
             }
             // Keep VAB stereo and quantize the listener-relative direction to five pan positions.
             for pan in [-1_f32, -0.5, 0., 0.5, 1.] {
-                let pcm: Vec<_> = mix
-                    .iter()
-                    .flat_map(|[l, r]| [l * (1. - pan.max(0.)), r * (1. + pan.min(0.))])
-                    .flat_map(|v| (v.clamp(-32768., 32767.) as i16).to_le_bytes())
-                    .collect();
-                sources.push(crate::music::stereo_wave(&pcm)?);
+                sources.push(sample.wave(pan)?);
             }
         }
         Ok(Self {

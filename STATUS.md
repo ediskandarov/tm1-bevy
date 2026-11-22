@@ -9,6 +9,10 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The full retail menu and multiplayer are outstanding.
 
+## Vehicle selection
+
+The one-player garage reads the twelve showroom models and occupant portraits from CARS.DMD and CARS.TMS. The selection loop follows the original card order, 11-unit heading increment and 22-field slide, with showroom headlights disabled. Each card plays its VAB signature and engine rev. CAR INFO opens that card’s SCNDB biography from the JP disc. A disc-backed test traverses all twelve biographies, wraps around the roster and exits to the title. The software projection shares the ending renderer. Exact original lighting and ordering-table composition remain unverified. A Metal capture of Outlaw is reproducible with `--garage --car outlaw --demo-screenshot local/garage-outlaw.png 40`.
+
 ## Opening sequence and cinema
 
 A normal launch displays the three original JP startup TIMs and plays the Sony logo and title movies in order. The shell reads each STR as a bounded range of raw sectors on track 1. FFmpeg decodes MDEC frames at 320 × 240 and interleaved XA sound for Bevy. Video frames stream through a pipe, and the decoder is reaped on skip, completion or shutdown. The original `MOVIE.c` lookahead leaves the last numbered frame undisplayed. Sound and image pause while the window is unfocused.

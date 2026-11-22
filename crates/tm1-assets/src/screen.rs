@@ -51,6 +51,7 @@ pub enum Face {
     Choice,
     Selected,
     Control,
+    ArrowActive,
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
@@ -133,7 +134,7 @@ impl Fonts {
         };
         let metrics = &self.metrics[match face {
             Face::Choice | Face::Selected => 1,
-            Face::Control => 3,
+            Face::Control | Face::ArrowActive => 3,
             _ => face as usize,
         }];
         metrics.get(idx).copied().unwrap_or(metrics[47])
@@ -142,18 +143,21 @@ impl Fonts {
         self.glyph(Face::Text, b'M').h as i32
     }
     pub fn centered(&self, frame: &mut [u8], face: Face, y: i32, text: &str) {
+        let center = if matches!(face, Face::Sign) { 146 } else { 159 };
+        self.centered_at(frame, face, center, y, text);
+    }
+    pub fn centered_at(&self, frame: &mut [u8], face: Face, center: i32, y: i32, text: &str) {
         let spacing = match face {
             Face::Text | Face::Choice | Face::Selected => -1,
             Face::Password => 7,
             Face::Speed => 3,
-            Face::Sign | Face::Control => 0,
+            Face::Sign | Face::Control | Face::ArrowActive => 0,
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
         let width: i32 = text
             .bytes()
             .map(|c| if c == 8 { -1 } else { advance(c) })
             .sum();
-        let center = if matches!(face, Face::Sign) { 146 } else { 159 };
         self.at(frame, face, center - (width >> 1), y, text);
     }
     pub fn at(&self, frame: &mut [u8], face: Face, mut x: i32, y: i32, text: &str) {
@@ -161,13 +165,14 @@ impl Fonts {
             Face::Choice => (-1, [93, 30, 23]),
             Face::Selected => (-1, [115, 61, 27]),
             Face::Control => (0, [128; 3]),
+            Face::ArrowActive => (0, [115, 25, 8]),
             Face::Text => (-1, [115, 84, 35]),
             Face::Password => (7, [50, 50, 50]),
             Face::Speed => (3, [100, 0, 30]),
             Face::Sign => (0, [36, 150, 36]),
         };
         let advance = |c| self.glyph(face, c).w as i32 + spacing;
-        let (pixels, width) = if matches!(face, Face::Sign | Face::Control) {
+        let (pixels, width) = if matches!(face, Face::Sign | Face::Control | Face::ArrowActive) {
             (&self.signs, self.sign_width)
         } else {
             (&self.pixels, self.width)

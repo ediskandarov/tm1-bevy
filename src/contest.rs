@@ -13,6 +13,7 @@ struct ContestScreen;
 enum Page {
     Title,
     Contest,
+    Bio,
     Password,
     Wrong,
     BossPreview(std::time::Duration),
@@ -27,7 +28,8 @@ pub struct Contest {
     idle: Duration,
     fonts: Fonts,
     title: Vec<u8>,
-    cars: Vec<u8>,
+    garage: crate::garage::Garage,
+    garage_fraction: u128,
     entry: Vec<u8>,
     image: Handle<Image>,
     theme: Handle<AudioSource>,
@@ -43,6 +45,8 @@ pub struct Contest {
 }
 impl Contest {
     fn sync_theme(&mut self, world: &mut World) {
+        let car = matches!(self.page, Page::Contest | Page::Bio).then_some(self.vehicle);
+        self.garage.sound(world, car);
         if self.page == Page::Title && self.cinema.is_none() {
             if self.theme_entity.is_none() {
                 let gain = world
@@ -107,7 +111,8 @@ impl Contest {
     fn frame(&self) -> Vec<u8> {
         let mut frame = match self.page {
             Page::Title => self.title.clone(),
-            Page::Contest => self.cars.clone(),
+            Page::Contest => return self.garage.frame(&self.fonts, self.vehicle),
+            Page::Bio => return self.garage.bio(self.vehicle),
             _ => self.entry.clone(),
         };
         let mut line = |y, face, text: &str| self.fonts.centered(&mut frame, face, y, text);
@@ -116,14 +121,7 @@ impl Contest {
                 line(165, Face::Text, "1P CONTEST");
                 line(193, Face::Text, "PRESS ENTER");
             }
-            Page::Contest => {
-                line(61, Face::Text, "LEFT RIGHT  CAR");
-                line(115, Face::Text, Vehicle::ROSTER[self.vehicle].name());
-                line(142, Face::Text, self.level.name());
-                line(165, Face::Text, &format!("D  {:?}", self.difficulty));
-                line(188, Face::Text, "P  PASSWORD");
-                line(211, Face::Text, "ENTER  PLAY");
-            }
+            Page::Contest | Page::Bio => unreachable!(),
             Page::Password => {
                 line(72, Face::Text, "ENTER PASSWORD");
                 line(98, Face::Text, "SPACE  BLANK");
@@ -171,13 +169,25 @@ impl Contest {
             Page::Title => {
                 if key(KeyCode::Enter) {
                     self.page = Page::Contest;
+                    self.garage.row = 0;
+                }
+            }
+            Page::Bio => {
+                if key(KeyCode::Enter) || key(KeyCode::Escape) {
+                    self.page = Page::Contest;
                 }
             }
             Page::Contest => {
-                if key(KeyCode::Enter) {
+                if key(KeyCode::Enter) && self.garage.row == 0 {
                     return true;
                 }
-                if key(KeyCode::Escape) {
+                if key(KeyCode::Enter) && self.garage.row == 1 {
+                    self.page = Page::Bio;
+                } else if key(KeyCode::ArrowUp) {
+                    self.garage.row = (self.garage.row + 2) % 3;
+                } else if key(KeyCode::ArrowDown) {
+                    self.garage.row = (self.garage.row + 1) % 3;
+                } else if key(KeyCode::Escape) || key(KeyCode::Enter) {
                     self.page = Page::Title;
                     self.modes = Default::default();
                     self.level = Level::Arena;
@@ -187,11 +197,15 @@ impl Contest {
                     self.page = Page::Password;
                     self.slots = [b' '; 5];
                     self.cursor = 0;
-                } else if key(KeyCode::ArrowRight) {
-                    self.vehicle = (self.vehicle + 1) % Vehicle::ROSTER.len();
-                } else if key(KeyCode::ArrowLeft) {
+                } else if key(KeyCode::ArrowRight) && self.garage.row != 2 {
+                    self.garage.slide = 0;
+                    self.garage.left = false;
+                    self.vehicle = (self.vehicle + 1) % Vehicle::CARD_ORDER.len();
+                } else if key(KeyCode::ArrowLeft) && self.garage.row != 2 {
+                    self.garage.slide = 0;
+                    self.garage.left = true;
                     self.vehicle =
-                        (self.vehicle + Vehicle::ROSTER.len() - 1) % Vehicle::ROSTER.len();
+                        (self.vehicle + Vehicle::CARD_ORDER.len() - 1) % Vehicle::CARD_ORDER.len();
                 }
             }
             Page::Password => {
@@ -258,7 +272,7 @@ pub fn open(world: &mut World) -> Result<()> {
     let player = &world.resource::<crate::driving::Drive>().player;
     show(
         world,
-        player.vehicle(),
+        Vehicle::SweetTooth,
         Level::Arena,
         player.difficulty(),
         Some(Clip::Title),
@@ -277,14 +291,18 @@ pub fn show(
         cinema: None,
         idle: Duration::ZERO,
         fonts: Fonts::load(disc)?,
-        cars: screen::background(&disc.read("UASCREEN/SCRND.TIM")?)?,
+        garage: crate::garage::Garage::load(disc)?,
+        garage_fraction: 0,
         title: screen::background(&disc.read("UASCREEN/SCRNC.TIM")?)?,
         entry: screen::background(&disc.read("UASCREEN/SCRNFD.TIM")?)?,
         theme: default(),
         theme_entity: None,
         image: default(),
         page: Page::Title,
-        vehicle: Vehicle::ROSTER.iter().position(|v| *v == vehicle).unwrap(),
+        vehicle: Vehicle::CARD_ORDER
+            .iter()
+            .position(|v| *v == vehicle)
+            .unwrap(),
         level,
         difficulty,
         modes: Default::default(),
@@ -298,6 +316,27 @@ pub fn show(
     menu.play(world, first_clip);
     world.insert_resource(menu);
     Ok(())
+}
+pub fn open_garage(world: &mut World) {
+    world.resource_scope(|world, mut menu: Mut<Contest>| {
+        menu.page = Page::Contest;
+        menu.sync_theme(world);
+        world
+            .resource_mut::<Assets<Image>>()
+            .get_mut(&menu.image)
+            .unwrap()
+            .data = Some(menu.frame());
+    });
+}
+fn menu_delta(world: &World) -> Duration {
+    if world
+        .get_resource::<crate::smoke::Capture>()
+        .is_some_and(|c| c.demo && !c.realtime)
+    {
+        Duration::from_millis(50)
+    } else {
+        world.resource::<Time<Real>>().delta()
+    }
 }
 pub fn update(world: &mut World) {
     let Ok(window) = world.query::<&Window>().single(world) else {
@@ -326,21 +365,19 @@ pub fn update(world: &mut World) {
     }
     let mut start = None;
     world.resource_scope(|world, mut menu: Mut<Contest>| {
-        let keys = world.resource::<ButtonInput<KeyCode>>();
+        let no_input = ButtonInput::default();
+        let keys = if world.get_resource::<crate::smoke::Capture>().is_some_and(|c| c.demo && !c.realtime) {
+            &no_input
+        } else {
+            world.resource::<ButtonInput<KeyCode>>()
+        };
         if menu.cinema.is_some() {
             let select = keys.any_pressed([KeyCode::Enter, KeyCode::Space])
                 || world
                     .query::<&Gamepad>()
                     .iter(world)
                     .any(|p| p.any_pressed([GamepadButton::South, GamepadButton::Start]));
-            let dt = if world
-                .get_resource::<crate::smoke::Capture>()
-                .is_some_and(|c| c.demo && !c.realtime)
-            {
-                Duration::from_millis(50)
-            } else {
-                world.resource::<Time<Real>>().delta()
-            };
+            let dt = menu_delta(world);
             let handle = menu.image.clone();
             let mut images = world.resource_mut::<Assets<Image>>();
             let movie = menu.cinema.as_mut().unwrap();
@@ -380,13 +417,22 @@ pub fn update(world: &mut World) {
         if expired {
             menu.page = Page::Contest;
         }
-        if !expired && keys.get_just_pressed().next().is_none() {
+        let animate = if menu.page == Page::Contest {
+            menu.garage_fraction += menu_delta(world).as_nanos() * 60;
+            let fields = (menu.garage_fraction / 1_000_000_000) as u32;
+            menu.garage_fraction %= 1_000_000_000;
+            menu.garage.tick(fields);
+            fields != 0
+        } else {
+            false
+        };
+        if !animate && !expired && keys.get_just_pressed().next().is_none() {
             return;
         }
         if !expired && menu.input(keys) {
             start = Some((
                 menu.level,
-                Vehicle::ROSTER[menu.vehicle],
+                Vehicle::CARD_ORDER[menu.vehicle],
                 menu.difficulty,
                 menu.modes,
             ));
@@ -394,6 +440,19 @@ pub fn update(world: &mut World) {
             img.data = Some(menu.frame());
         }
         menu.sync_theme(world);
+        if let Ok(mut window) = world.query::<&mut Window>().single_mut(world) {
+            if menu.page == Page::Contest {
+                let car = Vehicle::CARD_ORDER[menu.vehicle].name();
+                let level = menu.level.name();
+                let diff = menu.difficulty;
+                let title = format!("TM1 • {car} • {level} • {diff:?}   |   ← → Car   ↑ ↓ Menu   Enter Select   D Difficulty   P Password");
+                if window.title != title {
+                    window.title = title;
+                }
+            } else if window.title != "TM1" {
+                window.title = "TM1".into();
+            }
+        }
     });
     if let Some((level, vehicle, difficulty, modes)) = start {
         match Stage::load(
@@ -459,6 +518,47 @@ mod tests {
         }
         press(world, KeyCode::Enter);
     }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn garage_bios_and_card_order() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, Enter);
+        press(&mut world, ArrowLeft);
+        press(&mut world, ArrowDown);
+        for (i, vehicle) in Vehicle::CARD_ORDER.into_iter().enumerate() {
+            press(&mut world, Enter);
+            let menu = world.resource::<Contest>();
+            assert!(menu.page == Page::Bio);
+            assert_eq!(Vehicle::CARD_ORDER[menu.vehicle], vehicle);
+            let expected = screen::background(
+                &world
+                    .resource::<Campaign>()
+                    .0
+                    .read(&format!("UABIOS/SCNDB{:02}B.TIM", i + 1))
+                    .unwrap(),
+            )
+            .unwrap();
+            assert!(
+                world
+                    .resource::<Assets<Image>>()
+                    .get(&menu.image)
+                    .unwrap()
+                    .data
+                    .as_deref()
+                    == Some(expected.as_slice())
+            );
+            press(&mut world, Enter);
+            press(&mut world, ArrowRight);
+        }
+        assert_eq!(world.resource::<Contest>().vehicle, 0);
+        press(&mut world, ArrowDown);
+        press(&mut world, ArrowLeft);
+        assert_eq!(world.resource::<Contest>().vehicle, 0);
+        press(&mut world, Enter);
+        assert!(world.resource::<Contest>().page == Page::Title);
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE and FFmpeg"]
     fn opening_movies_attract_and_title_theme() {

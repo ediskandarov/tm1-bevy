@@ -5,6 +5,7 @@ mod cinema;
 mod contest;
 mod driving;
 mod ending;
+mod garage;
 mod gpu_timing;
 mod music;
 mod pause;
@@ -24,15 +25,21 @@ fn main() -> Result<()> {
     )?;
     let mut flag = args.next();
     let mut menu = flag.is_none();
+    let mut garage = false;
+    let mut explicit_car = false;
     use tm1_core::drive::{Difficulty, Level, Vehicle};
     let mut difficulty = Difficulty::Medium;
     let mut level = Level::Arena;
     let mut vehicle = Vehicle::YellowJacket;
     while matches!(
         flag.as_ref().and_then(|s| s.to_str()),
-        Some("--car" | "--level" | "--menu" | "--difficulty")
+        Some("--car" | "--level" | "--menu" | "--garage" | "--difficulty")
     ) {
-        if flag.as_deref() == Some(std::ffi::OsStr::new("--menu")) {
+        if matches!(
+            flag.as_ref().and_then(|f| f.to_str()),
+            Some("--menu" | "--garage")
+        ) {
+            garage = flag.as_deref() == Some(std::ffi::OsStr::new("--garage"));
             menu = true;
             flag = args.next();
             continue;
@@ -64,6 +71,7 @@ fn main() -> Result<()> {
             continue;
         }
         let name = args.next();
+        explicit_car = true;
         vehicle = Vehicle::ROSTER
             .into_iter()
             .find(|v| name.as_deref() == Some(std::ffi::OsStr::new(v.slug())))
@@ -77,6 +85,9 @@ fn main() -> Result<()> {
     }
     if flag.as_deref() == Some(std::ffi::OsStr::new("--object-mesh")) {
         flag = args.next();
+    }
+    if menu && !explicit_car {
+        vehicle = Vehicle::SweetTooth;
     }
     let realtime = flag.as_deref() == Some(std::ffi::OsStr::new("--realtime-screenshot"));
     let special_demo = flag.as_deref() == Some(std::ffi::OsStr::new("--demo-special-screenshot"));
@@ -189,8 +200,11 @@ fn main() -> Result<()> {
             vehicle,
             level,
             difficulty,
-            Some(cinema::Clip::Presents),
+            (!garage).then_some(cinema::Clip::Presents),
         )?;
+        if garage {
+            contest::open_garage(app.world_mut());
+        }
     }
     app.add_plugins(additive::AdditivePlugin);
     if demo {

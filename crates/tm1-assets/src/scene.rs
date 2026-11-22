@@ -150,8 +150,7 @@ impl Transform {
 
 #[derive(Clone, Copy)]
 struct BodySelection {
-    node: u32,
-    stage: u8,
+    switch: Option<(u32, u8)>,
     headlights_kind: u16,
     headlights: bool,
 }
@@ -276,6 +275,45 @@ impl<'a> Dmd<'a> {
             .try_into()
             .map_err(|_| anyhow::anyhow!("invalid sprite frames"))
     }
+    /// SCREEN.c screenInitCarOccupants uses 64 × 90 portraits in card order.
+    pub fn occupant_portraits(&self, textures: &crate::texture::Vram) -> Result<Vec<Vec<u8>>> {
+        let p = self.sprite_node(0, 1300)?;
+        ensure!(u32le(self.data, p + 16)? == 12, "invalid occupant count");
+        let mut poly = self.offset(u32le(self.data, p + 12)?)?;
+        let mut portraits = Vec::new();
+        for _ in 0..12 {
+            let len = usize::from(bytes(self.data, poly + 2, 1)?[0]) * 4;
+            let record = bytes(self.data, poly, len)?;
+            let uv = bytes(
+                record,
+                16 + 4 * ((u32le(record, 12)? >> 28) & 7) as usize,
+                16,
+            )?;
+            let key = TextureKey {
+                page: u16le(uv, 6)?,
+                clut: u16le(uv, 2)?,
+                window: 0,
+            };
+            let (u, v) = (uv[8], uv[1]);
+            ensure!(
+                uv[0].checked_sub(u) == Some(63) && uv[5].checked_sub(v) == Some(89),
+                "unexpected occupant rectangle"
+            );
+            let mut portrait = Vec::with_capacity(64 * 90 * 4);
+            for y in 0..90 {
+                for x in 0..64 {
+                    let mut color = textures.sample_primitive(key, u + x, v + y, true)?;
+                    for c in &mut color[..3] {
+                        *c = (u16::from(*c) * 191 / 128).min(255) as u8;
+                    }
+                    portrait.extend(color);
+                }
+            }
+            portraits.push(portrait);
+            poly += len;
+        }
+        Ok(portraits)
+    }
     pub fn cockpit_rectangles(&self) -> Result<[[i32; 4]; 7]> {
         let p = self.sprite_node(0, 1240)?;
         ensure!(
@@ -338,12 +376,15 @@ impl<'a> Dmd<'a> {
     }
     pub fn vehicle_bodies_with_lights(&self, kind: u16, headlights: bool) -> Result<[Scene; 3]> {
         Ok([
-            self.extract(kind, Some((0, headlights)))?,
-            self.extract(kind, Some((1, headlights)))?,
-            self.extract(kind, Some((2, headlights)))?,
+            self.extract(kind, Some((Some(0), headlights)))?,
+            self.extract(kind, Some((Some(1), headlights)))?,
+            self.extract(kind, Some((Some(2), headlights)))?,
         ])
     }
-    fn extract(&self, kind: u16, body: Option<(u8, bool)>) -> Result<Scene> {
+    pub fn garage_vehicle(&self, kind: u16) -> Result<Scene> {
+        self.extract(kind, Some((None, false)))
+    }
+    fn extract(&self, kind: u16, body: Option<(Option<u8>, bool)>) -> Result<Scene> {
         let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
         ensure!(
             roots.len() == 1,
@@ -354,22 +395,26 @@ impl<'a> Dmd<'a> {
         let mut selection = None;
         if let Some((stage, headlights)) = body {
             // uaswInitCarSwitch follows child zero through two groups.
-            let mut node = root_id;
-            for _ in 0..2 {
-                let offset = self.offset(node)?;
+            let switch = if let Some(stage) = stage {
+                let mut node = root_id;
+                for _ in 0..2 {
+                    let offset = self.offset(node)?;
+                    ensure!(
+                        bytes(self.data, offset, 24)?[0] == 1 && self.data[offset + 20] > 0,
+                        "missing vehicle body group"
+                    );
+                    node = u32le(self.data, offset + 24)?;
+                }
                 ensure!(
-                    bytes(self.data, offset, 24)?[0] == 1 && self.data[offset + 20] > 0,
-                    "missing vehicle body group"
+                    self.data[self.offset(node)?] == 9,
+                    "missing vehicle body switch"
                 );
-                node = u32le(self.data, offset + 24)?;
-            }
-            ensure!(
-                self.data[self.offset(node)?] == 9,
-                "missing vehicle body switch"
-            );
+                Some((node, stage))
+            } else {
+                None
+            };
             selection = Some(BodySelection {
-                node,
-                stage,
+                switch,
                 headlights_kind: kind + 4,
                 headlights,
             });
@@ -537,8 +582,9 @@ impl<'a> Dmd<'a> {
             9 => {
                 bytes(d, p, 8)?;
                 let child = selection
-                    .filter(|body| body.node == ptr)
-                    .map_or(d[p + 7], |body| body.stage);
+                    .and_then(|body| body.switch)
+                    .filter(|(node, _)| *node == ptr)
+                    .map_or(d[p + 7], |(_, stage)| stage);
                 ensure!(child < d[p + 6], "switch child out of range");
                 if u16le(d, p + 2)? == 920 && d[p + 6] == 2 {
                     let id = u16le(d, p + 4)?;

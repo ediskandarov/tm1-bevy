@@ -199,74 +199,79 @@ impl Ending {
         let origin = Vec3::new(0., start + step * self.frame as f32, self.height as f32);
         let camera = rotation(angles).inverse();
         let model = rotation(spin * self.frame as f32);
-        let mut depth = vec![f32::INFINITY; WIDTH * HEIGHT];
-        for poly in &self.car.polygons {
-            if poly
-                .animation
-                .iter()
-                .any(|a| a.selected(self.frame) != a.child)
-            {
+        draw_model(out, &self.car, &self.textures, self.frame, |p| {
+            camera * (origin - eye + model * p)
+        });
+    }
+}
+
+pub(crate) fn draw_model(
+    out: &mut [u8],
+    scene: &Scene,
+    textures: &Vram,
+    frame: u32,
+    transform: impl Fn(Vec3) -> Vec3,
+) {
+    let mut depth = vec![f32::INFINITY; WIDTH * HEIGHT];
+    for poly in &scene.polygons {
+        if poly.animation.iter().any(|a| a.selected(frame) != a.child) {
+            continue;
+        }
+        let mut screen = [Vec2::ZERO; 4];
+        let mut z = [0.; 4];
+        if poly.vertices.len() > 4 {
+            continue;
+        }
+        for (i, v) in poly.vertices.iter().enumerate() {
+            let p = transform(Vec3::from(v.position));
+            z[i] = p.y;
+            screen[i] = Vec2::new(160. + 256. * p.x / p.y, 120. - 256. * p.z / p.y);
+        }
+        for &[a, b, c] in &[[0, 1, 2], [2, 1, 3]][..poly.vertices.len().saturating_sub(2)] {
+            if z[a].min(z[b]).min(z[c]) < 1. {
                 continue;
             }
-            let mut screen = [Vec2::ZERO; 4];
-            let mut z = [0.; 4];
-            if poly.vertices.len() > 4 {
+            let [p, q, r] = [screen[a], screen[b], screen[c]];
+            let area = (q - p).perp_dot(r - p);
+            if area.abs() < 0.001 {
                 continue;
             }
-            for (i, v) in poly.vertices.iter().enumerate() {
-                let p = camera * (origin - eye + model * Vec3::from(v.position));
-                z[i] = p.y;
-                screen[i] = Vec2::new(160. + 256. * p.x / p.y, 120. - 256. * p.z / p.y);
-            }
-            for &[a, b, c] in &[[0, 1, 2], [2, 1, 3]][..poly.vertices.len().saturating_sub(2)] {
-                if z[a].min(z[b]).min(z[c]) < 1. {
-                    continue;
-                }
-                let [p, q, r] = [screen[a], screen[b], screen[c]];
-                let area = (q - p).perp_dot(r - p);
-                if area.abs() < 0.001 {
-                    continue;
-                }
-                let lo = p.min(q).min(r).floor().max(Vec2::ZERO).as_ivec2();
-                let hi = p.max(q).max(r).ceil().min(Vec2::new(319., 239.)).as_ivec2();
-                for y in lo.y..=hi.y {
-                    for x in lo.x..=hi.x {
-                        let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - p;
-                        let u = d.perp_dot(r - p) / area;
-                        let v = (q - p).perp_dot(d) / area;
-                        let w = 1. - u - v;
-                        if w.min(u).min(v) < 0. {
-                            continue;
-                        }
-                        let at = y as usize * WIDTH + x as usize;
-                        let distance = w * z[a] + u * z[b] + v * z[c];
-                        if distance >= depth[at] {
-                            continue;
-                        }
-                        let [va, vb, vc] =
-                            [&poly.vertices[a], &poly.vertices[b], &poly.vertices[c]];
-                        let mut pixel = [255; 4];
-                        if let Some(key) = poly.texture {
-                            let uv = Vec2::from(va.uv) * w
-                                + Vec2::from(vb.uv) * u
-                                + Vec2::from(vc.uv) * v;
-                            let Ok(texel) = self.textures.sample(key, uv.x as u8, uv.y as u8)
-                            else {
-                                continue;
-                            };
-                            if texel[3] == 0 {
-                                continue;
-                            }
-                            pixel = texel;
-                        }
-                        for i in 0..3 {
-                            pixel[i] = (f32::from(pixel[i])
-                                * (va.color[i] * w + vb.color[i] * u + vc.color[i] * v))
-                                as u8;
-                        }
-                        out[at * 4..at * 4 + 4].copy_from_slice(&pixel);
-                        depth[at] = distance;
+            let lo = p.min(q).min(r).floor().max(Vec2::ZERO).as_ivec2();
+            let hi = p.max(q).max(r).ceil().min(Vec2::new(319., 239.)).as_ivec2();
+            for y in lo.y..=hi.y {
+                for x in lo.x..=hi.x {
+                    let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - p;
+                    let u = d.perp_dot(r - p) / area;
+                    let v = (q - p).perp_dot(d) / area;
+                    let w = 1. - u - v;
+                    if w.min(u).min(v) < 0. {
+                        continue;
                     }
+                    let at = y as usize * WIDTH + x as usize;
+                    let distance = w * z[a] + u * z[b] + v * z[c];
+                    if distance >= depth[at] {
+                        continue;
+                    }
+                    let [va, vb, vc] = [&poly.vertices[a], &poly.vertices[b], &poly.vertices[c]];
+                    let mut pixel = [255; 4];
+                    if let Some(key) = poly.texture {
+                        let uv =
+                            Vec2::from(va.uv) * w + Vec2::from(vb.uv) * u + Vec2::from(vc.uv) * v;
+                        let Ok(texel) = textures.sample(key, uv.x as u8, uv.y as u8) else {
+                            continue;
+                        };
+                        if texel[3] == 0 {
+                            continue;
+                        }
+                        pixel = texel;
+                    }
+                    for i in 0..3 {
+                        pixel[i] = (f32::from(pixel[i])
+                            * (va.color[i] * w + vb.color[i] * u + vc.color[i] * v))
+                            as u8;
+                    }
+                    out[at * 4..at * 4 + 4].copy_from_slice(&pixel);
+                    depth[at] = distance;
                 }
             }
         }
