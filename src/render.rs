@@ -1168,7 +1168,7 @@ fn draw_view(
     );
     let mut hidden_world = vec![false; arena.vehicle_start];
     for lod in arena.scene.lods.iter().flatten() {
-        lod.hide_other_branches([eye.x, -eye.z, eye.y], &mut hidden_world);
+        lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_world);
     }
     for controller in &arena.scene.visibility {
         hidden_world[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
@@ -2268,15 +2268,39 @@ mod tests {
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn warehouse_lod_ranges_match_retail_traversal() {
+        verify_lod_ranges(
+            "UADMD/WH1.DMD",
+            &[0x80042b40, 0x80035ec8, 0x80036638, 0x800367a8],
+            3,
+            12000,
+            13,
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn showroom_lod_ranges_match_retail_traversal() {
+        // Sweet Tooth, Yellow Jacket, Pit Viper and a Hammerhead wheel.
+        verify_lod_ranges(
+            "UADMD/CARS.DMD",
+            &[0x8002320c, 0x80024ef0, 0x800352a0, 0x80028280],
+            8,
+            96000,
+            101,
+        );
+    }
+
+    fn verify_lod_ranges(path: &str, nodes: &[u32], scale: u32, distance: i32, step_size: usize) {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let data = disc.read(path).unwrap();
         let mut db = tm1_assets::scene::Dmd::parse(&data).unwrap();
         let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
-        cpu.put(0x800188b8, &data);
+        cpu.put(u32::from_le_bytes(data[12..16].try_into().unwrap()), &data);
+        cpu.call(0x800fe9a0, &[scale]);
         // Capture the child passed to hierPush, bypassing the rest of the hierarchy.
         cpu.put(0x800fd7dc, &[8, 0, 224, 3, 0, 0, 0, 0]);
         let mut selections = std::collections::BTreeSet::new();
-        for node in [0x80042b40, 0x80035ec8, 0x80036638, 0x800367a8] {
+        for &node in nodes {
             db.roots = vec![(node, 1)];
             let scene = db.battle_world().unwrap();
             let lod = scene.lods.as_ref().unwrap().last().unwrap();
@@ -2296,7 +2320,7 @@ mod tests {
                         .collect::<Vec<_>>(),
                 );
             }
-            for step in (-12000..=12000).step_by(13) {
+            for step in (-distance..=distance).step_by(step_size) {
                 let eye = [origin[0] + step, origin[1], origin[2]];
                 for (i, pos) in eye.iter().enumerate() {
                     cpu.put(0x80011008 + 4 * i as u32, &(-pos).to_le_bytes());
@@ -2308,7 +2332,7 @@ mod tests {
                     }
                 });
                 let mut hidden = vec![false; scene.polygons.len()];
-                lod.hide_other_branches(eye.map(|v| v as f32), &mut hidden);
+                lod.hide_other_branches(eye.map(|v| v as f32), scale, &mut hidden);
                 let visible: Vec<_> = scene
                     .polygons
                     .iter()

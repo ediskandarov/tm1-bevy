@@ -59,7 +59,7 @@ Wrecks and special-weapon impacts use the same eight-frame flame sequence. It re
 
 ## Scenery level of detail
 
-Battle scenery loads every DMD level-of-detail branch. Each camera selects the first matching distance interval for each node, using the battle hierarchy's signed coordinate shifts and unsigned squared-distance comparisons. The chase view, rear mirror and both duel views evaluate their own eye positions. A disc-backed test compares the visible polygon records from four Warehouse nodes with the child selected by the JP hierLod routine over 7,388 camera positions. This covers world scenery. Vehicle bodies and showroom meshes still load their nearest branch.
+Battle scenery loads every DMD level-of-detail branch. Each camera selects the first matching distance interval for each node, using the battle hierarchy's signed coordinate shifts and unsigned squared-distance comparisons. The chase view, rear mirror and both duel views evaluate their own eye positions. A disc-backed test compares the visible polygon records from four Warehouse nodes with the child selected by the JP hierLod routine over 7,388 camera positions. Battle vehicle bodies still load their nearest branch. The showroom and credits keep all vehicle detail branches. Each rotating or sliding model uses its own camera position in model coordinates. The showroom shifts coordinates by eight bits and the credits use the normal three-bit shift. A second JP comparison checks four showroom nodes across 7,604 camera positions.
 
 ## Combat particles in both views
 

@@ -174,6 +174,8 @@ impl Garage {
                 &self.cars[index],
                 &self.textures,
                 self.field,
+                model.inverse() * -origin,
+                8,
                 |p| camera * (origin + model * p),
             );
         };

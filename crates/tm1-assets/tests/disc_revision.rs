@@ -74,7 +74,7 @@ fn supported_disc_arena_and_audio() {
             let world = level.battle_world().unwrap();
             let mut hidden = vec![false; world.polygons.len()];
             for lod in world.lods.as_ref().unwrap() {
-                lod.hide_other_branches(world.polygons[0].vertices[0].position, &mut hidden);
+                lod.hide_other_branches(world.polygons[0].vertices[0].position, 3, &mut hidden);
             }
             assert!(hidden.iter().any(|&h| !h), "{path}");
         }
@@ -207,7 +207,7 @@ fn ending_assets() {
     let data = disc.read("UADMD/CARSEND.DMD").unwrap();
     let db = Dmd::parse(&data).unwrap();
     for kind in (10..=120).step_by(10) {
-        assert!(!db.extract_kind(kind).unwrap().polygons.is_empty());
+        assert!(!db.ending_vehicle(kind).unwrap().polygons.is_empty());
     }
 }
 

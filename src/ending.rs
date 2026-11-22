@@ -73,7 +73,7 @@ impl Ending {
         let backdrop = screen::background(&disc.read(&format!("UASCREEN/{background}.TIM"))?)?;
         let credits = crate::scroll::Scroll::load(disc.read("UATEXT/CREDITS.TXT")?, &fonts)?;
         let data = disc.read("UADMD/CARSEND.DMD")?;
-        let car = Dmd::parse(&data)?.extract_kind(vehicle as u16)?;
+        let car = Dmd::parse(&data)?.ending_vehicle(vehicle as u16)?;
         let textures = Vram::from_tms(&disc.read("UADMD/CARSEND.TMS")?)?;
         ensure!(
             car.version == textures.version,
@@ -159,9 +159,15 @@ impl Ending {
         let origin = Vec3::new(0., start + step * self.frame as f32, self.height as f32);
         let camera = rotation(angles).inverse();
         let model = rotation(spin * self.frame as f32);
-        draw_model(out, &self.car, &self.textures, self.frame, |p| {
-            camera * (origin - eye + model * p)
-        });
+        draw_model(
+            out,
+            &self.car,
+            &self.textures,
+            self.frame,
+            model.inverse() * (eye - origin),
+            3,
+            |p| camera * (origin - eye + model * p),
+        );
     }
 }
 
@@ -170,11 +176,17 @@ pub(crate) fn draw_model(
     scene: &Scene,
     textures: &Vram,
     frame: u32,
+    model_eye: Vec3,
+    lod_scale: u32,
     transform: impl Fn(Vec3) -> Vec3,
 ) {
     let mut depth = vec![f32::INFINITY; WIDTH * HEIGHT];
-    for poly in &scene.polygons {
-        if poly.animation.iter().any(|a| a.selected(frame) != a.child) {
+    let mut hidden = vec![false; scene.polygons.len()];
+    for lod in scene.lods.iter().flatten() {
+        lod.hide_other_branches(model_eye.to_array(), lod_scale, &mut hidden);
+    }
+    for (poly, hidden) in scene.polygons.iter().zip(hidden) {
+        if hidden || poly.animation.iter().any(|a| a.selected(frame) != a.child) {
             continue;
         }
         let mut screen = [Vec2::ZERO; 4];
@@ -466,6 +478,9 @@ mod tests {
         ending.field(true, false, false);
         assert_eq!(ending.phase, Phase::Credits);
         assert_eq!(ending.credits.lines.len(), 153);
+        let mut pixels = ending.backdrop.clone();
+        ending.draw_car(&mut pixels);
+        assert_ne!(pixels.as_slice(), ending.backdrop.as_slice());
         ending.field(true, false, false);
         assert_eq!(ending.phase, Phase::Credits);
         ending.field(false, true, false);

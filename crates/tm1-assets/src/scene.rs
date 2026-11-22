@@ -142,13 +142,13 @@ pub struct LevelOfDetail {
 }
 
 impl LevelOfDetail {
-    pub fn hide_other_branches(&self, eye: [f32; 3], hidden: &mut [bool]) {
+    pub fn hide_other_branches(&self, eye: [f32; 3], lod_scale: u32, hidden: &mut [bool]) {
         let mut distance = 0u32;
         for axis in 0..3 {
             let local = (0..3)
                 .map(|j| self.transform.axes[j][axis] * (self.transform.offset[j] - eye[j]))
                 .sum::<f32>() as i32;
-            let scaled = local.wrapping_add(self.offset[axis]) >> 3;
+            let scaled = local.wrapping_add(self.offset[axis]) >> lod_scale;
             distance = distance.wrapping_add(scaled.wrapping_mul(scaled) as u32);
         }
         let mut selected = false;
@@ -505,13 +505,17 @@ impl<'a> Dmd<'a> {
         ])
     }
     pub fn garage_vehicle(&self, kind: u16) -> Result<Scene> {
-        self.extract(kind, Some((None, false)), false)
+        self.extract(kind, Some((None, false)), true)
+    }
+
+    pub fn ending_vehicle(&self, kind: u16) -> Result<Scene> {
+        self.extract(kind, None, true)
     }
     fn extract(
         &self,
         kind: u16,
         body: Option<(Option<u8>, bool)>,
-        battle_lods: bool,
+        include_lods: bool,
     ) -> Result<Scene> {
         let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
         ensure!(
@@ -547,7 +551,7 @@ impl<'a> Dmd<'a> {
                 headlights,
             });
         }
-        let scene = self.extract_root(root_id, selection, battle_lods)?;
+        let scene = self.extract_root(root_id, selection, include_lods)?;
         ensure!(
             !scene.polygons.is_empty(),
             "selected root has no supported polygons"
@@ -592,14 +596,14 @@ impl<'a> Dmd<'a> {
         &self,
         root_id: u32,
         selection: Option<BodySelection>,
-        battle_lods: bool,
+        include_lods: bool,
     ) -> Result<Scene> {
         let mut scene = Scene {
             version: self.version,
             root_id,
             polygons: vec![],
             visibility: vec![],
-            lods: battle_lods.then(Vec::new),
+            lods: include_lods.then(Vec::new),
             damage_branches: vec![],
             health_stands: vec![],
             object_ids: vec![],
