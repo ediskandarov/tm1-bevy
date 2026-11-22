@@ -254,9 +254,27 @@ pub fn advance(
         } else {
             input
         };
+        let mut pads = u32::from(input.ps1_buttons());
+        if state.player.cheat_controls() && !capture.demo {
+            // Each digit holds one original multi-button combination for a simulation step.
+            for (key, mask) in [
+                (KeyCode::Digit1, 0x30c9),
+                (KeyCode::Digit2, 0xc036),
+                (KeyCode::Digit3, 0xc035),
+                (KeyCode::Digit4, 0x30ca),
+                (KeyCode::Digit5, 0x3000),
+                (KeyCode::Digit6, 0x30c9_0000),
+                (KeyCode::Digit7, 0xc036_0000),
+            ] {
+                if keys.pressed(key) {
+                    pads = mask;
+                    break;
+                }
+            }
+        }
         state
             .contacts
-            .step_bout(&mut state.player, &mut state.opponents, input, 3);
+            .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }

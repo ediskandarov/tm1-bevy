@@ -1536,6 +1536,28 @@ fn compare_battle_skill(
     boss: bool,
     difficulty: Difficulty,
 ) {
+    compare_battle_controls(vehicle, charge, level, boss, difficulty, false);
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn god_mode_pad_sequences_original() {
+    compare_battle_controls(
+        Vehicle::YellowJacket,
+        20,
+        Level::Warehouse,
+        false,
+        Difficulty::Medium,
+        true,
+    );
+}
+fn compare_battle_controls(
+    vehicle: Vehicle,
+    charge: i16,
+    level: Level,
+    boss: bool,
+    difficulty: Difficulty,
+    cheats: bool,
+) {
     let mut r = Reference::on_difficulty(vehicle, true, level, difficulty);
     r.cpu.call(0x80137268, &[]);
     let crush = level == Level::Arena && vehicle == Vehicle::Hammerhead;
@@ -1680,6 +1702,10 @@ fn compare_battle_skill(
         }
         put(&mut r.cpu, 0x8018bf14, head);
     }
+    if cheats {
+        r.player.set_weapon_and_damage_modes(false, true);
+        r.cpu.call(0x8014d354, &[0, 1]);
+    }
     for tick in 1..=360 {
         let input = Input {
             accelerate: true,
@@ -1693,7 +1719,21 @@ fn compare_battle_skill(
         r.cpu.put(0x80170238, &(fields as u16).to_le_bytes());
         r.cpu
             .put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
-        r.cpu.call(0x800ffb98, &[2, input.ps1_buttons() as u32]);
+        let pads = if cheats {
+            match tick {
+                1 | 6 | 11 | 15 | 25 | 34 => 0x30c9,
+                3 | 4 | 66 => 0xc036,
+                8 | 18 => 0x3000,
+                13 | 21 => 0xc035,
+                23 => 0x30ca,
+                27 | 28 | 32 => 0xc036_0000,
+                30 => 0x30c9_0000,
+                _ => 0,
+            }
+        } else {
+            u32::from(input.ps1_buttons())
+        };
+        r.cpu.call(0x800ffb98, &[2, pads]);
         r.cpu.call(0x80110810, &[]);
         r.cpu.call(0x801344e0, &[0x800d8000, 0]);
         r.cpu.call(0x801351b0, &[]);
@@ -1720,7 +1760,19 @@ fn compare_battle_skill(
             r.scene.step(&mut r.player, &mut r.police, input, fields);
             r.compare();
         } else {
-            r.scene.step_bout(&mut r.player, &mut lineup, input, fields);
+            r.scene
+                .step_bout_with_pads(&mut r.player, &mut lineup, pads, fields);
+            if cheats {
+                match tick {
+                    3 | 4 | 66 => assert_eq!(r.player.state[0x184], 1),
+                    8 => assert_eq!(r.player.state[0x4a1], 1),
+                    18 => assert_eq!(r.player.state[0x4a1], 0),
+                    23 => assert_eq!(r.player.state[0x23c], 200),
+                    27 | 28 => assert!(lineup.iter().all(|ai| ai.state[0] == 0)),
+                    32 => assert!(lineup.iter().all(|ai| ai.state[0] == 1)),
+                    _ => {}
+                }
+            }
             let mut effects = [[0; 5]; 122];
             let count = r.scene.effects(&mut effects);
             let native_fragments = effects[..count]

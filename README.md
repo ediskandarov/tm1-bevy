@@ -29,6 +29,16 @@ With only the CUE argument, press Enter at the title, use Left or Right to selec
 | 1, 3, 4, 2, 1 | Minion and Friends starts Rooftops with Minion joining three live rivals. |
 | 1, 3, 1, 1, 4 | Preview Minion's introduction, then return to selection. |
 
+With God Mode enabled, number keys during combat stand in for the original simultaneous controller presses. Tap the first digit, release it and tap the second within 30 simulation updates (about 1.5 seconds at the usual rate).
+
+| Keys in order | Effect |
+| --- | --- |
+| 1 then 2 | Toggle protection from damage. |
+| 1 then 3 | Toggle half damage when vulnerable. |
+| 1 then 5 | Toggle infinite weapons. |
+| 3 then 4 | Switch the collision strength and weight settings between the two cheat presets. |
+| 6 then 7 | Stop or resume AI driving using the second controller sequence. |
+
 The pause HUD shows the keyboard digits for the current stage. Explicit car and level arguments start the fight directly.
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,

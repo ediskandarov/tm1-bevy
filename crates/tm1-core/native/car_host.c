@@ -333,7 +333,75 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     memcpy(state, &car, sizeof(car));
 }
 
-void tm1_drive_step(u8* state, u8* opponent, u16 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
+// CAR.c CarUpdate and CTLPAD.c ctlpadSpecial, single-player branch.
+// Return 1 when the second pad switches the driving state of all opponents.
+static int update_cheat_controls(PlayerCar* car, u32 pads)
+{
+    CarStats* st = &car->stats;
+    int toggle_ai = 0;
+    u32 second = pads >> 16;
+    if (pads == 0x30c9) {
+        st->cheatA = 1;
+        st->cheatTimer = 0;
+    } else if (pads == 0xc035) {
+        st->cheatB = 1;
+        st->cheatTimer = 0;
+    } else if (second == 0x30c9) {
+        st->cheatA = 1;
+        st->cheatTimer = 0;
+    }
+    if (st->cheatA) {
+        if (++st->cheatTimer >= 31) {
+            st->cheatA = 0;
+            st->cheatTimer = 0;
+        }
+        if (pads == 0xc036 || second == 0xc036) {
+            if (st->cheatAArmed) {
+                if (pads == 0xc036)
+                    st->unk4C = !st->unk4C;
+                else
+                    toggle_ai = 1;
+                st->cheatAArmed = 0;
+                st->cheatTimer = 0;
+            }
+        } else if (pads == 0xc035 || pads == 0x3000) {
+            if (st->cheatAArmed) {
+                if (pads == 0x3000)
+                    car->weap.reset = !car->weap.reset;
+                else if (st->lostTimer)
+                    st->lostTimer = 0;
+                else {
+                    st->lostTimer = 1;
+                    car->flags[26] = 1;
+                }
+            }
+            st->cheatAArmed = 0;
+            st->cheatTimer = 0;
+        } else {
+            st->cheatAArmed = 1;
+        }
+    }
+    if (st->cheatB) {
+        if (++st->cheatTimer >= 31) {
+            st->cheatB = 0;
+            st->cheatTimer = 0;
+        }
+        if (pads == 0x30ca) {
+            if (st->cheatBArmed) {
+                int heavy = st->unk104 >= 101;
+                st->unk104 = heavy ? 50 : 200;
+                st->unk108 = heavy ? 2 : 4;
+                st->cheatBArmed = 0;
+                st->cheatTimer = 0;
+            }
+        } else {
+            st->cheatBArmed = 1;
+        }
+    }
+    return toggle_ai;
+}
+
+void tm1_drive_step(u8* state, u8* opponent, u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed)
 {
     trig = table;
     random_state = *seed;
@@ -811,7 +879,7 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u16 buttons, s16 fields, u32 frame, const s16* tables, u32* seed)
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed)
 {
     PlayerCar player;
     AICar cars[8];
@@ -841,6 +909,11 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         trig = tables;
         tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
         contact_phase(&player, cars, 1, fields);
+        if (cheat_controls && update_cheat_controls(&player, buttons)) {
+            u8 driving = !cars[0].driving;
+            for (int i = 0; i < count; i++)
+                cars[i].driving = driving;
+        }
     }
     tm1_start_death(&player, 1);
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);

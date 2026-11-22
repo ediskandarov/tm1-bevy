@@ -395,6 +395,18 @@ mod tests {
         assert_eq!(drive.opponents.len(), 4);
         assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
         assert!(drive.opponents.iter().all(|ai| ai.health().0 > 0));
+        for key in [Digit1, Digit2, Digit1, Digit5] {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(std::time::Duration::from_millis(50));
+            let mut keys = ButtonInput::default();
+            keys.press(key);
+            world.insert_resource(keys);
+            world.run_system_once(crate::driving::advance).unwrap();
+        }
+        let drive = world.resource::<crate::driving::Drive>();
+        assert_eq!(drive.player.state()[0x184], 1);
+        assert_eq!(drive.player.state()[0x4a1], 0);
         world
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyR);

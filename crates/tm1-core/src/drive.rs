@@ -9,7 +9,7 @@ unsafe extern "C" {
     fn tm1_drive_step(
         state: *mut u8,
         opponent: *mut u8,
-        buttons: u16,
+        buttons: u32,
         fields: i16,
         frame: u32,
         table: *const i16,
@@ -276,6 +276,7 @@ pub enum RadarSignal {
 
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
+    cheat_controls: bool,
     difficulty: Difficulty,
     level: Level,
     vehicle: Vehicle,
@@ -355,6 +356,7 @@ impl PlayerVehicle {
             };
         }
         Some(Self {
+            cheat_controls: false,
             difficulty,
             level,
             vehicle,
@@ -370,6 +372,7 @@ impl PlayerVehicle {
 }
 impl PlayerVehicle {
     pub fn set_weapon_and_damage_modes(&mut self, infinite_weapons: bool, god_mode: bool) {
+        self.cheat_controls = god_mode;
         // UASetInfiniteWeapons and UASetGodMode update these fields on playerInfo.
         for record in [&mut self.state, &mut self.initial_state] {
             record[0x458 + 0x49] = u8::from(infinite_weapons);
@@ -394,6 +397,7 @@ impl PlayerVehicle {
             tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0);
         }
         Self {
+            cheat_controls: self.cheat_controls,
             difficulty: self.difficulty,
             state,
             initial_state: state,
@@ -405,6 +409,9 @@ impl PlayerVehicle {
             vehicle: self.vehicle,
             trig: self.trig.clone(),
         }
+    }
+    pub fn cheat_controls(&self) -> bool {
+        self.cheat_controls
     }
     pub fn difficulty(&self) -> Difficulty {
         self.difficulty
@@ -526,7 +533,7 @@ impl PlayerVehicle {
             tm1_drive_step(
                 self.state.as_mut_ptr(),
                 opponent.map_or(std::ptr::null_mut(), |car| car.state.as_mut_ptr()),
-                input.ps1_buttons(),
+                u32::from(input.ps1_buttons()),
                 fields.into(),
                 self.frame,
                 self.trig.as_ptr(),
@@ -674,7 +681,8 @@ unsafe extern "C" {
         opponents: *const *mut u8,
         count: i16,
         battle: *mut i16,
-        buttons: u16,
+        buttons: u32,
+        cheat_controls: u8,
         fields: i16,
         frame: u32,
         tables: *const i16,
@@ -763,6 +771,16 @@ impl CollisionScene {
         input: Input,
         fields: u8,
     ) {
+        self.step_bout_with_pads(player, opponents, u32::from(input.ps1_buttons()), fields)
+    }
+
+    pub fn step_bout_with_pads(
+        &mut self,
+        player: &mut Taxi,
+        opponents: &mut [Opponent],
+        pads: u32,
+        fields: u8,
+    ) {
         assert!((1..=5).contains(&fields));
         assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
         let mut records = [std::ptr::null_mut(); 8];
@@ -785,7 +803,8 @@ impl CollisionScene {
                 records.as_ptr(),
                 opponents.len() as i16,
                 self.battle.as_mut_ptr(),
-                input.ps1_buttons(),
+                pads,
+                u8::from(player.cheat_controls),
                 fields.into(),
                 player.frame,
                 player.trig.as_ptr(),
