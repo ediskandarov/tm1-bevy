@@ -180,6 +180,7 @@ pub fn setup(
     let texture = images.add(image);
     arena.additive = meshes.add(Batch::default().mesh());
     commands.spawn((
+        crate::campaign::StageEntity,
         Mesh2d(arena.additive.clone()),
         MeshMaterial2d(additive_materials.add(crate::additive::Additive {
             atlas: texture.clone(),
@@ -209,12 +210,14 @@ pub fn setup(
             }
         }
         commands.spawn((
+            crate::campaign::StageEntity,
             Mesh2d(meshes.add(batch.mesh())),
             MeshMaterial2d(masked.clone()),
             RenderLayers::layer(2),
             NoFrustumCulling,
         ));
         commands.spawn((
+            crate::campaign::StageEntity,
             WorldCamera,
             SkyCamera,
             Camera2d,
@@ -248,6 +251,7 @@ pub fn setup(
                 }
             }
             commands.spawn((
+                crate::campaign::StageEntity,
                 VehicleMesh(car),
                 BodyStage(stage),
                 if stage == 0 {
@@ -270,6 +274,7 @@ pub fn setup(
             arena.solids = mesh.clone();
         }
         commands.spawn((
+            crate::campaign::StageEntity,
             Mesh2d(mesh),
             MeshMaterial2d(material),
             RenderLayers::layer(1),
@@ -277,6 +282,7 @@ pub fn setup(
         ));
     }
     commands.spawn((
+        crate::campaign::StageEntity,
         WorldCamera,
         Camera2d,
         Camera {
@@ -299,11 +305,13 @@ pub fn setup(
     ));
     arena.mesh = meshes.add(Batch::default().mesh());
     commands.spawn((
+        crate::campaign::StageEntity,
         Mesh2d(arena.mesh.clone()),
         MeshMaterial2d(blend),
         NoFrustumCulling,
     ));
     commands.spawn((
+        crate::campaign::StageEntity,
         Camera2d,
         Camera {
             order: 1,
@@ -312,12 +320,56 @@ pub fn setup(
         },
     ));
     commands.spawn((
+        crate::campaign::StageEntity,
         HudLabel,
         Text2d::new(""),
         TextFont::from_font_size(15.),
         bevy::sprite::Anchor::BOTTOM_LEFT,
         Transform::from_xyz(0., 0., 1.),
     ));
+    commands.spawn((
+        crate::campaign::StageEntity,
+        BossBackdrop,
+        Visibility::Hidden,
+        Sprite::from_color(Color::srgba(0.07, 0.07, 0.07, 0.86), Vec2::ONE),
+        Transform::from_xyz(0., 0., 3.),
+    ));
+    commands.spawn((crate::campaign::StageEntity, BossMessage, Visibility::Hidden,
+        Text2d::new("CONGRATULATIONS!\n\nYou have made it to the\nFINAL round.  Prepare to\nbattle MINION, last year's\nTwisted Metal winner!"),
+        TextLayout::default().with_justify(Justify::Center), TextFont::from_font_size(12.),
+        Transform::from_xyz(0.,0.,4.)));
+}
+#[derive(Component)]
+pub struct BossBackdrop;
+#[derive(Component)]
+pub struct BossMessage;
+pub fn boss_intro(
+    window: Single<&Window>,
+    drive: Res<crate::driving::Drive>,
+    mut backdrop: Single<(&mut Visibility, &mut Sprite), With<BossBackdrop>>,
+    mut message: Single<
+        (&mut Visibility, &mut Transform),
+        (With<BossMessage>, Without<BossBackdrop>),
+    >,
+) {
+    let visible = if drive.showing_boss_intro() {
+        Visibility::Inherited
+    } else {
+        Visibility::Hidden
+    };
+    *backdrop.0 = if drive.lost_life_elapsed().is_some() {
+        Visibility::Inherited
+    } else {
+        visible
+    };
+    backdrop.1.color = if let Some(elapsed) = drive.lost_life_elapsed() {
+        Color::srgba((elapsed.as_secs_f32() * 2.).min(1.), 0., 0., 0.55)
+    } else {
+        Color::srgba(0.07, 0.07, 0.07, 0.86)
+    };
+    backdrop.1.custom_size = Some(Vec2::new(window.width(), window.height()));
+    *message.0 = visible;
+    message.1.scale = Vec3::splat((window.width() / 320.).min(window.height() / 240.));
 }
 #[derive(Component)]
 pub struct HudLabel;
@@ -334,7 +386,9 @@ pub fn hud(
         1.,
     );
     transform.scale = Vec3::splat(scale);
-    let state = if drive.player.health().0 <= 0 {
+    let state = if drive.lives == 0 {
+        "YOU LOSE!   R · Restart"
+    } else if drive.player.health().0 <= 0 {
         "WRECKED   R · Restart"
     } else if drive.cleared() {
         "ARENA CLEARED   R · Restart"
@@ -358,12 +412,13 @@ pub fn hud(
         String::new()
     };
     let message = format!(
-        "{}  {}      {}  {}{remaining}
+        "{}  {}      {}  {}{remaining}     Lives  {}
 {}  × {}     {}",
         drive.nearest_opponent().vehicle().name(),
         drive.nearest_opponent().health().0.max(0),
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
+        drive.lives,
         weapon,
         ammo,
         state

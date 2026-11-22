@@ -105,6 +105,7 @@ pub fn start(
         .map(|s| assets.add(s))
         .collect();
     commands.spawn((
+        crate::campaign::StageEntity,
         Engine,
         AudioPlayer::new(sounds.voices[2].clone()),
         PlaybackSettings::LOOP
@@ -165,6 +166,7 @@ pub fn update(
             recharge_playing |= id == recharge_id;
             remaining -= 1;
             commands.spawn((
+                crate::campaign::StageEntity,
                 OneShot(id),
                 AudioPlayer::new(sounds.voices[id * 5 + bin as usize].clone()),
                 PlaybackSettings::DESPAWN.with_volume(Volume::Linear(volume)),

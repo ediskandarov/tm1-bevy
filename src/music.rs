@@ -51,6 +51,7 @@ pub fn start(
 ) {
     if let Some(source) = music.0.take() {
         commands.spawn((
+            crate::campaign::StageEntity,
             ArenaMusic,
             AudioPlayer::new(assets.add(source)),
             PlaybackSettings::LOOP.with_volume(Volume::Linear(0.35)),

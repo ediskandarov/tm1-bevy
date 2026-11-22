@@ -245,6 +245,37 @@ static void init_vehicle_stats(CarStats* stats, s32 kind)
     }
 }
 
+static void set_player_start(PlayerCar* car)
+{
+    setVector(&car->motion.pos, 0, 0, 0);
+    setVector(&car->motion.rot, 0, 0, 0);
+    if (current_level == LEVEL2_WAREHOUSE) {
+        car->motion.pos.vx = -0x28a0;
+        car->motion.pos.vy = -0x11d0;
+        car->motion.rot.vz = car->motion.rot2.vz = 0xc1;
+    } else if (current_level == LEVEL6_ROOFTOPS) {
+        car->motion.pos.vx = 0x3cd8;
+        car->motion.pos.vy = 0x250;
+        car->motion.pos.vz = 0x1e50;
+        car->motion.rot.vz = car->motion.rot2.vz = -0x1c7;
+    } else if (current_level == LEVEL5_CYBURBIA) {
+        car->motion.pos.vx = 0x1c20;
+        car->motion.pos.vy = 0x2ee0;
+        car->motion.rot.vz = car->motion.rot2.vz = 0x400;
+    } else if (current_level == LEVEL4_CITY_PARK) {
+        car->motion.pos.vx = 0x12c0;
+        car->motion.pos.vy = -0x12c0;
+    } else if (current_level == LEVEL3_FREEWAY) {
+        car->motion.pos.vx = 0x1c20;
+        car->motion.pos.vy = -0x2390;
+        car->motion.rot.vz = car->motion.rot2.vz = 0x400;
+    } else {
+        car->motion.pos.vx = car->motion.pos.vy = 0x460;
+        car->motion.rot.vz = car->motion.rot2.vz = 0x200;
+    }
+    car->motion.rot2 = car->motion.rot;
+}
+
 void tm1_player_init(u8* state, u32* seed, s32 kind)
 {
     PlayerCar car = { 0 };
@@ -281,30 +312,7 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     car.stats.unk40 = car.stats.unk44;
     car.motion.mat2.m[0][0] = car.motion.mat2.m[1][1] = car.motion.mat2.m[2][2] = 4096;
     car.motion.mat = car.motion.mat2;
-    if (current_level == LEVEL2_WAREHOUSE) {
-        car.motion.pos.vx = -0x28a0;
-        car.motion.pos.vy = -0x11d0;
-        car.motion.rot.vz = car.motion.rot2.vz = 0xc1;
-    } else if (current_level == LEVEL6_ROOFTOPS) {
-        car.motion.pos.vx = 0x3cd8;
-        car.motion.pos.vy = 0x250;
-        car.motion.pos.vz = 0x1e50;
-        car.motion.rot.vz = car.motion.rot2.vz = -0x1c7;
-    } else if (current_level == LEVEL5_CYBURBIA) {
-        car.motion.pos.vx = 0x1c20;
-        car.motion.pos.vy = 0x2ee0;
-        car.motion.rot.vz = car.motion.rot2.vz = 0x400;
-    } else if (current_level == LEVEL4_CITY_PARK) {
-        car.motion.pos.vx = 0x12c0;
-        car.motion.pos.vy = -0x12c0;
-    } else if (current_level == LEVEL3_FREEWAY) {
-        car.motion.pos.vx = 0x1c20;
-        car.motion.pos.vy = -0x2390;
-        car.motion.rot.vz = car.motion.rot2.vz = 0x400;
-    } else {
-        car.motion.pos.vx = car.motion.pos.vy = 0x460;
-        car.motion.rot.vz = car.motion.rot2.vz = 0x200;
-    }
+    set_player_start(&car);
     memcpy(state, &car, sizeof(car));
 }
 
@@ -531,16 +539,15 @@ static void init_motion_flags(u8* flags)
     flags[29] = 0;
 }
 
-// CAR_INIT.c CarInit(which=0) on the single-player Rooftops stage.
-static void respawn_rooftops_player(PlayerCar* car, int fov)
+// CAR_INIT.c CarInit(which=0) on single-player stages.
+static void respawn_player(PlayerCar* car, int fov)
 {
     CarStats* stats = &car->stats;
     stats->unk00 = 1;
     init_motion_flags(car->flags);
     car->unk98 = car->unk99 = 0;
     setVector(&car->motion.vel, 0, 0, 0);
-    setVector(&car->motion.pos, 0x3cd8, 0x250, 0x1e50);
-    setVector(&car->motion.rot, 0, 0, -0x1c7);
+    set_player_start(car);
     setVector(&car->motion.rotDelta, 0, 0, 0);
     setVector(&car->motion.rot2Delta, 0, 0, 0);
     car->motion.rot2 = car->motion.rot;
@@ -570,7 +577,7 @@ static void respawn_rooftops_player(PlayerCar* car, int fov)
     stats->updateRate = 60;
     stats->unk40 = stats->unk44;
     InitTireInfo(car->tires);
-    InitTireGroup(car->tires, 11);
+    InitTireGroup(car->tires, current_level == LEVEL6_ROOFTOPS ? 11 : 0);
     s16 closest = GetClosestTriggerPt(car, 1);
     memcpy(&car->flags[30], &closest, sizeof(closest));
     car->weap.ammo[WEAPON_SPECIAL] = 20;
@@ -584,6 +591,32 @@ static void respawn_rooftops_player(PlayerCar* car, int fov)
     stats->cheatA = stats->cheatAArmed = 0;
     stats->cheatB = stats->cheatBArmed = 0;
     stats->unk01 = 0;
+}
+
+void tm1_campaign_player(u8* state, const s16* table, u32* seed, int new_life)
+{
+    PlayerCar car;
+    memcpy(&car, state, sizeof(car));
+    trig = table;
+    random_state = *seed;
+    gFieldsLastFrame = 3;
+    gUpdateRate = 20;
+    respawn_player(&car, 60);
+    if (new_life) {
+        car.stats.unkF8 = 0;
+        car.weap.gunDelay = car.weap.fireDelay = 0;
+        car.weap.unk04 = 0;
+        memset(car.weap.ammo, 0, sizeof(car.weap.ammo));
+        car.weap.cur = WEAPON_SPECIAL;
+        car.weap.ammo[WEAPON_SPECIAL] = 20;
+        car.weap.ammo[0] = car.weap.totalAmmo = 2;
+        car.weap.maxAmmo = car.uaIndex == UA_BOSS_CAR ? 60 : 28;
+        car.weap.unk48 = arena_player_special_cost(car.uaIndex);
+        car.weap.unk46 = 2;
+    }
+    memcpy(state, &car, sizeof(car));
+    *seed = random_state;
+    trig = NULL;
 }
 
 // UA.c uaInitBossCar, after slot 3 receives its default weapons.
@@ -602,7 +635,7 @@ void tm1_place_boss(u8* state, u8* target, const s16* table, u32* seed, int fov)
     setVector(&player.motion.vel, 0, 0, 0);
     setVector(&player.motion.rotDelta, 0, 0, 0);
     if (player.motion.pos.vz < 6400)
-        respawn_rooftops_player(&player, fov);
+        respawn_player(&player, fov);
     memcpy(state, &boss, sizeof(boss));
     memcpy(target, &player, sizeof(player));
     *seed = random_state;

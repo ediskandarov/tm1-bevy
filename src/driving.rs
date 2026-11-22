@@ -12,7 +12,11 @@ pub struct Drive {
     pub paused: bool,
     pub restart_count: u32,
     was_focused: bool,
-    boss_wait_fields: u16,
+    victory_fields: u16,
+    boss_intro: Option<Duration>,
+    pub lives: u8,
+    death_fields: u16,
+    lost_life: Option<Duration>,
 }
 impl Drive {
     pub fn cleared(&self) -> bool {
@@ -24,11 +28,54 @@ impl Drive {
     pub fn recharge_sound(&self) -> usize {
         12 + self.opponents.len() + usize::from(self.awaiting_minion())
     }
-    fn advance_boss_delay(&mut self, fields: u16) {
-        self.boss_wait_fields += fields;
-        if self.boss_wait_fields > 180 {
+    pub fn stage_finished(&self) -> bool {
+        self.victory_fields > 180 && self.cleared()
+    }
+    fn advance_victory_delay(&mut self, fields: u16) {
+        self.victory_fields += fields;
+        if self.victory_fields > 180 && self.awaiting_minion() {
+            self.boss_intro = Some(Duration::from_secs(5));
+            self.victory_fields = 0;
+        }
+    }
+    pub fn showing_boss_intro(&self) -> bool {
+        self.boss_intro.is_some()
+    }
+    fn tick_boss_intro(&mut self, elapsed: Duration, selected: bool) {
+        let Some(time) = self.boss_intro else { return };
+        let left = time.saturating_sub(elapsed);
+        if selected || left.is_zero() {
+            self.boss_intro = None;
             self.opponents
                 .push(Opponent::spawn_minion(&mut self.player));
+        } else {
+            self.boss_intro = Some(left);
+        }
+    }
+    pub fn lost_life_elapsed(&self) -> Option<Duration> {
+        self.lost_life
+    }
+    fn advance_death(&mut self, fields: u16) {
+        self.death_fields += fields;
+        if self.death_fields > 180 {
+            self.lives -= 1;
+            self.death_fields = 0;
+            self.victory_fields = 0;
+            if self.lives > 0 {
+                self.lost_life = Some(Duration::ZERO);
+            }
+        }
+    }
+    fn tick_lost_life(&mut self, delta: Duration, selected: bool) {
+        let elapsed = self.lost_life.unwrap() + delta;
+        if elapsed >= Duration::from_millis(1500)
+            || (selected && elapsed < Duration::from_millis(500))
+        {
+            self.contacts.respawn_player(&mut self.player);
+            self.lost_life = None;
+            self.restart_count = self.restart_count.wrapping_add(1);
+        } else {
+            self.lost_life = Some(elapsed);
         }
     }
     pub fn nearest_opponent(&self) -> &Opponent {
@@ -61,7 +108,11 @@ impl Drive {
             paused: false,
             restart_count: 0,
             was_focused: false,
-            boss_wait_fields: 0,
+            victory_fields: 0,
+            boss_intro: None,
+            lives: 3,
+            death_fields: 0,
+            lost_life: None,
         }
     }
 }
@@ -88,7 +139,13 @@ pub fn advance(
         drive.contacts.reset_projectiles();
         drive.paused = false;
         drive.player.reset();
-        drive.boss_wait_fields = 0;
+        drive.victory_fields = 0;
+        drive.boss_intro = None;
+        drive.death_fields = 0;
+        drive.lost_life = None;
+        if drive.lives == 0 {
+            drive.lives = 3;
+        }
         let kinds: Vec<_> = drive
             .opponents
             .iter()
@@ -132,11 +189,26 @@ pub fn advance(
     if window.title != title {
         window.title = title;
     }
-    if drive.player.health().0 <= 0 || drive.cleared() {
+    if drive.lives == 0 || drive.stage_finished() {
         drive.remainder = Duration::ZERO;
         return;
     }
     if drive.paused || (!capture.demo && (!window.focused || regained)) {
+        drive.remainder = Duration::ZERO;
+        return;
+    }
+    if drive.showing_boss_intro() || drive.lost_life.is_some() {
+        let elapsed = if capture.demo && !capture.realtime {
+            STEP
+        } else {
+            time.delta()
+        };
+        let selected = keys.just_pressed(KeyCode::Enter) || just_pressed(GamepadButton::South);
+        if drive.showing_boss_intro() {
+            drive.tick_boss_intro(elapsed, selected);
+        } else {
+            drive.tick_lost_life(elapsed, selected);
+        }
         drive.remainder = Duration::ZERO;
         return;
     }
@@ -204,14 +276,17 @@ pub fn advance(
             };
             state.sounds.push((id, [x, y, z]));
         }
-        if state.awaiting_minion()
-            && state.player.health().0 > 0
-            && state.opponents.iter().all(|car| car.health().0 <= 0)
-        {
-            state.advance_boss_delay(3);
+        if state.player.health().0 > 0 && state.opponents.iter().all(|car| car.health().0 <= 0) {
+            state.advance_victory_delay(3);
+        } else if state.player.health().0 <= 0 {
+            state.advance_death(3);
         }
         drive.remainder -= STEP;
-        if drive.player.health().0 <= 0 || drive.cleared() {
+        if drive.lives == 0
+            || drive.stage_finished()
+            || drive.showing_boss_intro()
+            || drive.lost_life.is_some()
+        {
             break;
         }
     }
@@ -228,6 +303,70 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .clear();
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn campaign_replaces_stage_entities_and_audio_in_one_world() {
+        use crate::campaign::{Campaign, Stage, StageEntity};
+        use bevy::ecs::system::RunSystemOnce;
+        use tm1_core::drive::Level;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let stage = Stage::load(&disc, Level::Arena, Vehicle::YellowJacket, None).unwrap();
+        let mut world = World::new();
+        world.init_resource::<Assets<Image>>();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<ColorMaterial>>();
+        world.init_resource::<Assets<crate::additive::Additive>>();
+        world.init_resource::<Assets<AudioSource>>();
+        world.insert_resource(Campaign(disc));
+        stage.install(&mut world);
+        world.run_system_once(crate::render::setup).unwrap();
+        world.run_system_once(crate::music::start).unwrap();
+        world.run_system_once(crate::sfx::start).unwrap();
+        for (level, count) in [
+            (Level::Warehouse, 3),
+            (Level::Freeway, 5),
+            (Level::CityPark, 6),
+            (Level::Cyburbia, 8),
+            (Level::Rooftops, 3),
+        ] {
+            let old = world
+                .query_filtered::<Entity, With<StageEntity>>()
+                .iter(&world)
+                .collect::<Vec<_>>();
+            let mut drive = world.resource_mut::<Drive>();
+            // Inject the shell victory event at the end of its return delay.
+            drive.lives = 2;
+            drive.opponents.clear();
+            drive.advance_victory_delay(181);
+            crate::campaign::advance(&mut world);
+            let drive = world.resource::<Drive>();
+            assert_eq!(drive.player.level(), level);
+            assert_eq!(drive.lives, 2);
+            assert_eq!(drive.opponents.len(), count);
+            assert!(old.iter().all(|&entity| world.get_entity(entity).is_err()));
+            assert_eq!(
+                world
+                    .query_filtered::<Entity, With<crate::music::ArenaMusic>>()
+                    .iter(&world)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                world
+                    .query_filtered::<Entity, With<crate::sfx::Engine>>()
+                    .iter(&world)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                world
+                    .query_filtered::<Entity, With<crate::render::HudLabel>>()
+                    .iter(&world)
+                    .count(),
+                1
+            );
+        }
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -287,6 +426,37 @@ mod tests {
                         .collect::<Vec<_>>(),
                 )
             };
+            {
+                let mut drive = app.world_mut().resource_mut::<Drive>();
+                let rivals: Vec<_> = drive
+                    .opponents
+                    .iter()
+                    .map(|r| (r.health(), r.position()))
+                    .collect();
+                drive.advance_death(180);
+                assert_eq!(drive.lives, 3);
+                drive.advance_death(3);
+                assert_eq!(drive.lives, 2);
+                drive.tick_lost_life(Duration::from_millis(1499), false);
+                assert!(drive.lost_life.is_some());
+                drive.tick_lost_life(Duration::from_millis(1), false);
+                assert!(drive.lost_life.is_none());
+                assert_eq!(
+                    rivals,
+                    drive
+                        .opponents
+                        .iter()
+                        .map(|r| (r.health(), r.position()))
+                        .collect::<Vec<_>>()
+                );
+            }
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyR);
+            tick(&mut app, 50);
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(KeyCode::KeyR);
             let start = snapshot(&app);
             let run = |app: &mut App| {
                 app.world_mut()
@@ -307,10 +477,14 @@ mod tests {
                 let mut drive = app.world_mut().resource_mut::<Drive>();
                 let sound = drive.recharge_sound();
                 for _ in 0..60 {
-                    drive.advance_boss_delay(3);
+                    drive.advance_victory_delay(3);
                 }
                 assert_eq!(drive.opponents.len(), 3);
-                drive.advance_boss_delay(3);
+                drive.advance_victory_delay(3);
+                assert!(drive.showing_boss_intro());
+                drive.tick_boss_intro(Duration::from_millis(4999), false);
+                assert_eq!(drive.opponents.len(), 3);
+                drive.tick_boss_intro(Duration::from_millis(1), false);
                 assert_eq!(drive.opponents[3].vehicle(), Vehicle::Minion);
                 assert_eq!(drive.opponents[3].health(), (250, 250));
                 assert_eq!(sound, drive.recharge_sound());
@@ -421,6 +595,22 @@ mod tests {
             }
         }
         assert!(app.world().resource::<Drive>().player.health().0 <= 0);
+        for _ in 0..90 {
+            tick(&mut app, 50);
+        }
+        {
+            let drive = app.world().resource::<Drive>();
+            assert_eq!(drive.lives, 2);
+            assert_eq!(drive.player.health().0, drive.player.health().1);
+            assert_eq!(drive.player.missiles(), 2);
+        }
+        for _ in 0..48000 {
+            tick(&mut app, 50);
+            if app.world().resource::<Drive>().lives == 0 {
+                break;
+            }
+        }
+        assert_eq!(app.world().resource::<Drive>().lives, 0);
         let wrecked = snapshot(&app);
         tick(&mut app, 5000);
         assert_eq!(snapshot(&app), wrecked);

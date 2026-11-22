@@ -1,5 +1,6 @@
 //! Arena driving frontend.
 mod additive;
+mod campaign;
 mod driving;
 mod gpu_timing;
 mod music;
@@ -9,7 +10,7 @@ mod smoke;
 
 use anyhow::{Result, ensure};
 use bevy::prelude::*;
-use tm1_assets::{disc::Disc, scene::Dmd, texture::Vram};
+use tm1_assets::disc::Disc;
 
 fn main() -> Result<()> {
     let mut args = std::env::args_os().skip(1);
@@ -81,85 +82,13 @@ fn main() -> Result<()> {
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
     let disc = Disc::open(cue)?;
-    let stage = level.database(vehicle);
-    let data = disc.read(&format!("UADMD/{stage}.DMD"))?;
-    let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
-    let dmd = Dmd::parse(&data)?;
-    ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
-    let mut scene = dmd.extract_kind(1)?;
-    if level == Level::Arena {
-        scene.polygons.extend(dmd.extract_kind(3)?.polygons);
-    }
-    for issue in &scene.omitted_nodes {
-        eprintln!("Preview omission: {issue}");
-    }
-    let mut seed = 1;
-    let opponent_kinds = level.opponents(
-        vehicle,
-        &mut tm1_core::drive::ArenaDeck::default(),
-        &mut seed,
-    );
-    let player =
-        tm1_core::drive::PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
-            .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
-    let headlights = !matches!(level, Level::Cyburbia | Level::Rooftops);
-    let player_mesh = dmd.vehicle_bodies_with_lights(vehicle as u16, headlights)?;
-    let mut models = opponent_kinds.clone();
-    if level == Level::Rooftops {
-        models.push(Vehicle::Minion);
-    }
-    let opponent_mesh = models
-        .iter()
-        .map(|&kind| dmd.vehicle_bodies_with_lights(kind as u16, headlights))
-        .collect::<Result<Vec<_>>>()?;
-    let contacts = tm1_core::drive::CollisionScene::for_opponents(
-        &data,
-        scene.root_id,
-        player_mesh[0].root_id,
-        &opponent_mesh
-            .iter()
-            .map(|variants| variants[0].root_id)
-            .collect::<Vec<_>>(),
-    )
-    .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
-    let arena = render::Arena::new(
-        scene,
-        (level != Level::Arena)
-            .then(|| dmd.extract_kind(2))
-            .transpose()?,
-        player_mesh,
-        opponent_mesh,
-        [
-            Some(dmd.extract_kind(201)?),
-            dmd.roots
-                .iter()
-                .any(|r| r.1 == 312)
-                .then(|| dmd.extract_kind(312))
-                .transpose()?,
-        ],
-        dmd.explosion_frames()?,
-        dmd.flame_frames()?,
-        dmd.contrail_frames()?,
-        dmd.radar_arrows()?,
-        textures,
-    )?;
+    let stage = campaign::Stage::load(&disc, level, vehicle, None)?;
     eprintln!(
         "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, Tab overview, V radar."
     );
     let mut app = App::new();
     app.insert_resource(capture)
-        .insert_resource(arena)
-        .insert_resource(sfx::Sounds::load(&disc, vehicle, &models)?)
-        .insert_resource(music::Music::level(&disc, level)?)
-        .insert_resource(driving::Drive::new(player, contacts, &opponent_kinds))
-        .insert_resource(ClearColor(match level {
-            Level::Arena => Color::srgb(0.035, 0.045, 0.065),
-            Level::Rooftops => Color::srgb_u8(0, 20, 0),
-            Level::Cyburbia => Color::srgb_u8(110, 110, 100),
-            Level::CityPark => Color::srgb_u8(75, 60, 30),
-            Level::Freeway => Color::srgb_u8(60, 45, 20),
-            Level::Warehouse => Color::srgb_u8(75, 70, 55),
-        }))
+        .insert_resource(campaign::Campaign(disc))
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: format!("TM1 • {level:?}"),
@@ -168,6 +97,7 @@ fn main() -> Result<()> {
             }),
             ..default()
         }));
+    stage.install(app.world_mut());
     app.add_plugins(additive::AdditivePlugin);
     if demo {
         app.add_plugins((
@@ -184,6 +114,7 @@ fn main() -> Result<()> {
                 render::controls,
                 render::update,
                 render::hud,
+                render::boss_intro,
             )
                 .chain(),
         )
@@ -194,6 +125,14 @@ fn main() -> Result<()> {
                 sfx::update.after(driving::advance),
                 music::control.after(driving::advance),
             ),
+        )
+        .add_systems(
+            Update,
+            campaign::advance
+                .after(render::boss_intro)
+                .after(sfx::update)
+                .after(music::control)
+                .after(smoke::capture),
         )
         .run();
     ensure!(exit.is_success(), "arena exited with {exit:?}");

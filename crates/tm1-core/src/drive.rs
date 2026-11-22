@@ -2,6 +2,8 @@
 unsafe extern "C" {
     fn tm1_use_scene(scene: *mut std::ffi::c_void);
     fn tm1_bind_level(level: i32);
+    fn tm1_campaign_player(state: *mut u8, table: *const i16, seed: *mut u32, new_life: i32);
+    fn tm1_new_life(scene: *mut std::ffi::c_void);
     fn tm1_player_init(state: *mut u8, seed: *mut u32, kind: i32);
     fn tm1_drive_step(
         state: *mut u8,
@@ -26,6 +28,16 @@ pub enum Level {
 }
 
 impl Level {
+    pub fn next(self) -> Option<Self> {
+        match self {
+            Self::Arena => Some(Self::Warehouse),
+            Self::Warehouse => Some(Self::Freeway),
+            Self::Freeway => Some(Self::CityPark),
+            Self::CityPark => Some(Self::Cyburbia),
+            Self::Cyburbia => Some(Self::Rooftops),
+            Self::Rooftops => None,
+        }
+    }
     pub fn opponents(self, player: Vehicle, deck: &mut ArenaDeck, seed: &mut u32) -> Vec<Vehicle> {
         match self {
             Self::Arena => vec![deck.draw(player, seed)],
@@ -213,6 +225,7 @@ pub struct PlayerVehicle {
     vehicle: Vehicle,
     trig: Box<[i16]>,
     initial_seed: u32,
+    initial_state: [u8; 0x4a4],
     used_starts: u16,
     seed: u32,
     state: [u8; 0x4a4],
@@ -281,7 +294,8 @@ impl PlayerVehicle {
             state,
             frame: 0,
             trig,
-            initial_seed,
+            initial_seed: seed,
+            initial_state: state,
             used_starts: 0,
             seed,
         })
@@ -291,10 +305,27 @@ impl PlayerVehicle {
     pub fn reset(&mut self) {
         self.seed = self.initial_seed;
         self.frame = 0;
+        self.used_starts = 0;
+        self.state = self.initial_state;
+    }
+    pub fn for_next_stage(&self, level: Level) -> Self {
+        let mut state = self.state;
+        let mut seed = self.seed;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
-            tm1_bind_level(self.level as i32);
-            tm1_player_init(self.state.as_mut_ptr(), &mut self.seed, self.vehicle as i32)
+            tm1_bind_level(level as i32);
+            tm1_campaign_player(state.as_mut_ptr(), self.trig.as_ptr(), &mut seed, 0);
+        }
+        Self {
+            state,
+            initial_state: state,
+            initial_seed: seed,
+            seed,
+            used_starts: 0,
+            frame: 0,
+            level,
+            vehicle: self.vehicle,
+            trig: self.trig.clone(),
         }
     }
     pub fn level(&self) -> Level {
@@ -612,6 +643,20 @@ impl CollisionScene {
         }
         let state = unsafe { tm1_stand_state(self.native.as_ptr()) };
         (state as u16, (state >> 16) as u16)
+    }
+    pub fn respawn_player(&mut self, player: &mut PlayerVehicle) {
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_bind_level(player.level as i32);
+            tm1_campaign_player(
+                player.state.as_mut_ptr(),
+                player.trig.as_ptr(),
+                &mut player.seed,
+                1,
+            );
+            tm1_new_life(self.native.as_ptr());
+        }
+        self.battle = [0; 3];
     }
     pub fn reset_projectiles(&mut self) {
         self.battle = [0; 3];

@@ -1238,6 +1238,54 @@ fn minion_initial_record_matches_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn campaign_player_carryover_matches_retail() {
+    let mut r = Reference::new();
+    let mut player = r.player;
+    r.cpu.put(0x801502d4, &[8, 0, 224, 3, 1, 0, 2, 36]);
+    put(&mut r.cpu, 0x8018bf9c, 60);
+    while let Some(level) = player.level().next() {
+        player.state[0x178..0x17c].copy_from_slice(&17i32.to_le_bytes());
+        player.state[0x460..0x464].copy_from_slice(&2u32.to_le_bytes());
+        player.state[0x468..0x46a].copy_from_slice(&9i16.to_le_bytes());
+        player.state[0x47a..0x47c].copy_from_slice(&1i16.to_le_bytes());
+        player.state[0x48e..0x490].copy_from_slice(&110i16.to_le_bytes());
+        let points = match level {
+            Level::Warehouse => 0x801262ec,
+            Level::Freeway => 0x801268f8,
+            Level::CityPark => 0x80127694,
+            Level::Cyburbia => 0x801281b8,
+            Level::Rooftops => 0x8012b5a4,
+            Level::Arena => unreachable!(),
+        };
+        r.cpu.call(points, &[]);
+        put(&mut r.cpu, 0x8018c3b4, level as u32);
+        r.cpu.put(PLAYER, &player.state);
+        r.cpu.random_state = player.seed;
+        r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 0]);
+        player = player.for_next_stage(level);
+        let base = (PLAYER & 0x1fffff) as usize;
+        for (i, v) in player.state.iter().enumerate() {
+            assert_eq!(*v, r.cpu.ram[base + i], "{level:?} player offset {i:x}");
+        }
+        assert_eq!(player.seed, r.cpu.random_state);
+        let initial = player.state;
+        player.state.fill(0);
+        player.reset();
+        assert_eq!(player.state, initial);
+        player.state[0x178..0x17c].copy_from_slice(&(-5i32).to_le_bytes());
+        r.cpu.put(PLAYER, &player.state);
+        r.cpu.random_state = player.seed;
+        r.cpu.call(0x8012287c, &[PLAYER, player.vehicle as u32, 1]);
+        r.scene.respawn_player(&mut player);
+        for (i, v) in player.state.iter().enumerate() {
+            assert_eq!(*v, r.cpu.ram[base + i], "{level:?} new life offset {i:x}");
+        }
+        assert_eq!(player.seed, r.cpu.random_state);
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn rooftops_encounter_original() {
     for player in Vehicle::ROSTER {
         println!("Rooftops retail encounter with {player:?}");

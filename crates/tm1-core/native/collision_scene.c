@@ -368,6 +368,12 @@ void tm1_regenerate_stands(void)
     }
 }
 
+void tm1_new_life(CollisionScene* s)
+{
+    memset(s->drops, 0, sizeof s->drops);
+    memset(s->flames, 0, sizeof s->flames);
+    memset(s->tasers, 0, sizeof s->tasers);
+}
 void tm1_reset_projectiles(CollisionScene* s)
 {
     memset(s->bullets, 0, sizeof s->bullets);
@@ -377,10 +383,8 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->pothole_fields = 0;
     memset(&s->temporary_hole, 0, sizeof(PotHole));
     memset(s->fragments, 0, sizeof s->fragments);
-    memset(s->drops, 0, sizeof s->drops);
-    memset(s->flames, 0, sizeof s->flames);
+    tm1_new_life(s);
     memset(s->bursts, 0, sizeof s->bursts);
-    memset(s->tasers, 0, sizeof s->tasers);
     s->battle_wait = 0;
     s->active_stands = s->stand_slots;
     s->regen_timer = -1;
