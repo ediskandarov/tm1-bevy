@@ -1,4 +1,5 @@
 pub mod duel;
+mod envelope;
 mod interpolation;
 pub mod pcm;
 use anyhow::Result;
@@ -105,8 +106,10 @@ impl Sample {
             mix.resize(mix.len().max(n), [0.; 2]);
             let pan = f32::from(t.pan) / 64.;
             let gain = f32::from(t.volume) / 127.;
+            let mut envelope = envelope::Envelope::new(t.adsr);
             for (i, out) in mix[..n].iter_mut().enumerate() {
-                let v = interpolation::interpolate(&t.pcm, i * increment) as f32 * gain;
+                let v =
+                    envelope.apply(interpolation::interpolate(&t.pcm, i * increment)) as f32 * gain;
                 out[0] += v * (2. - pan).min(1.);
                 out[1] += v * pan.min(1.);
             }
@@ -644,6 +647,22 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn baked_effect_loops_start_with_stationary_envelopes() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        for prog in [12, TURBO_PROGRAM, 38] {
+            for mut tone in program(&bank, prog).unwrap() {
+                tone.prepare_loop();
+                if let Some(marker) = tone.loop_start {
+                    assert_eq!(tone.adsr, [0x80ff, 0x1fc0]);
+                    assert!((marker * 4096).div_ceil(sample_pitch(&tone, false)) >= 20);
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn effect_fine_tune_reaches_the_pcm_and_loop_length() {
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let bank = disc.read("SND/UACORE.VAB").unwrap();
@@ -676,7 +695,10 @@ mod tests {
         assert_eq!(sample.mix.len(), frames);
         assert_eq!(loop_start, marker);
         for (frame, value) in samples {
-            assert_eq!(sample.mix[frame][1], value as f32 * gain * pan);
+            assert_eq!(
+                sample.mix[frame][1],
+                ((value * 32759) >> 15) as f32 * gain * pan
+            );
         }
     }
 
@@ -847,7 +869,11 @@ mod tests {
         assert_eq!(engines(&mut world), 2);
     }
 
-    fn reference_engine_frame(tone: &tm1_assets::sound::Tone, phase: usize) -> [f32; 2] {
+    fn reference_engine_frame(
+        tone: &tm1_assets::sound::Tone,
+        phase: usize,
+        frame: usize,
+    ) -> [f32; 2] {
         let end = tone.pcm.len() * 4096;
         let period = end - tone.loop_start.unwrap() * 4096;
         let phase = if phase >= end {
@@ -855,8 +881,17 @@ mod tests {
         } else {
             phase
         };
-        let mono =
-            interpolation::interpolate(&tone.pcm, phase) as f32 * (f32::from(tone.volume) / 127.);
+        assert_eq!(tone.adsr, [0x80ff, 0x1fc0]);
+        let level = match frame {
+            0 => 0,
+            1 => 14336,
+            2 => 28672,
+            3 => 32256,
+            4..20 => 32767,
+            _ => 32759,
+        };
+        let mono = ((interpolation::interpolate(&tone.pcm, phase) * level) >> 15) as f32
+            * (f32::from(tone.volume) / 127.);
         let pan = f32::from(tone.pan) / 64.;
         [(2. - pan).min(1.), pan.min(1.)].map(|p| (mono * p).clamp(-32768., 32767.) / 32768.)
     }
@@ -880,7 +915,7 @@ mod tests {
                     let rev = (frame / 131) % 100;
                     let pitch = motor.pitch.register(rev);
                     register.set(pitch);
-                    let [left, right] = reference_engine_frame(&tone, phase);
+                    let [left, right] = reference_engine_frame(&tone, phase, frame as usize);
                     assert_eq!(playback.next(), Some(left));
                     register.set(0);
                     assert_eq!(playback.next(), Some(right));
@@ -941,14 +976,15 @@ mod tests {
             tone.prepare_loop();
             let step = usize::from(pitch.register(0));
             for i in 0..tone.pcm.len() * 4096 / step + 1024 {
-                let dry = reference_engine_frame(&tone, i * step);
+                let dry = reference_engine_frame(&tone, i * step, i);
                 for (sample, level) in dry.into_iter().zip(channels) {
                     assert_eq!(
                         drive.next(),
                         Some(sample * ((level * 99) as f32 / (33. * 99.)))
                     );
                 }
-                for sample in reference_engine_frame(&tone, i * usize::from(pitch.register(30))) {
+                for sample in reference_engine_frame(&tone, i * usize::from(pitch.register(30)), i)
+                {
                     assert_eq!(screen.next(), Some(sample));
                 }
             }
@@ -1054,7 +1090,7 @@ mod tests {
                 assert_eq!(*entity, current);
                 let mut audible = false;
                 for _ in 0..tone.pcm.len() * 4096 / *step + 32 {
-                    for (sample, level) in reference_engine_frame(tone, *phase)
+                    for (sample, level) in reference_engine_frame(tone, *phase, *phase / *step)
                         .into_iter()
                         .zip(channels)
                     {

@@ -4,6 +4,7 @@ use anyhow::{Result, ensure};
 
 pub struct Tone {
     pub priority: u8,
+    pub adsr: [u16; 2],
     pub pcm: Vec<i16>,
     pub loop_start: Option<usize>,
     repeat_prefix: Vec<i16>,
@@ -127,6 +128,7 @@ pub fn program(bank: &[u8], program: usize) -> Result<Vec<Tone>> {
             }
             Ok(Tone {
                 priority: t[0],
+                adsr: [u16le(t, 16)?, u16le(t, 18)?],
                 repeat_prefix,
                 loop_start,
                 pcm,

@@ -43,6 +43,7 @@ impl PitchRegister {
 pub(super) struct Motor {
     pcm: Arc<[i16]>,
     loop_at: usize,
+    adsr: [u16; 2],
     volume: f32,
     pan: [f32; 2],
 }
@@ -56,6 +57,7 @@ impl Motor {
         Ok(Self {
             pcm: tone.pcm.into(),
             loop_at,
+            adsr: tone.adsr,
             volume: f32::from(tone.volume) / 127.,
             pan: [(2. - pan).min(1.), pan.min(1.)],
         })
@@ -115,6 +117,7 @@ pub struct Playback {
     phase: usize,
     right: f32,
     frame_levels: u32,
+    envelope: Option<super::envelope::Envelope>,
 }
 
 impl Decodable for StereoPcm {
@@ -126,6 +129,10 @@ impl Decodable for StereoPcm {
             phase: 0,
             right: 0.,
             frame_levels: 0,
+            envelope: match &self.data {
+                PcmData::Engine(motor, _) => Some(super::envelope::Envelope::new(motor.adsr)),
+                PcmData::Stereo { .. } => None,
+            },
         }
     }
 }
@@ -144,8 +151,8 @@ impl Iterator for Playback {
             }
             PcmData::Engine(motor, register) => {
                 if self.cursor & 1 == 0 {
-                    let v = super::interpolation::interpolate(&motor.pcm, self.phase) as f32
-                        * motor.volume;
+                    let mono = super::interpolation::interpolate(&motor.pcm, self.phase);
+                    let v = self.envelope.as_mut().unwrap().apply(mono) as f32 * motor.volume;
                     let channels = motor
                         .pan
                         .map(|pan| (v * pan).clamp(-32768., 32767.) / 32768.);
