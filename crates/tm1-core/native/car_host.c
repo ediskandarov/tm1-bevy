@@ -204,6 +204,15 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     case UA_MONSTER_TRUCK:
         InitMonsterTruck(&car.stats);
         break;
+    case UA_HUMVEE:
+        InitHumvee(&car.stats);
+        break;
+    case UA_CORVETTE:
+        InitCorvette(&car.stats);
+        break;
+    case UA_MAD_MAX:
+        InitMadMax(&car.stats);
+        break;
     case UA_LOW_RIDER:
         InitLowRider(&car.stats);
         break;

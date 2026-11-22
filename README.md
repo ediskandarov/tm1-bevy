@@ -6,7 +6,7 @@ The arena includes machine guns, missiles, pickups, contact damage, sound, music
 Initial decision date: 2026-11-22.
 
 The goal is to port the full original game. The first playable milestone is
-the arena encounter. Nine vehicles are currently selectable there. With
+the arena encounter. All twelve regular vehicles are selectable there. With
 `TM1_CUE` set to the path of the JP disc cue, run:
 
 ```sh
@@ -14,7 +14,8 @@ cargo run --locked --offline -- "$TM1_CUE" --car sweet-tooth
 ```
 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,
-`outlaw`, `crimson-fury`, `mr-grimm`, `pit-viper` and `thumper`. Yellow Jacket is the default.
+`outlaw`, `crimson-fury`, `warthog`, `mr-grimm`, `pit-viper`, `thumper`,
+`spectre` and `road-kill`. Yellow Jacket is the default.
 Press F to fire the selected weapon and E to cycle through the inventory. Hammerhead uses its special automatically when driving into an opponent with at least six special charges.
 
 To capture the selected vehicle firing its initial special, append

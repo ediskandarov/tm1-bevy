@@ -144,7 +144,8 @@ pub fn advance(
                 (10, 2) => 5,
                 (1, 2) => 2,
                 (2, 7) => 3,
-                (4, 2) => 4,
+                (12, 2) => 4,
+                (kind @ 13..=17, 2) => (kind - 6) as usize,
                 _ => continue,
             };
             state.sounds.push((id, [x, y, z]));

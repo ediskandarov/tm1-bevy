@@ -288,10 +288,17 @@ fn police_update_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn player_special_launch_original() {
-    for vehicle in Vehicle::ROSTER
-        .into_iter()
-        .filter(|&v| !matches!(v, Vehicle::Outlaw | Vehicle::Hammerhead | Vehicle::Thumper))
-    {
+    for vehicle in Vehicle::ROSTER.into_iter().filter(|&v| {
+        !matches!(
+            v,
+            Vehicle::Outlaw
+                | Vehicle::Hammerhead
+                | Vehicle::Thumper
+                | Vehicle::Warthog
+                | Vehicle::RoadKill
+                | Vehicle::Spectre
+        )
+    }) {
         let mut r = Reference::with_vehicle(vehicle);
         for at in [0x80107f84, 0x80108034] {
             r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
@@ -432,54 +439,183 @@ fn flamethrowers_original() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
-fn fire_missile_impact_original() {
-    let mut r = Reference::new();
-    let m = 0x801a9c10;
-    let cs = 0x800be400;
-    put(&mut r.cpu, m + 0x24, cs);
-    put(&mut r.cpu, cs + 0xc0, 200);
-    for at in [
-        0x80107c6c, 0x80107d18, 0x80107dbc, 0x8010e6e8, 0x8010e738, 0x8010e924, 0x8010ee7c,
-        0x80136a28, 0x80136c00, 0x80137140,
-    ] {
-        r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
-    }
-    vec3(&mut r.player.state, 0x388, [2700, 2200, 400]);
-    vec3(&mut r.player.state, 0x3a0, [0, 0, 0]);
-    vec3(&mut r.police.state, 0x444, [2750, 3000, 400]);
-    r.player.state[0xd2] = 1;
-    r.player.state[0x460..0x464].fill(0);
-    r.sync();
-    r.cpu.call(0x80113858, &[PLAYER, 1]);
-    r.cpu.call(0x8013148c, &[PLAYER, 1]);
-    r.scene.phase(&mut r.player, &mut r.police, 1, 3);
-    r.compare();
-    assert_eq!(r.player.missiles(), 1);
-    let before = r.police.health().0;
-    let mut hits = 0;
-    for _ in 0..30 {
-        if r.cpu.word(m + 0x34) as i32 <= 0 {
-            break;
-        }
-        r.cpu.call(0x80110210, &[m]);
-        r.cpu.call(0x80137d2c, &[]);
-        r.scene.phase(&mut r.player, &mut r.police, 2, 3);
-        r.compare();
-        let mut fx = [[0; 5]; 122];
-        let count = r.scene.effects(&mut fx);
-        let missile = fx[..count].iter().find(|v| v[3] == 3);
-        if r.cpu.word(m + 0x34) as i32 > 0 {
-            let v = missile.unwrap();
-            for i in 0..3 {
-                assert_eq!(v[i], r.cpu.word(cs + 0x5c + 4 * i as u32) as i32);
+fn special_missiles_original() {
+    for vehicle in [Vehicle::Warthog, Vehicle::Spectre, Vehicle::RoadKill] {
+        for locked in [true, false] {
+            let mut r = Reference::with_vehicle(vehicle);
+            for at in [
+                0x80107c6c, 0x80107d18, 0x80107dbc, 0x80136a28, 0x80136c00, 0x80137140, 0x80137190,
+                0x80107f84, 0x80108034,
+            ] {
+                r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
             }
-        } else {
-            assert!(missile.is_none());
-            hits += 1;
+            let missile = |i| 0x801a9c10u32 + 0x3e8 * i;
+            let cs = |i| 0x800d0000u32 + 0x110 * i;
+            // Retail's world-loaded missile nodes enable its trail update. Tag each
+            // sprite UV with its frame index to read the animated polygon order.
+            put(&mut r.cpu, 0x8018bfac, POLICE_CS);
+            put(&mut r.cpu, 0x8018bfb4, POLICE_CS);
+            put(&mut r.cpu, 0x8018bfbc, TAXI_CS);
+            put(&mut r.cpu, 0x8018c52c, 0x8019c7b8);
+            for frame in 0..8 {
+                r.cpu.put(0x8019c7b8 + 8 * frame, &[frame as u8, 0, 0, 0]);
+            }
+            for i in 0..10 {
+                put(&mut r.cpu, missile(i) + 0x24, cs(i));
+                put(&mut r.cpu, missile(i) + 0x100, 0x800d1000 + 0x110 * i);
+                put(&mut r.cpu, missile(i) + 0x34, (-15i32) as u32);
+                put(&mut r.cpu, cs(i) + 0xc0, 200 + i);
+                r.cpu.put(missile(i) + 0x30, &[i as u8]);
+            }
+            vec3(&mut r.player.state, 0x388, [2700, 2200, 400]);
+            vec3(&mut r.player.state, 0x3a0, [0, 0, 0]);
+            vec3(
+                &mut r.police.state,
+                0x444,
+                [2750, if locked { 3000 } else { 1000 }, 400],
+            );
+            r.player.state[0xd2] = 1;
+            r.sync();
+            r.cpu.call(0x80113858, &[PLAYER, 1]);
+            r.cpu.call(0x8013148c, &[PLAYER, 1]);
+            r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+            assert_eq!(
+                r.player.weapon().1,
+                if vehicle == Vehicle::Spectre { 15 } else { 13 }
+            );
+            for tick in 0..93 {
+                let mut poses = [[0; 13]; 10];
+                let count = r.scene.missile_poses(&mut poses);
+                let active: Vec<_> = (0..10)
+                    .filter(|&i| r.cpu.word(missile(i) + 0x34) as i32 > 0)
+                    .collect();
+                assert_eq!(count, active.len(), "{vehicle:?} {tick}");
+                if tick == 0 {
+                    assert_eq!(count, if vehicle == Vehicle::Warthog { 3 } else { 1 });
+                    assert_eq!(r.cpu.word(missile(0) + 0x28) != 0, locked);
+                }
+                for (row, i) in poses.iter().zip(active) {
+                    for j in 0..3 {
+                        assert_eq!(
+                            row[1 + j],
+                            r.cpu.word(cs(i) + 0x5c + 4 * j as u32) as i32,
+                            "{vehicle:?} {tick}"
+                        );
+                    }
+                    let mat = (cs(i) as usize & 0x1fffff) + 0x14;
+                    for j in 0..9 {
+                        assert_eq!(
+                            row[4 + j],
+                            i16::from_le_bytes(
+                                r.cpu.ram[mat + 2 * j..mat + 2 * j + 2].try_into().unwrap()
+                            ) as i32,
+                            "{vehicle:?} {tick}"
+                        );
+                    }
+                }
+                let mut faces = [[0; 14]; 180];
+                let count = r.scene.contrail_faces(&mut faces);
+                let mut expected = Vec::new();
+                for i in 0..10 {
+                    let m = missile(i);
+                    if r.cpu.word(0x800d1000 + 0x110 * i + 8) == 0 {
+                        continue;
+                    }
+                    let half = |addr: u32| {
+                        let a = addr as usize & 0x1fffff;
+                        i16::from_le_bytes(r.cpu.ram[a..a + 2].try_into().unwrap()) as i32
+                    };
+                    for j in 0..18 {
+                        let poly = m + 0x160 + 36 * j;
+                        if half(poly + 4) == half(poly + 6) {
+                            continue;
+                        }
+                        let mut face = [0; 14];
+                        face[0] = (r.cpu.word(poly + 0x14) & 255) as i32;
+                        let rgb = r.cpu.word(poly + 0x10);
+                        face[1] =
+                            (((rgb & 255) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 255)) as i32;
+                        for v in 0..4 {
+                            let vi = half(poly + 4 + 2 * v) as u32;
+                            for k in 0..3 {
+                                face[(2 + 3 * v + k) as usize] = r.cpu.word(m + 0x18 + 4 * k)
+                                    as i32
+                                    + half(m + 0x58 + 8 * vi + 2 * k);
+                            }
+                        }
+                        expected.push(face);
+                    }
+                }
+                faces[..count].sort_unstable();
+                expected.sort_unstable();
+                assert_eq!(faces[..count], expected, "{vehicle:?} {tick} trail");
+                r.compare();
+                r.cpu.call(0x80110810, &[]);
+                r.cpu.call(0x80137d2c, &[]);
+                r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            }
         }
     }
-    assert_eq!(hits, 1);
-    assert_eq!(r.police.health().0, before - 7);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn regular_missile_impacts_original() {
+    for (slot, damage) in [7, 0, 15, 25, 3, 7].into_iter().enumerate() {
+        let mut r = Reference::new();
+        let m = 0x801a9c10;
+        let cs = 0x800be400;
+        put(&mut r.cpu, m + 0x24, cs);
+        put(&mut r.cpu, cs + 0xc0, 200);
+        for at in [
+            0x80107c6c, 0x80107d18, 0x80107dbc, 0x8010e6e8, 0x8010e738, 0x8010e924, 0x8010ee7c,
+            0x80136a28, 0x80136c00, 0x80137140,
+        ] {
+            r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        vec3(&mut r.player.state, 0x388, [2700, 2200, 400]);
+        vec3(&mut r.player.state, 0x3a0, [0, 0, 0]);
+        vec3(
+            &mut r.police.state,
+            0x444,
+            [2700, if slot == 5 { 1400 } else { 3000 }, 400],
+        );
+        r.player.state[0xd2] = 1;
+        r.player.state[0x460..0x464].copy_from_slice(&(slot as i32).to_le_bytes());
+        let ammo = 0x464 + 2 * slot;
+        r.player.state[ammo..ammo + 2].copy_from_slice(&2i16.to_le_bytes());
+        r.sync();
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        r.cpu.call(0x8013148c, &[PLAYER, 1]);
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        assert_eq!(r.player.weapon().1, 1);
+        let before = r.police.health().0;
+        let mut hits = 0;
+        for _ in 0..30 {
+            if r.cpu.word(m + 0x34) as i32 <= 0 {
+                break;
+            }
+            r.cpu.call(0x80110210, &[m]);
+            r.cpu.call(0x80137d2c, &[]);
+            r.scene.phase(&mut r.player, &mut r.police, 2, 3);
+            r.compare();
+            let mut fx = [[0; 5]; 122];
+            let count = r.scene.effects(&mut fx);
+            let missile = fx[..count].iter().find(|v| v[3] == 3);
+            if r.cpu.word(m + 0x34) as i32 > 0 {
+                let v = missile.unwrap();
+                for i in 0..3 {
+                    assert_eq!(v[i], r.cpu.word(cs + 0x5c + 4 * i as u32) as i32);
+                }
+            } else {
+                assert!(missile.is_none());
+                hits += 1;
+            }
+        }
+        assert_eq!(hits, 1);
+        assert_eq!(r.police.health().0, before - damage, "slot {slot}");
+    }
 }
 
 #[test]

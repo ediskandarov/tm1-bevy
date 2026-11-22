@@ -209,6 +209,7 @@ CollisionScene* tm1_scene_load(
     for (int i = 0; i < 10; i++) {
         s->missiles[i].cs = &s->missile_cs[i];
         s->missiles[i].index = i;
+        s->missiles[i].life = -15;
         s->missile_cs[i].unkC0 = 200 + i;
     }
     s->bytes = NULL;
@@ -270,8 +271,9 @@ void tm1_reset_projectiles(CollisionScene* s)
         if (s->pickups[i])
             s->pickups[i]->nChild = 1;
     for (int i = 0; i < 10; i++) {
-        s->missiles[i].life = 0;
+        s->missiles[i].life = -15;
         s->missiles[i].target = NULL;
+        s->missiles[i].trail.visible = 0;
     }
 }
 void tm1_use_scene(CollisionScene* s)
@@ -743,6 +745,52 @@ size_t tm1_flame_particles(CollisionScene* s, s32 (*out)[4])
         memcpy(out[n++], row, sizeof(row));
     }
     return n;
+}
+size_t tm1_contrail_faces(CollisionScene* s, s32 (*out)[14])
+{
+    size_t count = 0;
+    for (int i = 0; i < 10; i++) {
+        Missile* m = &s->missiles[i];
+        if (!m->trail.visible)
+            continue;
+        for (int j = 0; j < 6; j++) {
+            int h = (m->trail.head + 6 - j) % 6;
+            int old = m->trail.ends[h][0], next = m->trail.ends[h][1];
+            if (old == next)
+                continue;
+            for (int side = 0; side < 3; side++) {
+                s32* row = out[count++];
+                row[0] = (j * 8 + 3) / 6;
+                row[1] = m->trail.color;
+                for (int v = 0; v < 4; v++) {
+                    SVECTOR local = m->trail.ring[v & 1 ? old : next][(side + (v >= 2)) % 3];
+                    row[2 + 3 * v] = m->pos.vx + local.vx;
+                    row[3 + 3 * v] = m->pos.vy + local.vy;
+                    row[4 + 3 * v] = m->pos.vz + local.vz;
+                }
+            }
+        }
+    }
+    return count;
+}
+size_t tm1_missile_poses(CollisionScene* s, s32 (*out)[13])
+{
+    size_t count = 0;
+    for (int i = 0; i < 10; i++) {
+        Missile* m = &s->missiles[i];
+        if (m->life <= 0)
+            continue;
+        Cs* cs = m->cs;
+        s32* row = out[count++];
+        row[0] = m->model;
+        row[1] = cs->pos.vx;
+        row[2] = cs->pos.vy;
+        row[3] = cs->pos.vz;
+        for (int j = 0; j < 3; j++)
+            for (int k = 0; k < 3; k++)
+                row[4 + 3 * j + k] = cs->mat.m[j][k];
+    }
+    return count;
 }
 size_t tm1_taser_arcs(CollisionScene* s, VECTOR3 (*out)[16])
 {

@@ -87,7 +87,9 @@ fn main() -> Result<()> {
         scene,
         player_mesh,
         opponent_mesh,
+        [dmd.extract_kind(201)?, dmd.extract_kind(312)?],
         dmd.explosion_frames()?,
+        dmd.contrail_frames()?,
         textures,
     )?;
     eprintln!(

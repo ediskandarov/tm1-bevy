@@ -32,6 +32,8 @@ const COLUMNS: usize = 8;
 #[derive(Resource)]
 pub struct Arena {
     scene: Scene,
+    missile_models: [Scene; 2],
+    contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     vehicle_start: usize,
     body_ranges: [[std::ops::Range<usize>; 3]; 2],
@@ -55,7 +57,9 @@ impl Arena {
         mut scene: Scene,
         vehicle: [Scene; 3],
         opponent: [Scene; 3],
+        missile_models: [Scene; 2],
         explosion_frames: [SpriteFrame; 16],
+        contrail_frames: [SpriteFrame; 8],
         vram: Vram,
     ) -> Result<Self> {
         let vehicle_start = scene.polygons.len();
@@ -69,11 +73,15 @@ impl Arena {
         let opponent_start = body_ranges[1][0].start;
         let mut tiles = BTreeMap::new();
         tiles.insert((None, false), 0);
-        for p in &scene.polygons {
+        for p in scene
+            .polygons
+            .iter()
+            .chain(missile_models.iter().flat_map(|s| &s.polygons))
+        {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
         }
-        for frame in explosion_frames {
+        for frame in explosion_frames.iter().chain(&contrail_frames) {
             let next = tiles.len();
             tiles.entry((Some(frame.texture), true)).or_insert(next);
         }
@@ -107,10 +115,12 @@ impl Arena {
         ensure!(radius.is_finite() && radius > 0., "invalid arena bounds");
         Ok(Self {
             scene,
+            missile_models,
             vehicle_start,
             opponent_start,
             body_ranges,
             explosion_frames,
+            contrail_frames,
             overview: false,
             pixels,
             atlas_size: [width, height],
@@ -465,6 +475,64 @@ pub fn update(
             batch.push(point, arena.uv(slot, v.uv.into()), v.color);
         }
     }
+    let mut faces = [[0; 14]; 180];
+    let count = drive.contacts.contrail_faces(&mut faces);
+    for face in &faces[..count] {
+        let frame = arena.contrail_frames[face[0] as usize];
+        let slot = arena.tiles[&(Some(frame.texture), true)];
+        let points: [Vec3; 4] = std::array::from_fn(|i| {
+            world([
+                face[2 + 3 * i] as f32,
+                face[3 + 3 * i] as f32,
+                face[4 + 3 * i] as f32,
+            ])
+        });
+        if (points[1] - points[0])
+            .cross(points[2] - points[0])
+            .dot(eye - points[0])
+            > 0.
+        {
+            continue;
+        }
+        let tint = [16, 8, 0].map(|shift| ((face[1] >> shift) & 255) as f32 / 128.);
+        for &i in indices(4) {
+            let [u, v] = frame.uv[i ^ 1];
+            additive.push(
+                points[i],
+                arena.uv(slot, Vec2::new(u.into(), v.into())),
+                [tint[0], tint[1], tint[2], 1.],
+            );
+        }
+    }
+    let mut poses = [[0; 13]; 10];
+    let count = drive.contacts.missile_poses(&mut poses);
+    for pose in &poses[..count] {
+        let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
+        let model = &arena.missile_models[usize::from(pose[0] == 312)];
+        for p in &model.polygons {
+            let batch = if p.semi_transparent && p.texture.is_some_and(|t| (t.page >> 5) & 3 == 1) {
+                &mut additive
+            } else if p.semi_transparent {
+                &mut transparent
+            } else {
+                &mut solids
+            };
+            let slot = arena.tiles[&(p.texture, p.semi_transparent)];
+            for &i in indices(p.vertices.len()) {
+                let v = &p.vertices[i];
+                let rotated = std::array::from_fn(|k| {
+                    (0..3)
+                        .map(|j| pose[4 + 3 * j + k] as f32 * v.position[j] / 4096.)
+                        .sum()
+                });
+                batch.push(
+                    origin + world(rotated),
+                    arena.uv(slot, v.uv.into()),
+                    v.color,
+                );
+            }
+        }
+    }
     let mut flames = [[0; 4]; 80];
     let count = drive.contacts.flame_particles(&mut flames);
     for &[x, y, z, index] in &flames[..count] {
@@ -547,7 +615,7 @@ pub fn update(
             8 => (8., [0.4, 0.39, 0.38, 0.55]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 => (6., [1., 0.4, 0.08, 1.]),
+            3 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };

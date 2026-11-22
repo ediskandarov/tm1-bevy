@@ -127,6 +127,12 @@ impl<'a> Dmd<'a> {
     }
     /// Read the 16 Aburst frames used by explodeStoreExplosionAnimation.
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
+        self.sprite_frames(654)
+    }
+    pub fn contrail_frames(&self) -> Result<[SpriteFrame; 8]> {
+        self.sprite_frames(652)
+    }
+    fn sprite_frames<const N: usize>(&self, kind: u16) -> Result<[SpriteFrame; N]> {
         let mut pending: Vec<_> = self
             .roots
             .iter()
@@ -142,14 +148,14 @@ impl<'a> Dmd<'a> {
             let (count_at, children_at) = match self.data[p] {
                 1 => (20, 24),
                 4 => (18, 20),
-                0 if u16le(self.data, p + 2)? == 654 => {
+                0 if u16le(self.data, p + 2)? == kind => {
                     ensure!(
-                        u32le(self.data, p + 16)? == 16,
-                        "invalid explosion frame count"
+                        u32le(self.data, p + 16)? as usize == N,
+                        "invalid sprite frame count"
                     );
                     let mut poly = self.offset(u32le(self.data, p + 12)?)?;
-                    let mut frames = Vec::with_capacity(16);
-                    for _ in 0..16 {
+                    let mut frames = Vec::with_capacity(N);
+                    for _ in 0..N {
                         let header = bytes(self.data, poly, 16)?;
                         let len = usize::from(header[2]) * 4;
                         let record = bytes(self.data, poly, len)?;
@@ -176,7 +182,7 @@ impl<'a> Dmd<'a> {
                     }
                     return frames
                         .try_into()
-                        .map_err(|_| anyhow::anyhow!("invalid explosion frames"));
+                        .map_err(|_| anyhow::anyhow!("invalid sprite frames"));
                 }
                 _ => continue,
             };
@@ -185,7 +191,7 @@ impl<'a> Dmd<'a> {
                 pending.push(u32le(self.data, p + children_at + 4 * i)?);
             }
         }
-        bail!("missing explosion animation")
+        bail!("missing sprite animation {kind}")
     }
     /// Read the three body-switch branches selected by UA's damage update.
     pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {

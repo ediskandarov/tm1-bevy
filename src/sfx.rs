@@ -26,13 +26,16 @@ impl Sounds {
             YellowJacket => (0, 43),
             Darkside => (2, 40),
             Hammerhead => (3, 45),
+            Warthog => (5, 48),
+            Spectre => (6, 50),
+            RoadKill => (10, 44),
             Thumper => (8, 49),
             Outlaw => (7, 39),
             CrimsonFury => (4, 42),
             MrGrimm => (11, 47),
             PitViper => (9, 46),
         };
-        for (id, prog) in [engine, 12, 13, 29, 19, special, 21]
+        for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
             .into_iter()
             .enumerate()
         {

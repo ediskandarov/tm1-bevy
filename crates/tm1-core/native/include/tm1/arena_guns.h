@@ -24,10 +24,17 @@ typedef struct {
     Cs *cs;
     VECTOR3 *target;
     s32 unk2C, index, life, unk38, unk3C, damage, unk44, unk48, unk50;
-    s16 unk56;
+    s16 unk56, model;
+    struct {
+        SVECTOR ring[7][3];
+        u8 ends[6][2];
+        int head, ring_index, delay, color;
+        u8 visible;
+    } trail;
 } Missile;
 Missile *arena_missiles(void);
 s32 CAR_HD(VECTOR3 *,s32,s32);
+void arena_special_missiles(PlayerCar*);
 void arena_launch_missile(CarStats *,CarMotion *,CarWeap *,u8 *,u8);
 void arena_update_weapons(Car *,u8);
 typedef struct {VECTOR3 pos; s32 life,power,kind,idx,type;} DropWeap;

@@ -101,7 +101,7 @@ void turn_heatseeker(Missile* m)
     }
     RotMatrixYXZ(&m->cs->rot, &m->cs->mat);
 }
-void carLockon(u8 who, VECTOR3** out)
+static void car_lockon(u8 who, int rear, VECTOR3** out)
 {
     VECTOR3 d;
     VECTOR3 r;
@@ -131,7 +131,7 @@ void carLockon(u8 who, VECTOR3** out)
             d.vy = cs->pos.vy - p->vy;
             d.vz = cs->pos.vz - p->vz;
             mathMulVec(&GetPlayerCs3D((s16)(who - 1))->mat, &d, &r);
-            z = r.vy;
+            z = rear ? -r.vy : r.vy;
             if (z >= 12) {
                 ax = r.vx;
                 az = ABS(z);
@@ -147,6 +147,117 @@ void carLockon(u8 who, VECTOR3** out)
     }
 }
 
+// WEAPON.c startContrail and drop_contrail connect seven triangular rings
+// into six textured sections. World-relative offsets retain PS1 short width.
+static void update_trail(Missile* m)
+{
+    if (--m->trail.delay == 0) {
+        int head = (m->trail.head + 1) % 6;
+        m->trail.head = head;
+        m->trail.ends[head][0] = m->trail.ring_index;
+        m->trail.ring_index = (m->trail.ring_index + 1) % 7;
+        m->trail.ends[head][1] = m->trail.ring_index;
+        m->trail.delay = 2;
+    }
+    VECTOR3 local[] = { { 0, 0, 8 }, { 8, 0, -8 }, { -8, 0, -8 } };
+    for (int i = 0; i < 3; i++) {
+        VECTOR3 d;
+        mathMulTransVec(&m->cs->mat, &local[i], &d);
+        SVECTOR* v = &m->trail.ring[m->trail.ring_index][i];
+        setVector(v, m->cs->pos.vx + d.vx - m->pos.vx, m->cs->pos.vy + d.vy - m->pos.vy,
+            m->cs->pos.vz + d.vz - m->pos.vz);
+    }
+}
+
+static void start_trail(Missile* m, int color)
+{
+    VECTOR3 back = { 0, -200, 0 }, d;
+    mathMulTransVec(&m->cs->mat, &back, &d);
+    for (int i = 0; i < 7; i++)
+        for (int j = 0; j < 3; j++)
+            setVector(&m->trail.ring[i][j], d.vx, d.vy, d.vz);
+    for (int j = 0; j < 6; j++)
+        m->trail.ends[j][0] = m->trail.ends[j][1] = 0;
+    m->trail.head = 0;
+    m->trail.ring_index = 1;
+    m->trail.delay = 1;
+    m->trail.color = color;
+    m->trail.visible = m->model != 312;
+    update_trail(m);
+}
+
+// Common position and orientation writes in INTERACT.c and basic_missile_launch.
+static void mount_missile(Missile* m, CarMotion* motion, VECTOR3 local)
+{
+    VECTOR3 d;
+    mathMulTransVec(&motion->mat2, &local, &d);
+    Cs* cs = m->cs;
+    setVector(&cs->pos, d.vx + motion->pos.vx, d.vy + motion->pos.vy, d.vz + motion->pos.vz);
+    copyVector(&cs->rot, &motion->rot);
+    RotMatrixYXZ(&cs->rot, &cs->mat);
+    m->pos = cs->pos;
+    m->unk56 = 0;
+    m->model = 201;
+}
+
+void arena_special_missiles(PlayerCar* car)
+{
+    int kind = car->uaIndex;
+    int cost = arena_player_special_cost(kind);
+    if (car->weap.ammo[WEAPON_SPECIAL] >= cost) {
+        VECTOR3* target;
+        car_lockon(1, 0, &target);
+        CarStats* stats = &car->stats;
+        VECTOR3 mounts[] = { { (s16)stats->dropPower, 0, stats->unk70 + 8 },
+            { stats->unk110, stats->unk112, stats->unk114 },
+            { -stats->unk110, stats->unk112, stats->unk114 } };
+        int count = kind == UA_HUMVEE ? 3 : 1;
+        for (int i = 0; i < count; i++) {
+            int index = find_free_missile(0);
+            if (index < 0)
+                break;
+            Missile* m = &mlist[index];
+            mount_missile(m, &car->motion, mounts[i]);
+            m->target = target;
+            m->unk50 = 1;
+            m->life = 30;
+            m->unk38 = 150;
+            switch (kind) {
+            case UA_HUMVEE:
+                m->unk2C = 2;
+                m->unk3C = 35;
+                m->damage = 3;
+                break;
+            case UA_CORVETTE:
+                m->unk2C = 3;
+                m->unk3C = 100;
+                m->unk38 = 75;
+                m->life = 80;
+                m->damage = 10;
+                m->unk48 = WEAPON_SINGING_MISSILE;
+                arena_effect(&m->pos, 12 + WEAPON_SINGING_MISSILE);
+                break;
+            case UA_MAD_MAX:
+                m->unk2C = 1;
+                m->unk3C = 10;
+                m->damage = 16;
+                m->unk48 = WEAPON_SPECIAL;
+                m->model = 312;
+                arena_effect(&m->pos, 12 + WEAPON_HOMING_MISSILE);
+                do_smoke(&m->pos);
+                break;
+            }
+            start_trail(m, kind == UA_CORVETTE ? 0xcdcdff : 0x808080);
+            if (i == 0) {
+                car->weap.ammo[WEAPON_SPECIAL] -= cost;
+                arena_effect(&m->pos, 10);
+            }
+        }
+    }
+    car->weap.fireDelay = 20;
+    car->flags[9] = 1;
+}
+
 // Fire slot from FireMissiles, basic_missile_launch and create_FIRE_missile.
 void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags, u8 player)
 {
@@ -154,30 +265,35 @@ void arena_launch_missile(CarStats* stats, CarMotion* motion, CarWeap* pad, u8* 
     if (idx < 0)
         return;
     Missile* m = &mlist[idx];
-    VECTOR3 local = { (s16)stats->dropPower, 0, stats->unk70 + 8 }, d;
-    mathMulTransVec(&motion->mat2, &local, &d);
+    VECTOR3 local = { (s16)stats->dropPower, 0, stats->unk70 + 8 };
+    mount_missile(m, motion, local);
     Cs* cs = m->cs;
-    setVector(&cs->pos, d.vx + motion->pos.vx, d.vy + motion->pos.vy, d.vz + motion->pos.vz);
-    copyVector(&cs->rot, &motion->rot);
-    RotMatrixYXZ(&cs->rot, &cs->mat);
-    m->pos = cs->pos;
-    if (pad->cur == WEAPON_FREEZE_MISSILE)
-        m->target = NULL;
+    const int slot = pad->cur;
+    static const int damage[] = { 7, HIT_FREEZE, 15, 25, 3, 7 };
+    static const int trail_color[] = { 0x808080, 0x20209f, 0x400040, 0xfa0000, 0x108010, 0x808080 };
+    const int rear = slot == WEAPON_REAR_MISSILE;
+    if (rear) {
+        cs->rot.vz = (cs->rot.vz + 2048) & 4095;
+        RotMatrixYXZ(&cs->rot, &cs->mat);
+    }
+    m->unk2C = slot == WEAPON_FIRE_MISSILE || slot == WEAPON_HOMING_MISSILE || rear;
+    if (m->unk2C)
+        car_lockon(player, rear, &m->target);
     else
-        carLockon(player, &m->target);
-    m->unk2C = pad->cur != WEAPON_FREEZE_MISSILE;
+        m->target = NULL;
     m->life = 30;
     m->unk38 = 150;
-    m->damage = pad->cur == WEAPON_HOMING_MISSILE ? 15 : (m->unk2C ? 7 : HIT_FREEZE);
+    m->damage = damage[slot];
     m->unk50 = player ? 1 : 50;
-    m->unk3C = pad->cur == WEAPON_HOMING_MISSILE ? 50 : 10;
-    m->unk48 = pad->cur;
+    m->unk3C = slot == WEAPON_HOMING_MISSILE ? 50 : 10;
+    m->unk48 = slot;
     m->unk56 = stats->unk6C > 24 ? stats->unk6C - 24 : 0;
     pad->fireDelay = 20;
     flags[9] = 1;
     pad->ammo[pad->cur]--;
     pad->totalAmmo--;
-    arena_effect(&cs->pos, 4);
+    start_trail(m, trail_color[slot]);
+    arena_effect(&cs->pos, 12 + slot);
 }
 void move_missile(Missile* m)
 {
@@ -269,10 +385,14 @@ void move_missile(Missile* m)
             m->life = -1;
         }
     }
+    if (m->trail.visible)
+        update_trail(m);
 }
 void arena_move_missiles(void)
 {
     for (int i = 0; i < 10; i++)
-        if (mlist[i].life > 0)
+        if (mlist[i].life >= -11)
             move_missile(&mlist[i]);
+        else
+            mlist[i].trail.visible = 0;
 }

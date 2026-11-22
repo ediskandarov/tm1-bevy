@@ -392,6 +392,10 @@ static ProjectileSpecial playerProjectileSpecial(s32 kind)
 }
 s32 arena_player_special_cost(s32 kind)
 {
+    if (kind == UA_HUMVEE || kind == UA_MAD_MAX)
+        return 7;
+    if (kind == UA_CORVETTE)
+        return 5;
     if (kind == UA_LOW_RIDER)
         return 5;
     return (kind == UA_POLICE_CAR || kind == UA_MONSTER_TRUCK) ? 6
@@ -583,7 +587,10 @@ void arena_update_weapons(Car* car, u8 player)
         return;
     switch (pad->cur) {
     case WEAPON_SPECIAL:
-        if (player && p->uaIndex == UA_LOW_RIDER) {
+        if (player
+            && (p->uaIndex == UA_HUMVEE || p->uaIndex == UA_CORVETTE || p->uaIndex == UA_MAD_MAX))
+            arena_special_missiles(p);
+        else if (player && p->uaIndex == UA_LOW_RIDER) {
             if (pad->ammo[WEAPON_SPECIAL] >= 5) {
                 arena_launch_flame(GetPlayerCs3D(0), 1);
                 pad->ammo[WEAPON_SPECIAL] -= 5;
@@ -602,6 +609,9 @@ void arena_update_weapons(Car* car, u8 player)
     case WEAPON_FIRE_MISSILE:
     case WEAPON_HOMING_MISSILE:
     case WEAPON_FREEZE_MISSILE:
+    case WEAPON_POWER_MISSILE:
+    case WEAPON_SINGING_MISSILE:
+    case WEAPON_REAR_MISSILE:
         arena_launch_missile(
             stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player);
         break;

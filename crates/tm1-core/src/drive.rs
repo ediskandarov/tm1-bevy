@@ -22,21 +22,27 @@ pub enum Vehicle {
     Hammerhead = 40,
     Outlaw = 50,
     CrimsonFury = 60,
+    Warthog = 70,
     MrGrimm = 80,
     PitViper = 90,
     Thumper = 100,
+    Spectre = 110,
+    RoadKill = 120,
 }
 impl Vehicle {
-    pub const ROSTER: [Self; 9] = [
+    pub const ROSTER: [Self; 12] = [
         Self::SweetTooth,
         Self::YellowJacket,
         Self::Darkside,
         Self::Hammerhead,
         Self::Outlaw,
         Self::CrimsonFury,
+        Self::Warthog,
         Self::MrGrimm,
         Self::PitViper,
         Self::Thumper,
+        Self::Spectre,
+        Self::RoadKill,
     ];
     pub fn slug(self) -> &'static str {
         match self {
@@ -48,6 +54,9 @@ impl Vehicle {
             Self::CrimsonFury => "crimson-fury",
             Self::MrGrimm => "mr-grimm",
             Self::PitViper => "pit-viper",
+            Self::Warthog => "warthog",
+            Self::Spectre => "spectre",
+            Self::RoadKill => "road-kill",
             Self::Thumper => "thumper",
         }
     }
@@ -61,6 +70,9 @@ impl Vehicle {
             Self::CrimsonFury => "Crimson Fury",
             Self::MrGrimm => "Mr. Grimm",
             Self::PitViper => "Pit Viper",
+            Self::Warthog => "Warthog",
+            Self::Spectre => "Spectre",
+            Self::RoadKill => "Road Kill",
             Self::Thumper => "Thumper",
         }
     }
@@ -347,6 +359,18 @@ impl CollisionScene {
             fn tm1_flame_particles(scene: *mut std::ffi::c_void, out: *mut [i32; 4]) -> usize;
         }
         unsafe { tm1_flame_particles(self.0.as_ptr(), particles.as_mut_ptr()) }
+    }
+    pub fn contrail_faces(&self, out: &mut [[i32; 14]; 180]) -> usize {
+        unsafe extern "C" {
+            fn tm1_contrail_faces(scene: *mut std::ffi::c_void, out: *mut [i32; 14]) -> usize;
+        }
+        unsafe { tm1_contrail_faces(self.0.as_ptr(), out.as_mut_ptr()) }
+    }
+    pub fn missile_poses(&self, out: &mut [[i32; 13]; 10]) -> usize {
+        unsafe extern "C" {
+            fn tm1_missile_poses(scene: *mut std::ffi::c_void, out: *mut [i32; 13]) -> usize;
+        }
+        unsafe { tm1_missile_poses(self.0.as_ptr(), out.as_mut_ptr()) }
     }
     pub fn taser_arcs(&self, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
         unsafe extern "C" {

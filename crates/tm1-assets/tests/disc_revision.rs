@@ -21,7 +21,11 @@ fn supported_disc_arena_and_audio() {
     for frame in &frames {
         assert_eq!(frame.width, 31);
     }
-    for kind in [10, 20, 30, 40, 50, 60, 80, 90, 100] {
+    assert_eq!(db.contrail_frames().unwrap()[0].width, 63);
+    for (id, polygons) in [(201, 35), (312, 8)] {
+        assert_eq!(db.extract_kind(id).unwrap().polygons.len(), polygons);
+    }
+    for kind in (10..=120).step_by(10) {
         let [intact, damaged, critical] = db.vehicle_bodies(kind).unwrap();
         assert_eq!(intact.object_ids, db.extract_kind(kind).unwrap().object_ids);
         assert_ne!(intact.object_ids, damaged.object_ids);

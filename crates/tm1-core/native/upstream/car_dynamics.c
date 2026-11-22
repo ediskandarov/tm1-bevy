@@ -164,6 +164,109 @@ void InitMonsterTruck(CarStats* stats)
     stats->monster = 1;
 }
 
+void InitHumvee(CarStats* stats)
+{
+    stats->unk9C = 6;
+    stats->unkC4 = 3;
+    stats->unk88 = 0x5B;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x6E;
+    stats->unk98 = stats->unk88 / 2;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0xA;
+    stats->unkE4 = 4;
+    stats->unkE8 = 2;
+    stats->unk6C = 0x20;
+    stats->unk70 = 0x26;
+    stats->unk74 = 0x46;
+    stats->unk7C = 0x3F;
+    stats->unk80 = 0x47;
+    stats->unk84 = -0x4F;
+    stats->unk110 = -0x1F;
+    stats->unk112 = 0x4A;
+    stats->unk114 = 0xA;
+    stats->dropPower = 0;
+    stats->unk11A = 0xC;
+    stats->unk11C = 0x24;
+    stats->unk10C = 0x7D0;
+    stats->unk108 = 3;
+    stats->unk04 = 3;
+    stats->unk44 = 0x78;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x50;
+    stats->unk1E = 0x3C;
+    stats->unk5C = 0xF;
+    stats->unk24 = 0x230;
+}
+
+void InitCorvette(CarStats* stats)
+{
+    stats->unk9C = 0xA;
+    stats->unkC4 = 3;
+    stats->unk88 = 0x82;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x6E;
+    stats->unk98 = stats->unk88 * 3 / 4;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0xF;
+    stats->unkE4 = 3;
+    stats->unk6C = 0x10;
+    stats->unk70 = 0x11;
+    stats->unk74 = 0x34;
+    stats->unk7C = 0x42;
+    stats->unk80 = 0x30;
+    stats->unk84 = -0x3E;
+    stats->unk110 = -0x17;
+    stats->unk112 = 0x31;
+    stats->unk114 = 4;
+    stats->dropPower = 0;
+    stats->unk11A = -0xE;
+    stats->unk11C = 0x1E;
+    stats->unk10C = -0x190;
+    stats->unk108 = 1;
+    stats->unk04 = 1;
+    stats->unk44 = 0x64;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x14;
+    stats->unk1E = 0xF;
+    stats->unk5C = 0xD;
+    stats->unk24 = 0x348;
+}
+
+void InitMadMax(CarStats* stats)
+{
+    stats->unk9C = 6;
+    stats->unkC4 = 3;
+    stats->unk88 = 0x78;
+    stats->unk8C = stats->unk88 * 2 / 3;
+    stats->unk90 = 0x4B;
+    stats->unk98 = stats->unk88 / 2;
+    stats->unkC8 = 2;
+    stats->unkE0 = 0x14;
+    stats->unkE4 = 7;
+    stats->unk6C = 0x10;
+    stats->unk70 = 0x13;
+    stats->unk74 = 0x34;
+    stats->unk7C = 0x42;
+    stats->unk80 = 0x34;
+    stats->unk84 = -0x40;
+    stats->unk110 = -0x18;
+    stats->unk112 = 0x13;
+    stats->unk114 = 4;
+    stats->dropPower = 0;
+    stats->unk11A = -0xE;
+    stats->unk11C = 0x26;
+    stats->unk10C = 0x320;
+    stats->unk108 = 2;
+    stats->unk04 = 2;
+    stats->unk44 = 0x6E;
+    stats->unk50 = 0x32;
+    stats->unk104 = 0x32;
+    stats->unk1E = 0x19;
+    stats->unk5C = 0xA;
+    stats->unk24 = 0x2F8;
+}
+
 void InitLowRider(CarStats* stats)
 {
     stats->unk9C = 5;
