@@ -203,19 +203,27 @@ impl Contest {
         true
     }
     fn sync_theme(&mut self, world: &mut World) {
-        let car = match self.page {
+        use crate::garage::GarageSound;
+        let sound = match self.page {
             Page::Contest
             | Page::Bio
             | Page::Battle(_)
             | Page::Options(_)
             | Page::Controls
             | Page::Password
-            | Page::Wrong(_) => Some(self.vehicle),
-            Page::DuelGarage { slot, .. } => Some(self.duel_cars[slot]),
-            Page::Showcase(i) => Some(i),
+            | Page::Wrong(_) => Some(GarageSound::Vehicle(self.vehicle)),
+            // The title clears gVehicleID. The fallback sound ID 0x52
+            // plays the same engine as Crimson Fury.
+            Page::DuelJoin(_) => Some(GarageSound::Engine(Vehicle::CrimsonFury.card_index())),
+            Page::Duel(_) | Page::DuelOptions(_) | Page::DuelStage | Page::DuelControls(_) => {
+                Some(GarageSound::Engine(self.duel_cars[0]))
+            }
+            Page::DuelGarage { slot, .. } => Some(GarageSound::Vehicle(self.duel_cars[slot])),
+            Page::Showcase(i) => Some(GarageSound::Vehicle(i)),
             _ => None,
         };
-        self.garage.sound(world, car, self.settings.effects_gain());
+        self.garage
+            .sound(world, sound, self.settings.effects_gain());
         if matches!(
             self.page,
             Page::Title
@@ -1380,6 +1388,33 @@ mod tests {
             crate::transition::complete(world);
         }
     }
+    fn assert_menu_engine(world: &World, car: Vehicle) -> Vec<Entity> {
+        use crate::sfx::{EngineSample, pcm::StereoPcm};
+        use bevy::audio::Decodable;
+        let voices: Vec<_> = world.resource::<Contest>().garage.voices().collect();
+        let bank = world
+            .resource::<Campaign>()
+            .0
+            .read("SND/UACORE.VAB")
+            .unwrap();
+        let expected = EngineSample::load(&bank, car).unwrap();
+        assert!(!voices.is_empty());
+        assert_eq!(voices.len(), expected.len());
+        for (&entity, tone) in voices.iter().zip(expected) {
+            let player = world.get::<AudioPlayer<StereoPcm>>(entity).unwrap();
+            let clip = world
+                .resource::<Assets<StereoPcm>>()
+                .get(&player.0)
+                .unwrap();
+            assert!(
+                clip.decoder()
+                    .take(4096)
+                    .eq(tone.voice(30).decoder().take(4096))
+            );
+        }
+        voices
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn duel_join_waits_for_both_players_to_release() {
@@ -1387,6 +1422,7 @@ mod tests {
         let mut world = menu_world();
         press(&mut world, ArrowDown);
         press(&mut world, Enter);
+        let voices = assert_menu_engine(&world, Vehicle::CrimsonFury);
         let mut keys = ButtonInput::default();
         keys.press(KeyP);
         keys.press(NumpadEnter);
@@ -1403,10 +1439,22 @@ mod tests {
         update(&mut world);
         assert_eq!(world.resource::<Contest>().page, Page::DuelJoin(Some(1)));
         assert_eq!(world.resource::<Contest>().garage.field, field);
+        assert!(
+            world
+                .resource::<Contest>()
+                .garage
+                .voices()
+                .eq(voices.iter().copied())
+        );
         let mut keys = ButtonInput::default();
         keys.press(KeyQ);
         world.insert_resource(keys);
         update(&mut world);
+        assert!(
+            voices
+                .iter()
+                .all(|&entity| world.get_entity(entity).is_err())
+        );
         assert!(matches!(
             world.resource::<Contest>().page,
             Page::DuelGarage {
@@ -1585,6 +1633,7 @@ mod tests {
         for key in [KeyD, Space, ArrowDown, Enter] {
             press(&mut world, key);
         }
+        let motor = assert_menu_engine(&world, Vehicle::CARD_ORDER[1]);
         // screenGetWhichPad samples all of pad two, including a held non-select button.
         let mut keys = ButtonInput::default();
         keys.press(KeyL);
@@ -1592,6 +1641,7 @@ mod tests {
         world.insert_resource(keys);
         update(&mut world);
         assert!(world.resource::<Contest>().page == Page::DuelControls(1));
+        assert!(world.resource::<Contest>().garage.voices().eq(motor));
         world.insert_resource(ButtonInput::<KeyCode>::default());
         let displayed = |world: &World| {
             let menu = world.resource::<Contest>();

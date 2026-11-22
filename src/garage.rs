@@ -9,11 +9,17 @@ use tm1_assets::{
 };
 use tm1_core::drive::Vehicle;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum GarageSound {
+    Engine(usize),
+    Vehicle(usize),
+}
+
 pub struct Garage {
     backdrop: Vec<u8>,
     demo_backdrop: Vec<u8>,
     audio: Vec<(Vec<crate::sfx::EngineSample>, AudioSource)>,
-    voices: Option<(usize, Vec<Entity>)>,
+    voices: Option<(GarageSound, Vec<Entity>)>,
     cars: Vec<Scene>,
     bios: Vec<Vec<u8>>,
     portraits: Vec<Vec<u8>>,
@@ -74,8 +80,8 @@ impl Garage {
             .iter()
             .flat_map(|(_, voices)| voices.iter().copied())
     }
-    pub fn sound(&mut self, world: &mut World, index: Option<usize>, gain: f32) {
-        if self.voices.as_ref().map(|v| v.0) == index {
+    pub fn sound(&mut self, world: &mut World, sound: Option<GarageSound>, gain: f32) {
+        if self.voices.as_ref().map(|v| v.0) == sound {
             return;
         }
         if let Some((_, voices)) = self.voices.take() {
@@ -83,8 +89,11 @@ impl Garage {
                 world.despawn(entity);
             }
         }
-        if let Some(i) = index {
-            let (engine, signature) = &self.audio[i];
+        if let Some(sound) = sound {
+            let index = match sound {
+                GarageSound::Engine(i) | GarageSound::Vehicle(i) => i,
+            };
+            let (engine, signature) = &self.audio[index];
             use bevy::audio::Volume;
             world.init_resource::<Assets<crate::sfx::pcm::StereoPcm>>();
             let mut voices = Vec::with_capacity(engine.len() + 1);
@@ -102,19 +111,21 @@ impl Garage {
                         .id(),
                 );
             }
-            let handle = world
-                .resource_mut::<Assets<AudioSource>>()
-                .add(signature.clone());
-            voices.push(
-                world
-                    .spawn((
-                        crate::campaign::StageEntity,
-                        AudioPlayer::new(handle),
-                        PlaybackSettings::ONCE.with_volume(Volume::Linear(0.44 * gain)),
-                    ))
-                    .id(),
-            );
-            self.voices = Some((i, voices));
+            if matches!(sound, GarageSound::Vehicle(_)) {
+                let handle = world
+                    .resource_mut::<Assets<AudioSource>>()
+                    .add(signature.clone());
+                voices.push(
+                    world
+                        .spawn((
+                            crate::campaign::StageEntity,
+                            AudioPlayer::new(handle),
+                            PlaybackSettings::ONCE.with_volume(Volume::Linear(0.44 * gain)),
+                        ))
+                        .id(),
+                );
+            }
+            self.voices = Some((sound, voices));
         }
     }
     pub fn bio(&self, i: usize) -> Vec<u8> {
