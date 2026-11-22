@@ -991,6 +991,76 @@ mod tests {
     }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn lost_life_switches_from_combat_audio_to_shell_rev_and_back() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::sfx::{Engine, LostLifeEngine, OneShot, pcm::StereoPcm};
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = crate::contest::menu_world();
+        let stage = Stage::load(
+            &world.resource::<Campaign>().0,
+            tm1_core::drive::Level::Arena,
+            Vehicle::RoadKill,
+            Entry::New(Default::default()),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        world
+            .resource_mut::<Drive>()
+            .sounds
+            .push(BattleRequest::Play(BattleSound {
+                id: 4,
+                exclusive: None,
+                volume_percent: 99,
+                channels: [99; 2],
+                range: 0,
+            }));
+        let mix = |world: &mut World| {
+            world.run_system_once(crate::sfx::update).unwrap();
+            world.run_system_once(crate::music::control).unwrap();
+        };
+        let battle_engines = |world: &mut World| {
+            world
+                .query_filtered::<Entity, (With<Engine>, With<AudioPlayer<StereoPcm>>)>()
+                .iter(world)
+                .count()
+        };
+        let shell_engines = |world: &mut World| {
+            world
+                .query_filtered::<Entity, With<LostLifeEngine>>()
+                .iter(world)
+                .collect::<Vec<_>>()
+        };
+        let music_paused = |world: &mut World| {
+            world
+                .query_filtered::<&PlaybackSettings, With<crate::music::ArenaMusic>>()
+                .single(world)
+                .unwrap()
+                .paused
+        };
+        mix(&mut world);
+        assert!(battle_engines(&mut world) >= 2);
+        assert!(world.query::<&OneShot>().iter(&world).count() > 0);
+        world.resource_mut::<Drive>().advance_death(181);
+        mix(&mut world);
+        let motors = shell_engines(&mut world);
+        assert_eq!(motors.len(), 2);
+        assert_eq!(battle_engines(&mut world), 0);
+        assert_eq!(world.query::<&OneShot>().iter(&world).count(), 0);
+        assert!(music_paused(&mut world));
+        mix(&mut world);
+        assert_eq!(shell_engines(&mut world), motors);
+        world.resource_mut::<Drive>().sounds.clear();
+        world
+            .resource_mut::<Drive>()
+            .tick_lost_life(Duration::from_millis(1500), false, || 1);
+        mix(&mut world);
+        assert!(shell_engines(&mut world).is_empty());
+        assert!(battle_engines(&mut world) >= 2);
+        assert!(!music_paused(&mut world));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn keyboard_view_combinations_match_jp_check_vr_mode() {
         use crate::campaign::{Entry, Stage};
         use KeyCode::*;

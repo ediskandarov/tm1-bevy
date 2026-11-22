@@ -1,6 +1,7 @@
 use crate::{driving, music, render, sfx};
 use anyhow::{Result, ensure};
 use bevy::{ecs::system::RunSystemOnce, prelude::*};
+use std::time::Duration;
 use tm1_assets::{disc::Disc, scene::Dmd, texture::Vram};
 use tm1_core::drive::{Difficulty, Level, PlayerVehicle, Vehicle};
 
@@ -290,31 +291,59 @@ impl Stage {
 }
 
 #[derive(Component)]
-struct LostGame;
+struct LostGame {
+    load_remaining: Duration,
+}
+
+fn defeat(world: &mut World, gain: f32) -> Result<()> {
+    let delta = world.resource::<Time<Real>>().delta();
+    if let Ok(mut screen) = world.query::<&mut LostGame>().single_mut(world) {
+        screen.load_remaining = screen.load_remaining.saturating_sub(delta);
+        if screen.load_remaining.is_zero() {
+            crate::contest::open(world)?;
+        }
+        return Ok(());
+    }
+
+    // shellLoadCarsDatabase runs before screenPlayCinema stops the defeat voices.
+    let disc = &world.resource::<Campaign>().0;
+    let mut sectors = 0u32;
+    for file in [
+        "UADMD/CARS.TMS",
+        "UADMD/CARS.DMD",
+        "UASCREEN/SCRNC.TIM",
+        "UASCREEN/SCRNF.TIM",
+        "UASCREEN/SCRND.TIM",
+        "UASCREEN/SCRNFC1.TIM",
+    ] {
+        let entry = disc
+            .files
+            .get(file)
+            .ok_or_else(|| anyhow::anyhow!("missing title asset {file}"))?;
+        sectors += entry.size.div_ceil(2048);
+    }
+    let load_remaining = Duration::from_secs_f64(f64::from(sectors) / 150.);
+    let sounds = world.resource::<sfx::Sounds>();
+    let engine = sounds.ending_engine(gain);
+    let signature = sounds.lost_game_signature();
+    for tone in engine {
+        world.spawn((StageEntity, tone));
+    }
+    world.spawn((StageEntity, LostGame { load_remaining }));
+    world.spawn((
+        StageEntity,
+        signature,
+        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
+    ));
+    Ok(())
+}
 
 pub fn advance(world: &mut World) {
     let drive = world.resource::<driving::Drive>();
     if drive.lives == 0 {
         let gain = drive.settings.effects_gain();
-        if world
-            .query_filtered::<Entity, With<LostGame>>()
-            .iter(world)
-            .next()
-            .is_none()
-        {
-            let sounds = world.resource::<sfx::Sounds>();
-            let engine = sounds.ending_engine(gain);
-            let signature = sounds.lost_game_signature();
-            for tone in engine {
-                world.spawn((StageEntity, LostGame, tone));
-            }
-            world.spawn((
-                StageEntity,
-                signature,
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44 * gain)),
-            ));
-        } else if let Err(err) = crate::contest::open(world) {
-            error!("Opening title after defeat failed: {err:#}");
+        if let Err(err) = defeat(world, gain) {
+            error!("Returning to the title after defeat failed: {err:#}");
             world.write_message(AppExit::error());
         }
         return;

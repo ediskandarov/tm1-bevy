@@ -202,6 +202,7 @@ pub fn control(
     let volume = Volume::Linear(drive.settings.cd_gain());
     let pause = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
+        || drive.lost_life_elapsed().is_some()
         || drive.lives == 0
         || !window.focused;
     let restart = tracks.restart != drive.restart_count;

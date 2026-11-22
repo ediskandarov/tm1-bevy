@@ -294,6 +294,8 @@ impl Sounds {
 #[derive(Component)]
 pub struct Engine;
 #[derive(Component)]
+pub struct LostLifeEngine;
+#[derive(Component)]
 pub struct RivalEngine {
     pub(super) slot: usize,
 }
@@ -414,12 +416,40 @@ pub fn update(
         ),
         Without<OneShot>,
     >,
+    life_engines: Query<
+        (Entity, Option<&AudioSink>),
+        (With<LostLifeEngine>, Without<EngineTone>, Without<OneShot>),
+    >,
     mut restart: Local<u32>,
     mut sequence: ResMut<VoiceSequence>,
 ) {
     let reset = *restart != drive.restart_count;
-    let pause = drive.lives == 0 || drive.pause.is_some() || !window.focused;
+    let lost_life = drive.lost_life_elapsed().is_some();
+    let stop_battle = drive.lives == 0 || lost_life || drive.pause.is_some();
+    let pause = !window.focused;
     let gain = drive.settings.effects_gain();
+    if lost_life && life_engines.is_empty() {
+        for (player, mut settings) in sounds.ending_engine(gain) {
+            settings.paused = pause;
+            commands.spawn((
+                crate::campaign::StageEntity,
+                LostLifeEngine,
+                player,
+                settings,
+            ));
+        }
+    }
+    for (entity, sink) in &life_engines {
+        if !lost_life {
+            commands.entity(entity).despawn();
+        } else if let Some(sink) = sink {
+            if pause {
+                sink.pause();
+            } else {
+                sink.play();
+            }
+        }
+    }
     let volume = drive.settings.effects_volume();
     let mut ranked = Vec::new();
     let frame = drive.player.frame();
@@ -439,7 +469,7 @@ pub fn update(
                     .channels(drive.player.position(), volume, false),
             ))
         };
-        let Some((rev, channels)) = audible.filter(|_| drive.pause.is_none()) else {
+        let Some((rev, channels)) = audible.filter(|_| !stop_battle) else {
             engine.order = None;
             if playing {
                 commands
@@ -483,7 +513,7 @@ pub fn update(
     }
     *restart = drive.restart_count;
     for (e, sink, shot) in &mut shots {
-        if reset || drive.pause.is_some() {
+        if reset || stop_battle {
             commands.entity(e).despawn();
             continue;
         }
@@ -511,11 +541,14 @@ pub fn update(
         ));
     }
 
+    if stop_battle {
+        return;
+    }
     let mut active: Vec<_> = shots
         .iter()
         .filter_map(|(entity, _, shot)| {
             shot.key
-                .filter(|_| !reset && drive.pause.is_none())
+                .filter(|_| !reset)
                 .map(|key| (key, entity, shot.levels.clone()))
         })
         .collect();

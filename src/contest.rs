@@ -2810,8 +2810,33 @@ mod tests {
         press(&mut world, KeyCode::Enter);
         world.resource_mut::<crate::driving::Drive>().lives = 0;
         campaign::advance(&mut world);
-        assert!(!world.contains_resource::<Contest>());
+        let signature = world
+            .resource::<crate::sfx::Sounds>()
+            .lost_game_signature()
+            .0;
+        let defeat_voices = |world: &mut World| {
+            world
+                .query::<(Entity, &AudioPlayer)>()
+                .iter(world)
+                .filter_map(|(entity, voice)| (voice.0 == signature).then_some(entity))
+                .collect::<Vec<_>>()
+        };
+        let voices = defeat_voices(&mut world);
+        assert_eq!(voices.len(), 1);
+        // Six separately rounded file transfers, 522 sectors at double speed.
+        for millis in [0, 1000, 2479] {
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(millis));
+            campaign::advance(&mut world);
+            assert!(!world.contains_resource::<Contest>());
+            assert_eq!(defeat_voices(&mut world), voices);
+        }
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(1));
         campaign::advance(&mut world);
+        assert!(world.get_entity(voices[0]).is_err());
         assert!(matches!(world.resource::<Contest>().page, Page::Title));
         assert_eq!(world.resource::<Contest>().level, Level::Arena);
         assert!(matches!(
