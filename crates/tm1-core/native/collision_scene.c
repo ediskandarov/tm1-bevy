@@ -27,6 +27,8 @@ typedef struct StaticCop {
 
 typedef struct CollisionScene {
     ArenaMerc mercs[2];
+    ArenaPed peds[6], initial_peds[6];
+    int ped_count, peds_ready;
     StaticCop cops[25];
     int cop_cycle;
     ArenaTarget targets[50];
@@ -362,6 +364,90 @@ void tm1_scene_free(CollisionScene* s)
     free(s->visiting);
     free(s);
 }
+static int pedestrian_kind(int kind)
+{
+    switch (kind) {
+    case 751: case 756: case 760: case 772: case 773: case 775:
+    case 776: case 777: case 778: case 781: case 782: return 1;
+    default: return 0;
+    }
+}
+
+static bool register_pedestrians(CollisionScene* s, u32 root)
+{
+    u8 count;
+    if (!load(s, root, 20, &count, 1)) return false;
+    // The retail databases place each actor group inside an untagged root.
+    // dbScanForInteractiveStuff visits the last child first.
+    for (int i = count - 1; i >= 0 && s->ped_count < 6; i--) {
+        u32 addr;
+        DbNodeHdr hdr;
+        if (!load(s, root, 24 + 4 * i, &addr, 4) || !load(s, addr, 0, &hdr, 4)) return false;
+        if (hdr.op != DB_OP_GROUP || !pedestrian_kind(hdr.kind)) continue;
+        DbNode* model = decode(s, addr, 0);
+        if (!model || !model->grp.nChild) return false;
+        DbNode* sw = model->grp.child[0];
+        if (sw->h.op == DB_OP_TRANS && sw->trans.nChild) sw = sw->trans.child[0];
+        if (sw->h.op != DB_OP_SWITCH) return false;
+        ArenaPed* p = &s->peds[s->ped_count];
+        p->model.epNode = model;
+        p->model.unkC0 = 150 + s->ped_count++;
+        p->model.next = s->first_car;
+        s->first_car = &p->model;
+        p->id = hdr.kind;
+        p->node = &sw->sw;
+        switch (p->id) {
+        case 756: case 778: p->walk_end = 3; p->alert_end = 4; p->hit_end = 5; break;
+        case 751: p->walk_end = 1; p->alert_end = 5; p->hit_end = 7; break;
+        case 760: p->walk_end = p->alert_end = p->hit_end = 5; break;
+        case 773: p->walk_end = p->alert_end = 5; p->hit_end = 6; break;
+        default: p->walk_end = 2; p->alert_end = 4; p->hit_end = 6; break;
+        }
+    }
+    return true;
+}
+
+u32 tm1_ped_model(const CollisionScene* s, int slot)
+{
+    if (slot < 0 || slot >= s->ped_count) return 0;
+    return ((DecodedNode*)s->peds[slot].model.epNode)->address;
+}
+void tm1_start_ped(CollisionScene* s, int slot, int level, int route, int end)
+{
+    ArenaPed* p = &s->peds[slot];
+    arena_choose_ped_path(p, level, route, end);
+    // Every initial path heading is a quarter turn. Later impacts may set an arbitrary yaw.
+    const int sin_q[4] = {0, 4096, 0, -4096};
+    int q = (p->model.rot.vz >> 10) & 3;
+    int sn = sin_q[q], cs = sin_q[(q + 1) & 3];
+    p->model.mat.m[0][0] = p->model.mat.m[1][1] = cs;
+    p->model.mat.m[0][1] = -sn;
+    p->model.mat.m[1][0] = sn;
+    p->model.mat.m[2][2] = 4096;
+    p->model.wmat = p->model.mat;
+    p->model.unk0C = 1;
+    s->initial_peds[slot] = *p;
+    s->peds_ready = slot + 1;
+}
+void tm1_move_pedestrians(int level, const VECTOR3* pos)
+{
+    for (int i = 0; i < current->peds_ready; i++)
+        arena_move_ped(&current->peds[i], level, pos);
+}
+int tm1_ped_pose(const CollisionScene* s, int slot, int* pose)
+{
+    if (slot >= s->peds_ready) return 0;
+    const ArenaPed* p = &s->peds[slot];
+    pose[0] = p->node->sel;
+    pose[1] = p->model.pos.vx;
+    pose[2] = p->model.pos.vy;
+    pose[3] = p->model.pos.vz;
+    for (int j = 0; j < 9; j++)
+        pose[4 + j] = p->model.mat.m[j / 3][j % 3];
+    pose[13] = p->model.drawMode;
+    return 1;
+}
+
 static void reset_merc(ArenaMerc* merc, int slot)
 {
     merc->timer = 200 * (slot + 1);
@@ -425,6 +511,8 @@ CollisionScene* tm1_scene_load(
             goto invalid;
         DbNodeHdr hdr;
         if (!load(s, root, 0, &hdr, 4))
+            goto invalid;
+        if (hdr.op == DB_OP_GROUP && hdr.kind == 0 && !register_pedestrians(s, root))
             goto invalid;
         if (hdr.op == DB_OP_GROUP && (hdr.kind == UA_BAZ_COP || hdr.kind == UA_HOVER_COP)) {
             int slot = hdr.kind == UA_HOVER_COP;
@@ -623,6 +711,10 @@ void tm1_reset_projectiles(CollisionScene* s)
             cop->node->sel = 0;
         }
     }
+    for (int i = 0; i < s->peds_ready; i++) {
+        s->peds[i] = s->initial_peds[i];
+        s->peds[i].node->sel = 1;
+    }
     s->drop_box_tick = s->window_tick = 0;
     for (int i = 0; i < 8; i++)
         if (s->arena_switches[i])
@@ -740,6 +832,15 @@ int arena_hit_target(const VECTOR3* p, int owner, int radius)
             && (abs(p->vz - t->pos.vz) >> 3) < radius + 5)
             return 500 + i;
     }
+    for (int i = 0; i < current->peds_ready; i++) {
+        ArenaPed* ped = &current->peds[i];
+        VECTOR3 pos = ped->model.pos;
+        if (ped->id != 760 && abs(p->vx - pos.vx) < 56 && abs(p->vy - pos.vy) < 56
+            && abs(p->vz - pos.vz) < 56) {
+            arena_ped_hit(ped, GetPlayerInfo(0)->motion.rot.vz);
+            return 8;
+        }
+    }
     for (int i = 0; i < 2; i++) {
         ArenaMerc* merc = &current->mercs[i];
         VECTOR3* pos = &merc->model.pos;
@@ -841,6 +942,16 @@ int tm1_damage_branch(const CollisionScene* s, u32 addr)
 
 void bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner)
 {
+    if ((id >= 150 && id < 150 + current->peds_ready) || ((id == 8 || id <= 0) && pedestrian_kind(tag))) {
+        int kind = id >= 150 ? current->peds[id - 150].id : tag;
+        for (int i = current->peds_ready - 1; i >= 0; i--) {
+            if (current->peds[i].id == kind) {
+                arena_ped_hit(&current->peds[i], GetPlayerInfo(0)->motion.rot.vz);
+                break;
+            }
+        }
+        return;
+    }
     if (id == 100 || id == 101 || ((id <= 0 || id == 8) && (tag == UA_BAZ_COP || tag == UA_HOVER_COP))) {
         int slot = id == 101 || ((id <= 0 || id == 8) && tag == UA_HOVER_COP);
         ArenaMerc* merc = &current->mercs[slot];

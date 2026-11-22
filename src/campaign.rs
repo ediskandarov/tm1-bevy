@@ -89,13 +89,6 @@ impl Stage {
                 }
             })
             .collect();
-        let player = match entry {
-            Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
-            Entry::New(difficulty) => {
-                PlayerVehicle::contest(&disc.read("SIPS_600.07")?, vehicle, level, seed, difficulty)
-                    .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?
-            }
-        };
         let headlights = !matches!(level, Level::Cyburbia | Level::Rooftops);
         let player_mesh = dmd.vehicle_bodies_with_lights(vehicle as u16, headlights)?;
         let mut models = opponent_kinds.clone();
@@ -106,7 +99,7 @@ impl Stage {
             .iter()
             .map(|&kind| dmd.vehicle_bodies_with_lights(kind as u16, headlights))
             .collect::<Result<Vec<_>>>()?;
-        let contacts = tm1_core::drive::CollisionScene::for_opponents(
+        let mut contacts = tm1_core::drive::CollisionScene::for_opponents(
             &data,
             scene.root_id,
             player_mesh[0].root_id,
@@ -116,6 +109,19 @@ impl Stage {
                 .collect::<Vec<_>>(),
         )
         .ok_or_else(|| anyhow::anyhow!("unsupported arena collision graph"))?;
+        contacts.start_pedestrians(level, &mut seed);
+        let player = match entry {
+            Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
+            Entry::New(difficulty) => {
+                PlayerVehicle::contest(&disc.read("SIPS_600.07")?, vehicle, level, seed, difficulty)
+                    .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?
+            }
+        };
+        let pedestrians = contacts
+            .pedestrian_models()
+            .into_iter()
+            .map(|root| dmd.actor_frames(root))
+            .collect::<Result<Vec<_>>>()?;
         let arena = render::Arena::new(
             tm1_assets::screen::Fonts::load(disc)?,
             crate::pause::Art::load(disc)?,
@@ -135,6 +141,7 @@ impl Stage {
                     .transpose()?,
             ],
             [dmd.merc_frames(750)?, dmd.merc_frames(752)?],
+            pedestrians,
             dmd.explosion_frames()?,
             dmd.flame_frames()?,
             dmd.burn_frames()?,

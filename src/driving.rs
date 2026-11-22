@@ -654,7 +654,6 @@ mod tests {
     fn group_restarts_and_replays() {
         use tm1_core::drive::Level;
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-        let exe = disc.read("SIPS_600.07").unwrap();
         let vehicle = Vehicle::YellowJacket;
         for level in [
             Level::Warehouse,
@@ -663,28 +662,16 @@ mod tests {
             Level::Cyburbia,
             Level::Rooftops,
         ] {
-            let kinds =
-                level.opponents(vehicle, &mut tm1_core::drive::ArenaDeck::default(), &mut 1);
-            let data = disc
-                .read(&format!("UADMD/{}.DMD", level.database(vehicle)))
-                .unwrap();
-            let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
-            let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
-
-            let mut models = kinds.clone();
-            if level == Level::Rooftops {
-                models.push(Vehicle::Minion);
-            }
-            let scene = CollisionScene::for_opponents(
-                &data,
-                root(1),
-                root(vehicle as u16),
-                &models.iter().map(|&v| root(v as u16)).collect::<Vec<_>>(),
+            let stage = crate::campaign::Stage::load(
+                &disc,
+                level,
+                vehicle,
+                crate::campaign::Entry::New(Default::default()),
             )
             .unwrap();
-            let player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
+            let opponents = stage.drive.opponents.len();
             let mut app = App::new();
-            app.insert_resource(Drive::new(player, scene, &kinds))
+            app.insert_resource(stage.drive)
                 .insert_resource(crate::smoke::Capture::new(None, false, false))
                 .init_resource::<ButtonInput<KeyCode>>()
                 .init_resource::<Time<Real>>()
@@ -704,6 +691,9 @@ mod tests {
                         .opponents
                         .iter()
                         .map(|ai| (ai.vehicle(), ai.position(), ai.health()))
+                        .collect::<Vec<_>>(),
+                    (0..6)
+                        .filter_map(|i| drive.contacts.pedestrian_pose(i))
                         .collect::<Vec<_>>(),
                 )
             };
@@ -750,7 +740,9 @@ mod tests {
             run(&mut app);
             let played = snapshot(&app);
             assert_eq!(played.0, 180);
-            assert_eq!(played.3.len(), kinds.len());
+            assert_eq!(played.3.len(), opponents);
+            assert!(!start.4.is_empty());
+            assert_ne!(start.4, played.4);
             for (before, after) in start.3.iter().zip(&played.3) {
                 assert_ne!(before.1, after.1);
             }

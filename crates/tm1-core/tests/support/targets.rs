@@ -2,7 +2,7 @@ use super::mips::Cpu;
 
 // Run the retail DB traversal over every root, then replay its target callbacks.
 // Unrelated database callbacks require the console audio and display subsystems.
-pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) {
+pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32, u32)> {
     const PROCESS: u32 = 0x8010083c;
     let start = (PROCESS & 0x1fffff) as usize;
     let original = cpu.ram[start..start + 8].to_vec();
@@ -10,12 +10,16 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) {
     cpu.put(0x801548b8, &[8, 0, 224, 3, 0, 0, 0, 0]);
     cpu.put(PROCESS, &[8, 0, 224, 3, 0, 0, 0, 0]);
     let mut calls = Vec::new();
+    let mut pedestrians = Vec::new();
     for &(root, _) in roots {
         cpu.call_observed(0x801001f8, &[root], 0x80000080, |cpu| {
             if cpu.pc() != PROCESS {
                 return;
             }
             let kind = cpu.r[4];
+            if matches!(kind, 751 | 756 | 760 | 772 | 773 | 775..=778 | 781 | 782) {
+                pedestrians.push((kind, cpu.r[5]));
+            }
             let tracked = matches!(
                 kind,
                 600 | 601 | 610..=613 | 715 | 716 | 720 | 721 | 730 | 753..=755 | 770 | 902 | 920
@@ -33,8 +37,9 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) {
     }
     for (kind, ptr, pos) in calls {
         for (i, v) in pos.into_iter().enumerate() {
-            cpu.put(0x800e7000 + i as u32 * 4, &v.to_le_bytes());
+            cpu.put(0x80011000 + i as u32 * 4, &v.to_le_bytes());
         }
-        cpu.call(PROCESS, &[kind, ptr, 0x800e7000, 0, 0x800e7000]);
+        cpu.call(PROCESS, &[kind, ptr, 0x80011000, 0, 0x80011000]);
     }
+    pedestrians
 }

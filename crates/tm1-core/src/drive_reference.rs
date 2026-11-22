@@ -8,14 +8,24 @@ use targets::register_retail_targets;
 
 const PLAYER: u32 = 0x8019ee40;
 const POLICE: u32 = 0x8019f7a8;
-const TAXI_CS: u32 = 0x800dc000;
-const POLICE_CS: u32 = 0x800dc200;
-const WORLD: u32 = 0x800dc400;
+// Fixture objects and traversal stacks must stay below the DMD load address
+// (0x800188b8). The larger Cyburbia databases extend past 0x800e9000.
+const MISSILE_CS: u32 = 0x80002000;
+const MISSILE_AUX: u32 = 0x80003000;
+const VIEW_OUTPUT: u32 = 0x80005000;
+const RENDER_SCRATCH: u32 = 0x80006000;
+const HD_STACK: u32 = 0x8000a000;
+const HDP_STACK: u32 = 0x8000c000;
+const EXTRA_MODELS: u32 = 0x80010000;
+const TAXI_CS: u32 = 0x80009000;
+const POLICE_CS: u32 = 0x80009200;
+const WORLD: u32 = 0x80009400;
 fn put(cpu: &mut Cpu, at: u32, v: u32) {
     cpu.put(at, &v.to_le_bytes());
 }
 
 struct Reference {
+    pedestrian_nodes: Vec<(u32, u32)>,
     cpu: Cpu,
     player: Taxi,
     police: PoliceCar,
@@ -65,7 +75,7 @@ impl Reference {
         let mut police = PoliceCar::for_vehicle(&mut player, opponent);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
-        register_retail_targets(&mut cpu, &roots);
+        let pedestrian_nodes = register_retail_targets(&mut cpu, &roots);
         for (at, v) in [
             (0x8018c4b0, WORLD),
             (0x8018bf14, POLICE_CS),
@@ -106,8 +116,8 @@ impl Reference {
             }
         }
         cpu.put(0x80148380, &[8, 0, 224, 3, 0, 0, 0, 0]); // hover audio
-        cpu.call(0x80102b48, &[0x800e1000]);
-        cpu.call(0x80103a4c, &[0x800e3000]);
+        cpu.call(0x80102b48, &[HD_STACK]);
+        cpu.call(0x80103a4c, &[HDP_STACK]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
             0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
@@ -120,11 +130,28 @@ impl Reference {
             cpu.put(0x80135f90, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
         }
         Self {
+            pedestrian_nodes,
             cpu,
             scene,
             player,
             police,
         }
+    }
+    fn start_pedestrians(&mut self, level: Level) {
+        put(&mut self.cpu, 0x8018c3b4, level as u32);
+        assert_eq!(
+            self.scene.pedestrian_models(),
+            self.pedestrian_nodes
+                .iter()
+                .map(|&(_, ptr)| ptr)
+                .collect::<Vec<_>>()
+        );
+        self.cpu.random_state = self.player.seed;
+        for &(kind, addr) in &self.pedestrian_nodes {
+            self.cpu.call(0x8014945c, &[kind, addr]);
+        }
+        self.scene.start_pedestrians(level, &mut self.player.seed);
+        assert_eq!(self.player.seed, self.cpu.random_state);
     }
     fn sync(&mut self) {
         let cpu = &mut self.cpu;
@@ -360,8 +387,8 @@ fn warehouse_group_hit_ids_original() {
     put(&mut cpu, 0x8018c4b0, WORLD);
     put(&mut cpu, WORLD + 0x104, root(1));
     put(&mut cpu, WORLD + 0xc0, 8);
-    cpu.call(0x80103a4c, &[0x800e3000]);
-    let model = |i: usize| 0x800e6000 + i as u32 * 0x200;
+    cpu.call(0x80103a4c, &[HDP_STACK]);
+    let model = |i: usize| EXTRA_MODELS + i as u32 * 0x200;
     let mut head = 0;
     for &(node, kind) in &roots {
         if let Some(i) = kinds.iter().position(|v| *v == kind) {
@@ -419,16 +446,16 @@ fn warehouse_group_hit_ids_original() {
         for x in [0, 2500, 5000, 7500, 10000] {
             let p = [x, 0, 12000];
             for (j, v) in p.into_iter().enumerate() {
-                put(&mut cpu, 0x800e7200 + 4 * j as u32, v as u32);
+                put(&mut cpu, 0x80011200 + 4 * j as u32, v as u32);
             }
             for skip0 in [0, 1, 50, 51, 52] {
                 for skip1 in [0, 1, 50, 51, 52] {
-                    cpu.call(0x801038b0, &[skip0, skip1, 0x800e7200, 0x800e7240]);
+                    cpu.call(0x801038b0, &[skip0, skip1, 0x80011200, 0x80011240]);
                     let mut id = -1;
                     unsafe {
                         HdPntTest(skip0 as i32, skip1 as i32, p.as_ptr(), &mut id);
                     }
-                    assert_eq!(id, cpu.word(0x800e7240) as i32);
+                    assert_eq!(id, cpu.word(0x80011240) as i32);
                     if !overlap && x < 10000 {
                         let car = ids[(x / 2500) as usize];
                         assert_eq!(
@@ -558,15 +585,15 @@ fn ordinary_camera_original() {
         let mut r = Reference::on_level(vehicle, false, Level::Arena);
         // Supply the one-player FOV and observe the last body draw request.
         r.cpu.put(0x8010a690, &[8, 0, 224, 3, 60, 0, 2, 36]);
-        let flag = 0x800d8000;
+        let flag = RENDER_SCRATCH;
         for (entry, visible) in [(0x8015060c, 1), (0x801505c4, 0)] {
             let code = [
-                0x3c08800eu32,
+                0x3c080000 | ((flag + 0x8000) >> 16),
                 0x34090000 | visible,
                 0x03e00008,
-                0xad098000u32,
+                0xad090000 | (flag & 0xffff),
             ];
-            // Use 0x800e as the upper half since the store offset sign-extends.
+            // The store sign-extends its 16-bit offset.
             r.cpu.put(
                 entry,
                 &code
@@ -636,7 +663,7 @@ fn helicopter_camera_original() {
         for entry in [0x8014fc14, 0x8015060c, 0x801505c4, 0x8010ad84] {
             r.cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
-        let camera = 0x800d8000;
+        let camera = RENDER_SCRATCH;
         put(&mut r.cpu, 0x8018c658, camera);
 
         for tick in 0..200 {
@@ -757,7 +784,7 @@ fn control_options_match_original() {
 #[ignore = "requires the supported TM1_CUE"]
 fn rooftops_fall_camera_original() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
-    let cs = 0x800d8000;
+    let cs = RENDER_SCRATCH;
     put(&mut r.cpu, 0x8018c658, cs);
     put(&mut r.cpu, 0x8018c378, Level::Rooftops as u32 + 1);
     for entry in [0x8015060c, 0x801505c4, 0x8010ad84, 0x8010add4, 0x80144be8] {
@@ -786,7 +813,7 @@ fn rooftops_fall_camera_original() {
             }
             vec3_cpu(&mut r.cpu, PLAYER + 0x388, pos);
             r.cpu.call(0x80116bcc, &[PLAYER]);
-            r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, 0x800d7000]);
+            r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, VIEW_OUTPUT]);
             view.update(&r.player, false);
             let pose = view.fixed_pose.unwrap();
             let expected: [i32; 3] =
@@ -798,7 +825,7 @@ fn rooftops_fall_camera_original() {
         }
         r.player.state[0x390..0x394].copy_from_slice(&6800i32.to_le_bytes());
         put(&mut r.cpu, PLAYER + 0x390, 6800);
-        r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, 0x800d7000]);
+        r.cpu.call(0x8014fc14, &[0, PLAYER + 0x388, VIEW_OUTPUT]);
         view.update(&r.player, false);
         assert!(view.fixed_pose.is_none());
         assert_eq!(view.mode as u32, r.cpu.word(PLAYER + 0xf4));
@@ -970,7 +997,7 @@ fn outlaw_taser_original() {
         for frame in 1..=11 {
             let mut points = Vec::new();
             r.cpu
-                .call_observed(0x801333d0, &[0x800d8000, 0], 0x80000080, |cpu| {
+                .call_observed(0x801333d0, &[RENDER_SCRATCH, 0], 0x80000080, |cpu| {
                     if cpu.pc() == 0x800fe9c4 {
                         points.push([0, 4, 8].map(|off| cpu.word(cpu.r[5] + off) as i32));
                     }
@@ -1060,7 +1087,7 @@ fn special_missiles_original() {
                 r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
             }
             let missile = |i| 0x801a9c10u32 + 0x3e8 * i;
-            let cs = |i| 0x800d0000u32 + 0x110 * i;
+            let cs = |i| MISSILE_CS + 0x110 * i;
             // Retail's world-loaded missile nodes enable its trail update. Tag each
             // sprite UV with its frame index to read the animated polygon order.
             put(&mut r.cpu, 0x8018bfac, POLICE_CS);
@@ -1072,7 +1099,7 @@ fn special_missiles_original() {
             }
             for i in 0..10 {
                 put(&mut r.cpu, missile(i) + 0x24, cs(i));
-                put(&mut r.cpu, missile(i) + 0x100, 0x800d1000 + 0x110 * i);
+                put(&mut r.cpu, missile(i) + 0x100, MISSILE_AUX + 0x110 * i);
                 put(&mut r.cpu, missile(i) + 0x34, (-15i32) as u32);
                 put(&mut r.cpu, cs(i) + 0xc0, 200 + i);
                 r.cpu.put(missile(i) + 0x30, &[i as u8]);
@@ -1128,7 +1155,7 @@ fn special_missiles_original() {
                 let mut expected = Vec::new();
                 for i in 0..10 {
                     let m = missile(i);
-                    if r.cpu.word(0x800d1000 + 0x110 * i + 8) == 0 {
+                    if r.cpu.word(MISSILE_AUX + 0x110 * i + 8) == 0 {
                         continue;
                     }
                     let half = |addr: u32| {
@@ -1434,11 +1461,11 @@ fn cyburbia_visibility_and_ground_groups_match_retail() {
                         let eye = [0, 1, 2]
                             .map(|j| (0..3).map(|k| basis[k][j] * local[k]).sum::<i32>() / 4096);
                         for (j, v) in eye.iter().enumerate() {
-                            put(&mut cpu, 0x800e7800 + 4 * j as u32, (-v) as u32);
+                            put(&mut cpu, 0x80011800 + 4 * j as u32, (-v) as u32);
                         }
                         let inside = boxes
                             .iter()
-                            .any(|&b| cpu.call(0x800fe388, &[b, 0x800e7800]) != 0);
+                            .any(|&b| cpu.call(0x800fe388, &[b, 0x80011800]) != 0);
                         assert_eq!(
                             controller.camera_inside(eye.map(|v| v as f32)),
                             inside,
@@ -1492,7 +1519,7 @@ fn minion_initial_record_matches_retail() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::Rooftops);
     let slot = 3;
     let addr = POLICE + 0x560 * slot;
-    let cs = 0x800e6200;
+    let cs = 0x80010200;
     put(&mut r.cpu, 0x8018c3b4, Level::Rooftops as u32);
     put(&mut r.cpu, 0x8019f788 + 4 * slot, cs);
     let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
@@ -1696,9 +1723,9 @@ fn register_retail_stands(cpu: &mut Cpu, data: &[u8]) {
         .unwrap();
     for (slot, pos) in world.health_stands {
         for (axis, value) in pos.into_iter().enumerate() {
-            put(cpu, 0x800e7000 + axis as u32 * 4, value as u32);
+            put(cpu, 0x80011000 + axis as u32 * 4, value as u32);
         }
-        cpu.call(0x80135da8, &[u32::from(slot) + 1, 0x800e7000]);
+        cpu.call(0x80135da8, &[u32::from(slot) + 1, 0x80011000]);
     }
 }
 
@@ -1893,10 +1920,10 @@ fn compare_battle_controls(
     for i in 0..10 {
         let m = 0x801a9c10 + 0x3e8 * i;
         put(&mut r.cpu, m + 0x34, (-12i32) as u32);
-        put(&mut r.cpu, m + 0x24, 0x800d0000 + 0x110 * i);
-        put(&mut r.cpu, m + 0x100, 0x800d1000 + 0x110 * i);
+        put(&mut r.cpu, m + 0x24, MISSILE_CS + 0x110 * i);
+        put(&mut r.cpu, m + 0x100, MISSILE_AUX + 0x110 * i);
         r.cpu.put(m + 0x30, &[i as u8]);
-        put(&mut r.cpu, 0x800d0000 + 0x110 * i + 0xc0, 200 + i);
+        put(&mut r.cpu, MISSILE_CS + 0x110 * i + 0xc0, 200 + i);
     }
     for i in 0..50 {
         let node = r.cpu.word(0x8019ce2c + i * 4);
@@ -1936,7 +1963,7 @@ fn compare_battle_controls(
         .unwrap();
         r.cpu.random_state = r.player.seed;
         slots = std::iter::once(POLICE_CS)
-            .chain((0..kinds.len() as u32 - 1).map(|n| 0x800e6000 + 0x200 * n))
+            .chain((0..kinds.len() as u32 - 1).map(|n| EXTRA_MODELS + 0x200 * n))
             .collect();
         r.cpu
             .put(0x8018c336, &((1 + kinds.len()) as u16).to_le_bytes());
@@ -1974,6 +2001,7 @@ fn compare_battle_controls(
         }
         put(&mut r.cpu, 0x8018bf14, head);
     }
+    r.start_pedestrians(level);
     if cheats {
         r.player.set_weapon_and_damage_modes(false, true);
         r.cpu.call(0x8014d354, &[0, 1]);
@@ -2007,9 +2035,9 @@ fn compare_battle_controls(
         };
         r.cpu.call(0x800ffb98, &[2, pads]);
         r.cpu.call(0x80110810, &[]);
-        r.cpu.call(0x801344e0, &[0x800d8000, 0]);
+        r.cpu.call(0x801344e0, &[RENDER_SCRATCH, 0]);
         r.cpu.call(0x801351b0, &[]);
-        r.cpu.call(0x801333d0, &[0x800d8000, 0]);
+        r.cpu.call(0x801333d0, &[RENDER_SCRATCH, 0]);
         r.cpu.call(0x8010e3d8, &[]);
         // animate_explosions advances active fragments once.
         r.cpu.call(0x801360bc, &[]);
@@ -2029,6 +2057,7 @@ fn compare_battle_controls(
         r.cpu.call(0x80135e10, &[]);
         if level != Level::Arena {
             r.cpu.call(0x8014843c, &[]);
+            r.cpu.call(0x80149764, &[]);
             r.cpu.call(0x8014aaa0, &[]);
         }
         r.cpu.call(0x80120728, &[]);
@@ -2619,9 +2648,9 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
         ] {
             let point = [x + dx, y, z];
             for (i, n) in point.into_iter().enumerate() {
-                put(&mut r.cpu, 0x800e7000 + i as u32 * 4, n as u32);
+                put(&mut r.cpu, 0x80011000 + i as u32 * 4, n as u32);
             }
-            let retail = r.cpu.call(0x8010c1d0, &[0x800e7000, owner as u32, radius]);
+            let retail = r.cpu.call(0x8010c1d0, &[0x80011000, owner as u32, radius]);
             let native = unsafe {
                 tm1_use_scene(r.scene.native.as_ptr());
                 let result = arena_hit_target(point.as_ptr(), owner, radius as i32);
@@ -2803,8 +2832,8 @@ fn static_cop_encounters_match_disc() {
             for i in 0..10 {
                 let m = 0x801a9c10 + 0x3e8 * i;
                 put(&mut r.cpu, m + 0x34, (-12i32) as u32);
-                put(&mut r.cpu, m + 0x24, 0x800d0000 + 0x110 * i);
-                put(&mut r.cpu, m + 0x100, 0x800d1000 + 0x110 * i);
+                put(&mut r.cpu, m + 0x24, MISSILE_CS + 0x110 * i);
+                put(&mut r.cpu, m + 0x100, MISSILE_AUX + 0x110 * i);
                 r.cpu.put(m + 0x30, &[i as u8]);
             }
             r.cpu.put(0x801085d0, &[8, 0, 224, 3, 0, 0, 0, 0]);
@@ -2886,8 +2915,8 @@ fn hover_mercenaries_match_disc() {
         for i in 0..10 {
             let m = 0x801a9c10 + 0x3e8 * i;
             put(&mut r.cpu, m + 0x34, (-12i32) as u32);
-            put(&mut r.cpu, m + 0x24, 0x800d0000 + 0x110 * i);
-            put(&mut r.cpu, m + 0x100, 0x800d1000 + 0x110 * i);
+            put(&mut r.cpu, m + 0x24, MISSILE_CS + 0x110 * i);
+            put(&mut r.cpu, m + 0x100, MISSILE_AUX + 0x110 * i);
             r.cpu.put(m + 0x30, &[i as u8]);
         }
         r.sync();
@@ -2948,5 +2977,98 @@ fn hover_mercenaries_match_disc() {
         for seen in phases.iter().filter(|p| !p.is_empty()) {
             assert_eq!(seen.iter().copied().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
         }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn pedestrians_match_disc() {
+    for (level, kinds) in [
+        (Level::Warehouse, &[760][..]),
+        (Level::Freeway, &[756][..]),
+        (Level::CityPark, &[781, 756, 773][..]),
+        (Level::Cyburbia, &[756, 778, 760][..]),
+        (Level::Rooftops, &[756][..]),
+    ] {
+        let mut r = Reference::on_level(Vehicle::YellowJacket, true, level);
+        r.cpu.put(0x801085d0, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        r.start_pedestrians(level);
+        assert_eq!(
+            kinds,
+            r.pedestrian_nodes.iter().map(|n| n.0).collect::<Vec<_>>()
+        );
+        r.player.state[0x3a8..0x3aa].copy_from_slice(&517i16.to_le_bytes());
+        r.sync();
+        let start_poses: Vec<_> = (0..kinds.len())
+            .map(|i| r.scene.pedestrian_pose(i))
+            .collect();
+        let mut hidden = vec![false; kinds.len()];
+        let mut shots = false;
+        for tick in 0..2000 {
+            let slot = tick / 500 % kinds.len();
+            let base = 0x8019e9b8 + 44 * slot as u32;
+            let cs = r.cpu.word(base);
+            let mut player = [0, 4, 8].map(|off| r.cpu.word(cs + 0x5c + off) as i32);
+            player[0] += match tick % 500 {
+                0..=299 => 479,
+                300..=319 => 959,
+                320..=329 => 960,
+                339 => 56,
+                340 => 55,
+                _ => 100000,
+            };
+            vec3(&mut r.player.state, 0x388, player);
+            vec3_cpu(&mut r.cpu, PLAYER + 0x388, player);
+            if tick % 500 == 339 || tick % 500 == 340 {
+                vec3_cpu(&mut r.cpu, 0x80011000, player);
+                let hit = r.cpu.call(0x8014a4c4, &[0x80011000, 1]);
+                assert_eq!(hit, u32::from(kinds[slot] != 760 && tick % 500 == 340));
+                r.scene.phase(&mut r.player, &mut r.police, 14, 3);
+            }
+            if tick % 500 == 365 {
+                r.cpu.call(0x8014a484, &[slot as u32, 1]);
+                r.scene
+                    .phase(&mut r.player, &mut r.police, 8 + slot as u8, 3);
+            }
+            r.cpu.call_observed(0x80149764, &[], 0x80000080, |cpu| {
+                if cpu.pc() == 0x801370d0 {
+                    shots = true;
+                }
+            });
+            r.scene.phase(&mut r.player, &mut r.police, 7, 3);
+            for (i, _) in kinds.iter().enumerate() {
+                let ped = 0x8019e9b8 + 44 * i as u32;
+                let cs = r.cpu.word(ped);
+                let ptr = r.cpu.word(ped + 4);
+                let mut pose = [0i32; 14];
+                pose[0] = r.cpu.ram[(ptr as usize & 0x1fffff) + 7].into();
+                for k in 0..3 {
+                    pose[1 + k] = r.cpu.word(cs + 0x5c + 4 * k as u32) as i32;
+                }
+                for k in 0..9 {
+                    let p = (cs as usize & 0x1fffff) + 0x14 + 2 * k;
+                    pose[4 + k] =
+                        i16::from_le_bytes(r.cpu.ram[p..p + 2].try_into().unwrap()) as i32;
+                }
+                pose[13] = r.cpu.word(cs + 8) as i32;
+                hidden[i] |= pose[13] == 0;
+                assert_eq!(
+                    Some(pose),
+                    r.scene.pedestrian_pose(i),
+                    "{level:?} tick {tick} slot {i}"
+                );
+            }
+            assert_eq!(r.cpu.random_state, r.player.seed, "{level:?} tick {tick}");
+            compare_projectiles(&r, Vehicle::YellowJacket, tick);
+        }
+        assert!(hidden.iter().zip(kinds).all(|(&h, &k)| h == (k != 760)));
+        assert_eq!(shots, kinds.contains(&756), "{level:?}");
+        r.scene.reset_projectiles();
+        assert_eq!(
+            start_poses,
+            (0..kinds.len())
+                .map(|i| r.scene.pedestrian_pose(i))
+                .collect::<Vec<_>>()
+        );
     }
 }

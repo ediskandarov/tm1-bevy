@@ -51,6 +51,7 @@ pub struct Arena {
     sky: Option<Scene>,
     missile_models: [Option<Scene>; 2],
     merc_models: [Vec<Scene>; 2],
+    pedestrians: Vec<Vec<Scene>>,
     contrail_frames: [SpriteFrame; 8],
     explosion_frames: [SpriteFrame; 16],
     flame_frames: [SpriteFrame; 10],
@@ -86,6 +87,7 @@ impl Arena {
         opponents: Vec<[Scene; 3]>,
         missile_models: [Option<Scene>; 2],
         merc_models: [Vec<Scene>; 2],
+        pedestrians: Vec<Vec<Scene>>,
         explosion_frames: [SpriteFrame; 16],
         flame_frames: [SpriteFrame; 10],
         burn_frames: [SpriteFrame; 8],
@@ -113,7 +115,13 @@ impl Arena {
             .iter()
             .chain(sky.iter().flat_map(|s| &s.polygons))
             .chain(missile_models.iter().flatten().flat_map(|s| &s.polygons))
-            .chain(merc_models.iter().flatten().flat_map(|s| &s.polygons))
+            .chain(
+                merc_models
+                    .iter()
+                    .chain(&pedestrians)
+                    .flatten()
+                    .flat_map(|s| &s.polygons),
+            )
         {
             let next = tiles.len();
             tiles.entry((p.texture, p.semi_transparent)).or_insert(next);
@@ -171,6 +179,7 @@ impl Arena {
             sky,
             missile_models,
             merc_models,
+            pedestrians,
             vehicle_start,
             body_ranges,
             explosion_frames,
@@ -1079,7 +1088,21 @@ fn draw_view(
                 [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
             ))
         });
-    for (model, pose) in missiles.chain(mercs) {
+    let pedestrians = arena
+        .pedestrians
+        .iter()
+        .enumerate()
+        .filter_map(|(i, frames)| {
+            let pose = drive.contacts.pedestrian_pose(i)?;
+            if pose[13] == 0 {
+                return None;
+            }
+            Some((
+                frames.get(pose[0] as usize)?,
+                pose[..13].try_into().unwrap(),
+            ))
+        });
+    for (model, pose) in missiles.chain(mercs).chain(pedestrians) {
         let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
         for p in &model.polygons {
             if p.animation
@@ -1132,6 +1155,7 @@ fn draw_view(
                 }
                 31 => (&arena.smoke_frames[1][((24 - ttl) / 2) as usize], 8),
                 32 => (&arena.smoke_frames[0][(16 - ttl) as usize], 4),
+                53 => (&arena.explosion_frames[(2 - ttl) as usize], 8),
                 44..=50 => (&arena.burn_frames[(kind - 44 + 2 - ttl) as usize], 8),
                 38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
                 35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
@@ -1224,7 +1248,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            3 | 8 | 26..=52 => continue,
+            3 | 8 | 26..=53 => continue,
             1 => (5., [1., 0.87, 0.39, 1.]),
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };

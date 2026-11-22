@@ -952,6 +952,50 @@ impl CollisionScene {
         }
         unsafe { tm1_continue_static_cop_cycle(self.native.as_ptr(), previous.native.as_ptr()) }
     }
+    pub fn pedestrian_models(&self) -> Vec<u32> {
+        unsafe extern "C" {
+            fn tm1_ped_model(scene: *const std::ffi::c_void, slot: i32) -> u32;
+        }
+        (0..6)
+            .map(|i| unsafe { tm1_ped_model(self.native.as_ptr(), i) })
+            .take_while(|&addr| addr != 0)
+            .collect()
+    }
+    pub fn start_pedestrians(&mut self, level: Level, seed: &mut u32) {
+        unsafe extern "C" {
+            fn tm1_start_ped(
+                scene: *mut std::ffi::c_void,
+                slot: i32,
+                level: i32,
+                route: i32,
+                end: i32,
+            );
+        }
+        for (slot, _) in self.pedestrian_models().iter().enumerate() {
+            let route = bios_rand(seed);
+            let end = bios_rand(seed);
+            unsafe {
+                tm1_start_ped(
+                    self.native.as_ptr(),
+                    slot as i32,
+                    level as i32,
+                    route as i32,
+                    end as i32,
+                )
+            };
+        }
+    }
+    pub fn pedestrian_pose(&self, slot: usize) -> Option<[i32; 14]> {
+        if slot >= 6 {
+            return None;
+        }
+        unsafe extern "C" {
+            fn tm1_ped_pose(scene: *const std::ffi::c_void, slot: i32, pose: *mut i32) -> i32;
+        }
+        let mut pose = [0; 14];
+        (unsafe { tm1_ped_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
+            .then_some(pose)
+    }
     pub fn merc_pose(&self, slot: usize) -> Option<[i32; 5]> {
         if slot >= 2 {
             return None;

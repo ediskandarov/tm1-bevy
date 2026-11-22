@@ -997,7 +997,13 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     tm1_use_scene(scene);
     tm1_contact_setup(GetPlayerCs3D(0), &player.motion, &player.stats);
     tm1_contact_setup(GetAICs3D(0), &ai.motion, &ai.stats);
-    if (is_player == 5)
+    if (is_player == 14)
+        arena_hit_target(&player.motion.pos, 1, 0);
+    else if (is_player == 7)
+        tm1_move_pedestrians(current_level, &player.motion.pos);
+    else if (is_player >= 8 && is_player <= 13)
+        bulDispatchDamage(150 + is_player - 8, 0, 0, 1, NULL, 0);
+    else if (is_player == 5)
         bulDispatchDamage(100, 0, 0, 1, NULL, 0);
     else if (is_player == 6)
         bulDispatchDamage(101, 0, 0, 1, NULL, 0);
@@ -1074,6 +1080,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         tm1_move_rooftop_targets();
     if (current_level >= LEVEL2_WAREHOUSE) {
         tm1_move_mercs(current_level, &player.motion.pos);
+        tm1_move_pedestrians(current_level, &player.motion.pos);
         tm1_move_static_cops(&player.motion.pos);
     }
     UpdateNumPotHoles();

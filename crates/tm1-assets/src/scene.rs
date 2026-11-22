@@ -441,10 +441,13 @@ impl<'a> Dmd<'a> {
         let Some(&(root, _)) = self.roots.iter().find(|r| r.1 == kind) else {
             return Ok(Vec::new());
         };
+        self.actor_frames(root)
+    }
+    pub fn actor_frames(&self, root: u32) -> Result<Vec<Scene>> {
         let p = self.offset(root)?;
         ensure!(
             self.data[p] == 1 && bytes(self.data, p + 20, 1)?[0] > 0,
-            "missing mercenary group"
+            "missing actor group"
         );
         let mut node = u32le(self.data, p + 24)?;
         let p = self.offset(node)?;
@@ -452,7 +455,7 @@ impl<'a> Dmd<'a> {
             node = u32le(self.data, p + 20)?;
         }
         let p = self.offset(node)?;
-        ensure!(self.data[p] == 9, "missing mercenary switch");
+        ensure!(self.data[p] == 9, "missing actor switch");
         (0..bytes(self.data, p + 6, 1)?[0])
             .map(|branch| {
                 self.extract_root(

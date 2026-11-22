@@ -17,6 +17,17 @@ typedef struct Bullet {
 void s_create_bullet(s32 owner, VECTOR3* dir, VECTOR3* pos, s32 kind, s32 damage, s32 life, s32 arg6);
 Bullet *arena_bullets(void);
 void create_bullet(s32, VECTOR3*, VECTOR3*, s32);
+typedef struct PedPath { s32 x0, y0, x1, y1; } PedPath;
+typedef struct ArenaPed {
+    Cs model;
+    DbSwitch* node;
+    const PedPath* path;
+    int id, ticks, frame, direction, cooldown, state, walk_end, alert_end, hit_end;
+} ArenaPed;
+void arena_choose_ped_path(ArenaPed*, int, int, int);
+void arena_move_ped(ArenaPed*, int, const VECTOR3*);
+void arena_ped_hit(ArenaPed*, int);
+void tm1_move_pedestrians(int, const VECTOR3*);
 typedef struct ArenaMerc {
     Cs model;
     DbSwitch* node;
