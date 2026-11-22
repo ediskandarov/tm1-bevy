@@ -9,7 +9,6 @@ track 08: 31453296 bytes, AUDIO, sha256 f3c94f37e101aa04816bfe182708ccea2a749630
 track 09: 32107152 bytes, AUDIO, sha256 03060b6d07d3cb2e9cdaba9095dda5a94be9489650c792eda8983836aab1ed2d
 ISO files: 159
 DMD: 562692 bytes, 24 roots; TMS: 634532 bytes, 192 TIM uploads
-arena root 0x8009f7a0: 52 objects, 1278 polygons
+arena root 0x8009f7a0: 53 objects, 1281 polygons
 decoded 61 texture/CLUT/window combinations
-OMITTED: animation 0x8009b380: initial frame only
 Static asset inspection only; gameplay and renderer not validated.

@@ -14,8 +14,30 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub color: [f32; 4],
 }
+/// One branch of a looping HIER animation, with its initial DMD clock.
+#[derive(Clone, Copy, Debug)]
+pub struct AnimationFrame {
+    pub node: u32,
+    pub child: u8,
+    lo: u8,
+    hi: u8,
+    initial: u8,
+    rate: u16,
+    timer: u16,
+}
+impl AnimationFrame {
+    pub fn selected(self, visits: u32) -> u8 {
+        if self.rate == u16::MAX {
+            return self.initial;
+        }
+        let changes = (u64::from(visits) + u64::from(self.timer)) / (u64::from(self.rate) + 1);
+        let count = u64::from(self.hi - self.lo) + 1;
+        self.lo + ((u64::from(self.initial - self.lo) + changes) % count) as u8
+    }
+}
 #[derive(Clone, Debug)]
 pub struct Polygon {
+    pub animation: Vec<AnimationFrame>,
     pub billboard: Option<[f32; 2]>,
     pub pickup: Option<u8>,
     pub object_id: u32,
@@ -215,10 +237,33 @@ impl<'a> Dmd<'a> {
             3 => {
                 bytes(d, p, 16)?;
                 ensure!(d[p + 12] < d[p + 11], "animation child out of range");
-                children.push(u32le(d, p + 16 + 4 * d[p + 12] as usize)?);
-                scene
-                    .omitted_nodes
-                    .push(format!("animation {ptr:#x}: initial frame only"));
+                let (lo, hi, initial) = (d[p + 8], d[p + 9], d[p + 12]);
+                let (rate, timer) = (u16le(d, p + 6)?, u16le(d, p + 14)?);
+                if d[p + 10] == 1
+                    || !(lo <= initial && initial <= hi && hi < d[p + 11] && timer <= rate)
+                {
+                    children.push(u32le(d, p + 16 + 4 * usize::from(initial))?);
+                    scene
+                        .omitted_nodes
+                        .push(format!("animation {ptr:#x}: initial frame only"));
+                } else {
+                    for child in lo..=hi {
+                        let node = u32le(d, p + 16 + 4 * usize::from(child))?;
+                        let start = scene.polygons.len();
+                        self.visit(node, transform, selection, pickup, ancestors, scene)?;
+                        for polygon in &mut scene.polygons[start..] {
+                            polygon.animation.push(AnimationFrame {
+                                node: ptr,
+                                child,
+                                lo,
+                                hi,
+                                initial,
+                                rate,
+                                timer,
+                            });
+                        }
+                    }
+                }
             }
             4 => {
                 bytes(d, p, 20)?;
@@ -365,6 +410,7 @@ impl<'a> Dmd<'a> {
                 });
             }
             scene.polygons.push(Polygon {
+                animation: Vec::new(),
                 billboard,
                 pickup,
                 object_id: ptr,

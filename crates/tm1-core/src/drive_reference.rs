@@ -425,3 +425,28 @@ fn damage_body_switch_matches_retail() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn arena_animation_matches_retail() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let d = disc.read("UADMD/XARENA1.DMD").unwrap();
+    let arena = tm1_assets::scene::Dmd::parse(&d)
+        .unwrap()
+        .extract_kind(1)
+        .unwrap();
+    let animation = arena
+        .polygons
+        .iter()
+        .find_map(|p| p.animation.first())
+        .unwrap();
+    let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    cpu.put(0x800188b8, &d);
+    for visits in 1..=512 {
+        cpu.call(0x800fe488, &[animation.node]);
+        assert_eq!(
+            animation.selected(visits),
+            cpu.word(animation.node + 12) as u8
+        );
+    }
+}

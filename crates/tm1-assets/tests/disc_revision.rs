@@ -23,14 +23,14 @@ fn supported_disc_arena_and_audio() {
         assert_ne!(damaged.object_ids, critical.object_ids);
     }
     let scene = db.extract_kind(1).unwrap();
-    assert_eq!(scene.object_ids.len(), 52);
+    assert_eq!(scene.object_ids.len(), 53);
     assert_eq!(
         scene
             .polygons
             .iter()
             .filter(|p| p.billboard.is_none())
             .count(),
-        1270
+        1273
     );
     assert_eq!(
         scene
@@ -40,7 +40,22 @@ fn supported_disc_arena_and_audio() {
             .count(),
         8
     );
-    assert!(!scene.omitted_nodes.is_empty());
+    assert!(scene.omitted_nodes.is_empty());
+    let show = |step| {
+        scene
+            .polygons
+            .iter()
+            .filter(|p| {
+                !p.animation.is_empty() && p.animation.iter().all(|f| f.selected(step) == f.child)
+            })
+            .map(|p| p.source_offset)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(show(0).len(), 3);
+    assert_eq!(show(16).len(), 3);
+    assert_eq!(show(0), show(15));
+    assert_ne!(show(15), show(16));
+    assert_eq!(show(0), show(32));
     let keys: std::collections::BTreeSet<_> =
         scene.polygons.iter().filter_map(|p| p.texture).collect();
     assert_eq!(keys.len(), 61);

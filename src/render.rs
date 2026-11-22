@@ -168,7 +168,10 @@ pub fn setup(
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
             for polygon in &arena.scene.polygons[range.clone()] {
-                if polygon.billboard.is_some() || polygon.semi_transparent {
+                if !polygon.animation.is_empty()
+                    || polygon.billboard.is_some()
+                    || polygon.semi_transparent
+                {
                     continue;
                 }
                 let slot = arena.tiles[&(polygon.texture, false)];
@@ -411,7 +414,17 @@ pub fn update(
         .chain(arena.body_ranges[1][active[1]].clone());
     for i in visible {
         let p = &arena.scene.polygons[i];
-        if i >= arena.vehicle_start && p.billboard.is_none() && !p.semi_transparent {
+        if p.animation
+            .iter()
+            .any(|frame| frame.selected(drive.taxi.frame()) != frame.child)
+        {
+            continue;
+        }
+        if i >= arena.vehicle_start
+            && p.animation.is_empty()
+            && p.billboard.is_none()
+            && !p.semi_transparent
+        {
             continue;
         }
         if p.pickup.is_some_and(|id| hidden & (1u64 << id) != 0) {

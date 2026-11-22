@@ -104,6 +104,9 @@ impl Taxi {
             })
         })
     }
+    pub fn frame(&self) -> u32 {
+        self.frame
+    }
     pub fn heading(&self) -> i32 {
         self.word(0x3a8)
     }
