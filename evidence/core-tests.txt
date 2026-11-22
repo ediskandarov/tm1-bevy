@@ -1,0 +1,16 @@
+   Compiling tm1-core v0.1.0 (/Users/eduard/sandbox/tm1/tm1-bevy/crates/tm1-core)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running unittests src/lib.rs (crates/tm1-core/target/debug/deps/tm1_core-0b42f086588b7d96)
+
+running 2 tests
+test tests::original_timer_rounding_and_clamp ... ok
+test tests::unsigned_clock_wrap_and_replay_reset ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests tm1_core
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

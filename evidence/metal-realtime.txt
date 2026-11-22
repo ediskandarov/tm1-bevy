@@ -1,0 +1,19 @@
+Preview omission: animation 0x8009b380: initial frame only
+W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, M mesh comparison, P pause, R restart, Tab overview.
+2026-11-22T06:57:18.142894Z  INFO bevy_render::renderer: AdapterInfo { name: "Apple M3 Pro", vendor: 0, device: 0, device_type: IntegratedGpu, device_pci_bus_id: "", driver: "", driver_info: "", backend: Metal, subgroup_min_size: 4, subgroup_max_size: 64, transient_saves_memory: Some(true), limit_bucket: None }
+2026-11-22T06:57:18.232273Z  INFO bevy_winit::system: Creating new window TM1 • Arena driving test (69v0)
+2026-11-22T06:57:18.272991Z  INFO bevy_render::batching::gpu_preprocessing: GPU preprocessing is fully supported on this device.
+CPU geometry preparation, 80 samples after warmup: median 0.7122 ms, p95 0.7644 ms
+GPU graph interval, 79 timestamp pairs: median 0.8596 ms, p95 1.1361 ms
+Simulation step, 80 samples after warmup: median 0.0269 ms, p95 0.0447 ms
+Active audio sinks: 24, connected gamepads: 0
+Engine playback 14.02585132s, music playback 14.98s
+Wall-clock playback: 15.0046s, 300 simulation steps, remainder 4.5956ms
+Render diagnostic render/upscaling/elapsed_cpu: 0.0018 ms
+Render diagnostic started_load_count: 45.0000 
+Render diagnostic render/main_transparent_pass_2d/elapsed_cpu: 0.0121 ms
+Render diagnostic render/auxiliary_views/elapsed_cpu: 0.0017 ms
+Render diagnostic render/main_opaque_pass_2d/elapsed_cpu: 0.0006 ms
+RSS KiB: 310704
+Saved GPU screenshot: local/realtime.png
+2026-11-22T06:57:33.353985Z  WARN bevy_winit::state: Skipped event Destroyed for unknown winit Window Id WindowId(4694543264)

@@ -1,0 +1,15 @@
+track 01: 73347120 bytes, MODE2/2352, sha256 c96fef832c03b651f809360343822b1af0ce108bd735c1ce84c4ea7255839758
+track 02: 31408608 bytes, AUDIO, sha256 72e6c9a5a936362a3b56e1275e8cfa35d871659fa7cc0959deed2a8b12bd9dde
+track 03: 34971888 bytes, AUDIO, sha256 69d85be5b2eff4ba4c90991dbb5a0d1578fe6d1cbab0c692a28603c7e297a133
+track 04: 21958272 bytes, AUDIO, sha256 b69accb2063baa7f82ceb03404e182689d362c613f05ca01174fea5c35ed2ab6
+track 05: 32236512 bytes, AUDIO, sha256 2b6fba25982e9dbb33648ff07a46397306d7822918eba02e13997f01f69c16fa
+track 06: 32300016 bytes, AUDIO, sha256 7f009d8e2b514c8cf6807aeec9019a0cb5a4ef6d603c2da7f059cc9071f84984
+track 07: 32582256 bytes, AUDIO, sha256 c810e702c8b9d5e7f06848b41e754ff4f3805e0780ff7192b3134296508710b6
+track 08: 31453296 bytes, AUDIO, sha256 f3c94f37e101aa04816bfe182708ccea2a7496304c6055357f7b0d879439438e
+track 09: 32107152 bytes, AUDIO, sha256 03060b6d07d3cb2e9cdaba9095dda5a94be9489650c792eda8983836aab1ed2d
+ISO files: 159
+DMD: 562692 bytes, 24 roots; TMS: 634532 bytes, 192 TIM uploads
+arena root 0x8009f7a0: 52 objects, 1278 polygons
+decoded 61 texture/CLUT/window combinations
+OMITTED: animation 0x8009b380: initial frame only
+Static asset inspection only; gameplay and renderer not validated.

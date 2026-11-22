@@ -1,0 +1,14 @@
+[package]
+name = "tm1-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+build = "build.rs"
+
+[build-dependencies]
+cc = "1.2"
+
+[dev-dependencies]
+tm1-assets = { path = "../tm1-assets" }
+
+[workspace]

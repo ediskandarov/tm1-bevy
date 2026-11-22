@@ -1,0 +1,8 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/disc_revision.rs (crates/tm1-assets/target/debug/deps/disc_revision-5ad5adfcd74b6834)
+
+running 1 test
+test supported_disc_arena_and_audio ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.53s
+

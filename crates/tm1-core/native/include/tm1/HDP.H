@@ -1,0 +1,21 @@
+#pragma once
+#include "tm1/arena_collision.h"
+typedef struct HdpEnt {
+    /* 0x00 */ DbNode* node;
+    /* 0x04 */ VECTOR3 pos;
+    /* 0x10 */ s16 id0;
+    /* 0x12 */ s16 id1;
+} HdpEnt; /* 0x14 */
+
+void hdpPush(DbNode* node, VECTOR3* pos, s32 id0, s32 id1);
+s32 hdpPop(HdpEnt** out);
+void hdpSetNodeIds(s16* out0, s16* out1, HdpEnt* e, s16 id0, s16 id1);
+s32 hdpIsPtInSphere(VECTOR3* pt, s32 rad, VECTOR3* centre);
+void hdpTraverse(Cs* cs, VECTOR3* pt, HdCsHit* res);
+void hdpLod(DbLod* node, HdpEnt* e);
+s32 hdpPntBox(HdBox* b, VECTOR3* pos, s32* hit, s32 mode);
+s32 hdpPntVolume(DbVolume* n, VECTOR3* pos, HdCsHit* res, s32 mode);
+void hdpCtrlNode(HdpEnt* e, s16 id0, s16 id1);
+s32 hdpInCtrlBox(HdBox* b, VECTOR3* pos);
+void hdpSetHitTag(HdCsHit* hit, s16 id0, s16 id1, HdpEnt* e);
+HdCsHit* HdPntTest(s32 skip0, s32 skip1, VECTOR3* pt, s32* hitId);

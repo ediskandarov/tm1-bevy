@@ -1,0 +1,1720 @@
+#include "tm1/arena_ground.h"
+
+s16 numTriggerPoints, numBridges, numCheckBridges;
+s16 numPotHoles, numCheckPotHoles, numCurbs, numSlickSpots;
+TriggerPt tPoints[175];
+TriggerPtGroups triggerPtGroups;
+TriggerPtStartPts triggerPtStartPts;
+Bridge bridges[5];
+PotHole potHoles[5];
+Curb curbs[1];
+SlickSpot slickSpots[1];
+
+void InitLevel1TriggerPoints(void)
+{
+    s16 i;
+    s16 j;
+
+    numTriggerPoints = 21;
+    for (i = 0; i < numTriggerPoints; i++) {
+        tPoints[i].f1A = 1;
+        tPoints[i].type = 0;
+        tPoints[i].f08 = 0;
+        for (j = 0; j < 4; j++) {
+            tPoints[i].link[j] = 0;
+            tPoints[i].dist[j] = 0x77;
+        }
+    }
+    triggerPtStartPts.n = 3;
+    for (i = 0; i < 15; i++) {
+        triggerPtStartPts.start[i] = i;
+        triggerPtStartPts.grp[i] = 0;
+    }
+    triggerPtGroups.count = 1;
+    triggerPtGroups.pos[0].vx = -0x1F40;
+    triggerPtGroups.pos[0].vy = -0x1F40;
+    triggerPtGroups.pos[0].vz = 0;
+    triggerPtGroups.w[0] = 0x5DC0;
+    triggerPtGroups.d[0] = 0x5DC0;
+    for (i = 0; i < triggerPtGroups.count; i++) {
+        for (j = 0; j < triggerPtGroups.count; j++) {
+            triggerPtGroups.a[i][j] = -1;
+            triggerPtGroups.b[i][j] = 0;
+            triggerPtGroups.minSpeed[i][j] = 0x3C;
+        }
+    }
+    tPoints[0].vx = 0xDC8;
+    tPoints[0].vy = 0xE08;
+    tPoints[0].f1A = 3;
+    tPoints[0].link[0] = 2;
+    tPoints[0].link[1] = 1;
+    tPoints[0].link[2] = 7;
+    tPoints[0].link[3] = 0xA;
+    tPoints[1].vx = 0xB98;
+    tPoints[1].vy = 0x1000;
+    tPoints[1].f1A = 3;
+    tPoints[1].link[0] = 0;
+    tPoints[1].link[1] = 3;
+    tPoints[1].link[2] = 4;
+    tPoints[2].vx = 0x1000;
+    tPoints[2].vy = 0xB50;
+    tPoints[2].f1A = 3;
+    tPoints[2].link[0] = 0xF;
+    tPoints[2].link[1] = 0;
+    tPoints[2].link[2] = 0xB;
+    tPoints[3].vx = 0x728;
+    tPoints[3].vy = 0x1000;
+    tPoints[3].f1A = 3;
+    tPoints[3].link[0] = 1;
+    tPoints[3].link[1] = 8;
+    tPoints[3].link[2] = 4;
+    tPoints[4].vx = 0x850;
+    tPoints[4].vy = 0xDC0;
+    tPoints[4].f1A = 4;
+    tPoints[4].link[0] = 3;
+    tPoints[4].link[1] = 1;
+    tPoints[4].link[2] = 6;
+    tPoints[4].link[3] = 7;
+    tPoints[5].vx = 0x2C0;
+    tPoints[5].vy = 0xC88;
+    tPoints[5].f1A = 3;
+    tPoints[5].link[0] = 8;
+    tPoints[5].link[1] = 0xC;
+    tPoints[5].link[2] = 9;
+    tPoints[6].vx = 0x728;
+    tPoints[6].vy = 0xB50;
+    tPoints[6].f1A = 4;
+    tPoints[6].link[0] = 8;
+    tPoints[6].link[1] = 4;
+    tPoints[6].link[2] = 9;
+    tPoints[6].link[3] = 0xA;
+    tPoints[7].vx = 0xB98;
+    tPoints[7].vy = 0xB98;
+    tPoints[7].f1A = 4;
+    tPoints[7].link[0] = 0;
+    tPoints[7].link[1] = 4;
+    tPoints[7].link[2] = 0xA;
+    tPoints[7].link[3] = 0xB;
+    tPoints[8].vx = 0x4F0;
+    tPoints[8].vy = 0xE08;
+    tPoints[8].f1A = 3;
+    tPoints[8].link[0] = 3;
+    tPoints[8].link[1] = 5;
+    tPoints[8].link[2] = 6;
+    tPoints[9].vx = 0x4F8;
+    tPoints[9].vy = 0xA78;
+    tPoints[9].f1A = 4;
+    tPoints[9].link[0] = 5;
+    tPoints[9].link[1] = 6;
+    tPoints[9].link[2] = 0xC;
+    tPoints[9].link[3] = 0xD;
+    tPoints[10].vx = 0x9F0;
+    tPoints[10].vy = 0x9F0;
+    tPoints[10].f1A = 4;
+    tPoints[10].link[0] = 6;
+    tPoints[10].link[1] = 7;
+    tPoints[10].link[2] = 0xD;
+    tPoints[10].link[3] = 0xE;
+    tPoints[11].vx = 0xDC8;
+    tPoints[11].vy = 0x890;
+    tPoints[11].f1A = 4;
+    tPoints[11].link[0] = 7;
+    tPoints[11].link[1] = 2;
+    tPoints[11].link[2] = 0xE;
+    tPoints[11].link[3] = 0xF;
+    tPoints[12].vx = 0x2C0;
+    tPoints[12].vy = 0x638;
+    tPoints[12].f1A = 3;
+    tPoints[12].link[0] = 5;
+    tPoints[12].link[1] = 0x11;
+    tPoints[12].link[2] = 9;
+    tPoints[13].vx = 0x728;
+    tPoints[13].vy = 0x728;
+    tPoints[13].f1A = 4;
+    tPoints[13].link[0] = 9;
+    tPoints[13].link[1] = 0xA;
+    tPoints[13].link[2] = 0x10;
+    tPoints[13].link[3] = 0x11;
+    tPoints[14].vx = 0xB98;
+    tPoints[14].vy = 0x728;
+    tPoints[14].f1A = 4;
+    tPoints[14].link[0] = 0xA;
+    tPoints[14].link[1] = 0xB;
+    tPoints[14].link[2] = 0x10;
+    tPoints[14].link[3] = 0x12;
+    tPoints[15].vx = 0xFB8;
+    tPoints[15].vy = 0x6E0;
+    tPoints[15].f1A = 3;
+    tPoints[15].link[0] = 0x12;
+    tPoints[15].link[1] = 2;
+    tPoints[15].link[2] = 0xB;
+    tPoints[16].vx = 0xA78;
+    tPoints[16].vy = 0x500;
+    tPoints[16].f1A = 4;
+    tPoints[16].link[0] = 0xD;
+    tPoints[16].link[1] = 0xE;
+    tPoints[16].link[2] = 0x13;
+    tPoints[16].link[3] = 0x14;
+    tPoints[17].vx = 0x4F0;
+    tPoints[17].vy = 0x4B0;
+    tPoints[17].f1A = 3;
+    tPoints[17].link[0] = 0xC;
+    tPoints[17].link[1] = 0x13;
+    tPoints[17].link[2] = 0xD;
+    tPoints[18].vx = 0xDC8;
+    tPoints[18].vy = 0x4B0;
+    tPoints[18].f1A = 3;
+    tPoints[18].link[0] = 0x14;
+    tPoints[18].link[1] = 0xF;
+    tPoints[18].link[2] = 0xE;
+    tPoints[19].vx = 0x728;
+    tPoints[19].vy = 0x2C0;
+    tPoints[19].f1A = 3;
+    tPoints[19].link[0] = 0x14;
+    tPoints[19].link[1] = 0x11;
+    tPoints[19].link[2] = 0x10;
+    tPoints[20].vx = 0xB98;
+    tPoints[20].vy = 0x2C0;
+    tPoints[20].f1A = 3;
+    tPoints[20].link[0] = 0x13;
+    tPoints[20].link[1] = 0x12;
+    tPoints[20].link[2] = 0x10;
+}
+
+void InitLevel1Bridges(void)
+{
+    s16 i;
+    s16 j;
+
+    numBridges = 4;
+    numCheckBridges = 4;
+
+    for (i = 0; i <= numBridges; i++) {
+        bridges[i].unk08 = 0;
+        bridges[i].unk0A = 10;
+        for (j = 0; j < 4; j++) {
+            bridges[i].obj[j] = -1;
+        }
+    }
+
+    bridges[0].rampDir = 0;
+    bridges[0].minX = 0x270;
+    bridges[0].minZ = 0x8B8;
+    bridges[0].y0 = 0;
+    bridges[0].y1 = 0x28;
+    bridges[0].extentX = 0xA0;
+    bridges[0].extentZ = 0xA8;
+    bridges[0].obj[0] = 1;
+
+    bridges[1].rampDir = 1;
+    bridges[1].minX = 0x270;
+    bridges[1].minZ = 0x960;
+    bridges[1].y0 = 0x28;
+    bridges[1].y1 = 0;
+    bridges[1].extentX = 0xA0;
+    bridges[1].extentZ = 0xB0;
+    bridges[1].obj[0] = 0;
+
+    bridges[2].rampDir = 0;
+    bridges[2].minX = 0x7D0;
+    bridges[2].minZ = 0x910;
+    bridges[2].y0 = 0;
+    bridges[2].y1 = 0x50;
+    bridges[2].extentX = 0xA0;
+    bridges[2].extentZ = 0x140;
+
+    bridges[3].rampDir = 3;
+    bridges[3].minX = 0x960;
+    bridges[3].minZ = 0x640;
+    bridges[3].y0 = 0x50;
+    bridges[3].y1 = 0;
+    bridges[3].extentX = 0x140;
+    bridges[3].extentZ = 0xA0;
+}
+
+void InitLevel1PotHoles()
+{
+    s16 i;
+    s16 t;
+    s32 n;
+
+    numPotHoles = 4;
+    numCheckPotHoles = 4;
+    i = 0;
+    do {
+        potHoles[i].active = 0;
+        t = i + 1;
+        do {
+        } while (0);
+        n = numPotHoles;
+        i = t;
+    } while (t < n);
+
+    potHoles[0].x = 0x3C8;
+    potHoles[0].z = 0x6D8;
+    potHoles[0].a = 0x50;
+    potHoles[0].b = 0xA0;
+    potHoles[0].c = 0x18;
+
+    potHoles[1].x = 0x438;
+    potHoles[1].z = 0xC08;
+    potHoles[1].a = 0xA0;
+    potHoles[1].b = 0xA0;
+    potHoles[1].c = 0x18;
+
+    potHoles[2].x = 0x910;
+    potHoles[2].z = 0x370;
+    potHoles[2].a = 0x78;
+    potHoles[2].b = 0x80;
+    potHoles[2].c = 0x18;
+
+    potHoles[3].x = 0xED8;
+    potHoles[3].z = 0x870;
+    potHoles[3].a = 0xA0;
+    potHoles[3].b = 0xB8;
+    potHoles[3].c = 0x18;
+}
+
+s32 SmoothValue(s32 from, s32 to, s32 pct)
+{
+    return (from * pct + to * (100 - pct)) / 100;
+}
+
+void CarInitBounceDeltas(Car* car, u8 isPlayer)
+{
+    CarBounce* bp;
+    CarMotion* m;
+
+    if (isPlayer) {
+        bp = &PLAYER_CAR(car)->bounce;
+        m = &PLAYER_CAR(car)->motion;
+    } else {
+        bp = &AI_CAR(car)->bounce;
+        m = &AI_CAR(car)->motion;
+    }
+
+    if (m->vel.vy / 32) {
+        bp->unk14 = bp->unk12 - RANDINT(bp->unk12 / 2);
+        if (bp->unk18 > 0) {
+            bp->unk24 = bp->unk18 - RANDINT(bp->unk18 / 2);
+        } else if (bp->unk18 < 0) {
+            bp->unk24 = bp->unk18 + RANDINT(bp->unk18 / 2);
+        }
+        if (bp->unk1C > 0) {
+            bp->unk28 = bp->unk1C - RANDINT(bp->unk1C / 2);
+        } else if (bp->unk1C < 0) {
+            bp->unk28 = bp->unk1C + RANDINT(bp->unk1C / 2);
+        }
+    } else {
+        bp->unk04 = 0;
+    }
+}
+
+void SetBounce(Car* car, s32 level, s32 a, s32 b, u8 isPlayer)
+{
+    CarBounce* bp;
+    u32 mag;
+    u32 ang;
+
+    if (isPlayer) {
+        bp = &PLAYER_CAR(car)->bounce;
+    } else {
+        bp = &AI_CAR(car)->bounce;
+    }
+
+    bp->unk04 = level;
+    bp->unk0C = b;
+    if (bp->unk0C <= 0) {
+        bp->unk00 = level;
+        bp->unk08 = a;
+    }
+    bp->unk0E = arena_rand() % 11;
+
+    switch (level) {
+    case 5:
+        mag = 0x71;
+        ang = 0x200;
+        break;
+    case 4:
+        mag = 0x44;
+        ang = 0x200;
+        break;
+    case 3:
+        mag = 0x2D;
+        ang = 0x200;
+        break;
+    case 2:
+        mag = 0x0B;
+        ang = 0x155;
+        break;
+    case 1:
+
+        mag = 2;
+        ang = 0xE3;
+        break;
+    default:
+        mag = 2;
+        ang = 0xE3;
+        break;
+    }
+
+    mag = mag - arena_rand() % (mag >> 1);
+    if (a == 0 || a == 2) {
+        if (arena_rand() & 1) {
+            mag = -mag;
+        }
+        bp->unk18 = mag;
+    } else {
+        bp->unk18 = 0;
+    }
+    if (a == 1 || a == 2) {
+        if (arena_rand() & 1) {
+            mag = -mag;
+        }
+        bp->unk1C = mag;
+    } else {
+        bp->unk1C = 0;
+    }
+    bp->unk12 = ang - RANDINT(ang >> 1);
+    CarInitBounceDeltas(car, isPlayer);
+}
+
+void UpdateBounce(Car* car, u8 isPlayer)
+{
+    CarBounce* bp;
+    CarMotion* m;
+    CarStats* st;
+    s32 d;
+    s32 q;
+    s16 v;
+    s32 qs;
+    s32 amp[4];
+
+    if (isPlayer) {
+        bp = &PLAYER_CAR(car)->bounce;
+        m = &PLAYER_CAR(car)->motion;
+        st = &PLAYER_CAR(car)->stats;
+    } else {
+        bp = &AI_CAR(car)->bounce;
+        m = &AI_CAR(car)->motion;
+        st = &AI_CAR(car)->stats;
+    }
+
+    if (isPlayer) {
+        d = st->unkD4;
+    } else {
+        d = st->unkD4 / 10;
+    }
+
+    q = m->rotDelta.vz * st->unkF4 / d;
+    qs = (s16)q;
+    v = q;
+    if (abs(st->unkF4) < abs(qs)) {
+        if (st->unkF4 > 0) {
+            if (qs > 0) {
+                v = st->unkF4;
+            } else {
+                v = -st->unkF4;
+            }
+        } else {
+            if (qs > 0) {
+                v = -st->unkF4;
+            } else {
+                v = st->unkF4;
+            }
+        }
+    }
+    bp->unk34 = SmoothValue(bp->unk34, v, 90);
+
+    if (isPlayer && PLAYER_CAR(car)->unkF4 == VR_MODE_UNK_1) {
+        bp->unk16 = SmoothValue(bp->unk16, PLAYER_CAR(car)->speedDelta, 90);
+        bp->unk30 = -bp->unk16 / 2;
+    } else {
+        bp->unk30 = 0;
+    }
+
+    if (bp->unk04) {
+        bp->unk0E = bp->unk0E + bp->unk14;
+        if (bp->unk0E < 4096) {
+            amp[0] = bp->unk24 * m->vel.vy / (m->vel.vy < st->unkA8 ? st->unkA8 : m->vel.vy);
+            amp[1] = bp->unk28 * m->vel.vy / (m->vel.vy < st->unkA8 ? st->unkA8 : m->vel.vy);
+            bp->unk30 += rsin(bp->unk0E) * amp[0] / 4096;
+            bp->unk34 += rsin(bp->unk0E) * amp[1] / 4096;
+        } else {
+            bp->unk0E = bp->unk0E - 4096;
+            if (bp->unk0C > 0) {
+                bp->unk0C--;
+                bp->unk24 = bp->unk24 / 2;
+                bp->unk28 = bp->unk28 / 2;
+            } else {
+                SetBounce(car, bp->unk00, bp->unk08, 0, isPlayer);
+            }
+        }
+    } else if (bp->unk00) {
+        SetBounce(car, bp->unk00, bp->unk08, 0, isPlayer);
+    }
+}
+
+void InitTireInfo(CarTire* tires)
+{
+    tires[0].unk0 = 0;
+    tires[0].unk1 = 0;
+    tires[0].unk2 = 0;
+    tires[0].catapulted = 0;
+    tires[0].bombDamaged = 0;
+    tires[1].unk0 = 0;
+    tires[1].unk1 = 0;
+    tires[1].unk2 = 0;
+    tires[1].catapulted = 0;
+    tires[1].bombDamaged = 0;
+    tires[2].unk0 = 0;
+    tires[2].unk1 = 0;
+    tires[2].unk2 = 0;
+    tires[2].catapulted = 0;
+    tires[2].bombDamaged = 0;
+    tires[3].unk0 = 0;
+    tires[3].unk1 = 0;
+    tires[3].unk2 = 0;
+    tires[3].catapulted = 0;
+    tires[3].bombDamaged = 0;
+    tires[0].unk22 = 0;
+    tires[1].unk22 = 0;
+    tires[2].unk22 = 0;
+    tires[3].unk22 = 0;
+    tires[0].unk24 = 0;
+    tires[1].unk24 = 0;
+    tires[2].unk24 = 0;
+    tires[3].unk24 = 0;
+    tires[0].unk10 = 0;
+    tires[1].unk10 = 0;
+    tires[2].unk10 = 0;
+    tires[3].unk10 = 0;
+    tires[0].unk40 = 0;
+    tires[0].unk16 = 0;
+    tires[0].unk18 = 0;
+    tires[0].unk1C = 0;
+    tires[0].unk1E = 0;
+    tires[0].unk20 = 0;
+    tires[0].unk1A = 0;
+    tires[0].unk26 = 2;
+    tires[1].unk40 = 0;
+    tires[1].unk16 = 0;
+    tires[1].unk18 = 0;
+    tires[1].unk1C = 0;
+    tires[1].unk1E = 0;
+    tires[1].unk20 = 0;
+    tires[1].unk1A = 0;
+    tires[1].unk26 = 2;
+    tires[2].unk40 = 0;
+    tires[2].unk16 = 0;
+    tires[2].unk18 = 0;
+    tires[2].unk1C = 0;
+    tires[2].unk1E = 0;
+    tires[2].unk20 = 0;
+    tires[2].unk1A = 0;
+    tires[2].unk26 = 2;
+    tires[3].unk40 = 0;
+    tires[3].unk16 = 0;
+    tires[3].unk18 = 0;
+    tires[3].unk1C = 0;
+    tires[3].unk1E = 0;
+    tires[3].unk20 = 0;
+    tires[3].unk1A = 0;
+    tires[3].unk26 = 2;
+    tires[0].unk08 = 0;
+    tires[0].unk0A = 0;
+    tires[0].unk0E = 0;
+    tires[0].unk3 = 0;
+    tires[0].unk28 = 0;
+    tires[0].unk12 = 0;
+    tires[0].unk14 = 0;
+    tires[0].unk40 = 0;
+    tires[1].unk08 = 0;
+    tires[1].unk0A = 0;
+    tires[1].unk0E = 0;
+    tires[1].unk3 = 0;
+    tires[1].unk28 = 0;
+    tires[1].unk12 = 0;
+    tires[1].unk14 = 0;
+    tires[1].unk40 = 0;
+    tires[2].unk08 = 0;
+    tires[2].unk0A = 0;
+    tires[2].unk0E = 0;
+    tires[2].unk3 = 0;
+    tires[2].unk28 = 0;
+    tires[2].unk12 = 0;
+    tires[2].unk14 = 0;
+    tires[2].unk40 = 0;
+    tires[3].unk08 = 0;
+    tires[3].unk0A = 0;
+    tires[3].unk0E = 0;
+    tires[3].unk3 = 0;
+    tires[3].unk28 = 0;
+    tires[3].unk12 = 0;
+    tires[3].unk14 = 0;
+    tires[3].unk40 = 0;
+}
+
+void InitTireGroup(CarTire* tires, s16 group)
+{
+    tires[0].unk10 = group;
+    tires[1].unk10 = group;
+    tires[2].unk10 = group;
+    tires[3].unk10 = group;
+    tires[0].unk40 = triggerPtGroups.pos[group].vz;
+    tires[1].unk40 = triggerPtGroups.pos[group].vz;
+    tires[2].unk40 = triggerPtGroups.pos[group].vz;
+    tires[3].unk40 = triggerPtGroups.pos[group].vz;
+    tires[0].unk22 = tires[0].unk40;
+    tires[1].unk22 = tires[1].unk40;
+    tires[2].unk22 = tires[2].unk40;
+    tires[3].unk22 = tires[3].unk40;
+    tires[0].unk24 = tires[0].unk40;
+    tires[1].unk24 = tires[1].unk40;
+    tires[2].unk24 = tires[2].unk40;
+    tires[3].unk24 = tires[3].unk40;
+    tires[0].unk0 = 1;
+    tires[1].unk0 = 1;
+    tires[2].unk0 = 1;
+    tires[3].unk0 = 1;
+}
+
+s16 GetClosestTriggerPt(Car* car, u8 isPlayer)
+{
+    s32 group;
+    s16 i;
+    s16 best;
+    s32 bestDist;
+    s32 dx;
+    s32 dz;
+    s32 distance;
+    CarMotion* m;
+
+    if (isPlayer) {
+        group = PLAYER_CAR(car)->unkC0;
+        m = &PLAYER_CAR(car)->motion;
+    } else {
+        group = AI_CAR(car)->unk176;
+        m = &AI_CAR(car)->motion;
+    }
+    best = 0;
+    bestDist = 0x7FFFFFFF;
+    for (i = 0; i < numTriggerPoints; i++) {
+        if (tPoints[i].type != group && group < 11) {
+            continue;
+        }
+        dx = m->pos.vx - tPoints[i].vx;
+        dz = m->pos.vy - tPoints[i].vy;
+        distance = abs(dx) + abs(dz);
+        if (distance < bestDist) {
+            best = i;
+            bestDist = distance;
+        }
+    }
+    return best;
+}
+
+void CalcTireCoordinates(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    CarStats* st;
+    CarTire* tires;
+    s16 g0;
+    s16 g1;
+    s16 g2;
+    s16 g3;
+    s32 stepLimit;
+    s32 previousHeight;
+    s32 value;
+    s32 tireOffset;
+    s32 previousGroup;
+    VECTOR3 vin;
+    VECTOR3 vout;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        st = &PLAYER_CAR(car)->stats;
+        tires = PLAYER_CAR(car)->tires;
+    } else {
+        m = &AI_CAR(car)->motion;
+        st = &AI_CAR(car)->stats;
+        tires = AI_CAR(car)->tires;
+    }
+    vin.vx = -st->unk74 / 2;
+    vin.vy = st->unk80;
+    vin.vz = -st->unk6C;
+    mathMulTransVec(&m->mat2, &vin, &tires[0].unk2C);
+    tires[0].unk38 = m->pos.vx + tires[0].unk2C.vx;
+    tires[0].unk3C = m->pos.vy + tires[0].unk2C.vy;
+    vin.vx = st->unk74 / 2;
+    vin.vy = st->unk80;
+    vin.vz = -st->unk6C;
+    mathMulTransVec(&m->mat2, &vin, &tires[1].unk2C);
+    tires[1].unk38 = m->pos.vx + tires[1].unk2C.vx;
+    tires[1].unk3C = m->pos.vy + tires[1].unk2C.vy;
+    vin.vx = -st->unk74 / 2;
+    vin.vy = st->unk84;
+    vin.vz = -st->unk6C;
+    mathMulTransVec(&m->mat2, &vin, &tires[2].unk2C);
+    tires[2].unk38 = m->pos.vx + tires[2].unk2C.vx;
+    tires[2].unk3C = m->pos.vy + tires[2].unk2C.vy;
+    vin.vx = st->unk74 / 2;
+    vin.vy = st->unk84;
+    vin.vz = -st->unk6C;
+    mathMulTransVec(&m->mat2, &vin, &tires[3].unk2C);
+    tires[3].unk38 = m->pos.vx + tires[3].unk2C.vx;
+    tires[3].unk3C = m->pos.vy + tires[3].unk2C.vy;
+
+    vin.vx = m->vel.vx / 32;
+    vin.vy = m->vel.vy / 32;
+    vin.vz = m->vel.vz / 32;
+    mathMulTransVec(&m->mat, &vin, &vout);
+    tires[0].unk38 += vout.vx;
+    tires[0].unk3C += vout.vy;
+    tires[0].unk40 += vout.vz;
+    tires[1].unk38 += vout.vx;
+    tires[1].unk3C += vout.vy;
+    tires[1].unk40 += vout.vz;
+    tires[2].unk38 += vout.vx;
+    tires[2].unk3C += vout.vy;
+    tires[2].unk40 += vout.vz;
+    tires[3].unk38 += vout.vx;
+    tires[3].unk3C += vout.vy;
+    tires[3].unk40 += vout.vz;
+
+    value = tires[0].unk38;
+    g0 = GetGroupTestPointIsIn(value, tires[0].unk3C, m->pos.vz);
+    g1 = GetGroupTestPointIsIn(tires[1].unk38, tires[1].unk3C, m->pos.vz);
+    g2 = GetGroupTestPointIsIn(tires[2].unk38, tires[2].unk3C, m->pos.vz);
+    g3 = GetGroupTestPointIsIn(tires[3].unk38, tires[3].unk3C, m->pos.vz);
+    stepLimit = st->unk5C + abs(m->vel.vy / 32);
+
+    if (tires[0].unk10 != g0) {
+        previousGroup = tires[0].unk10;
+        value = triggerPtGroups.pos[g0].vz;
+        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        tireOffset = tires[0].unk40 - value;
+        value -= previousHeight;
+        if (value > 0) {
+            if ((-stepLimit < tireOffset || tires[1].unk10 == g0 || tires[2].unk10 == g0
+                    || tires[3].unk10 == g0)
+                && m->vel.vy != 0) {
+                tires[0].unk10 = g0;
+                if (tires[0].unk0 == 0) {
+                    tires[0].unk0 = 1;
+                    if (tires[0].unk08 < numCheckBridges) {
+                        tires[0].unk08++;
+                    } else {
+                        tires[0].unk08--;
+                    }
+                }
+                tires[0].unk26 = 0;
+                tires[0].unk16 = tireOffset;
+                tires[0].unk24 = triggerPtGroups.pos[g0].vz;
+            }
+        } else if (value < 0) {
+            tires[0].unk10 = g0;
+            tires[0].unk0 = 1;
+            tires[0].unk14 = 0;
+            tires[0].unk26 = 0;
+            tires[0].unk16 = tireOffset;
+            tires[0].unk24 = triggerPtGroups.pos[g0].vz;
+            tires[0].unk3 = 1;
+        } else {
+            tires[0].unk10 = g0;
+        }
+    }
+    if (tires[1].unk10 != g1) {
+        previousGroup = tires[1].unk10;
+        value = triggerPtGroups.pos[g1].vz;
+        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        tireOffset = tires[1].unk40 - value;
+        value -= previousHeight;
+        if (value > 0) {
+            if ((-stepLimit < tireOffset || tires[0].unk10 == g1 || tires[2].unk10 == g1
+                    || tires[3].unk10 == g1)
+                && m->vel.vy != 0) {
+                tires[1].unk10 = g1;
+                if (tires[1].unk0 == 0) {
+                    tires[1].unk0 = 1;
+                    if (tires[1].unk08 < numCheckBridges) {
+                        tires[1].unk08++;
+                    } else {
+                        tires[1].unk08--;
+                    }
+                }
+                tires[1].unk26 = 0;
+                tires[1].unk16 = tireOffset;
+                tires[1].unk24 = triggerPtGroups.pos[g1].vz;
+            }
+        } else if (value < 0) {
+            tires[1].unk10 = g1;
+            tires[1].unk0 = 1;
+            tires[1].unk14 = 0;
+            tires[1].unk26 = 0;
+            tires[1].unk16 = tireOffset;
+            tires[1].unk24 = triggerPtGroups.pos[g1].vz;
+            tires[1].unk3 = 1;
+        } else {
+            tires[1].unk10 = g1;
+        }
+    }
+    if (tires[2].unk10 != g2) {
+        previousGroup = tires[2].unk10;
+        value = triggerPtGroups.pos[g2].vz;
+        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        tireOffset = tires[2].unk40 - value;
+        value -= previousHeight;
+        if (value > 0) {
+            if ((-stepLimit < tireOffset || tires[0].unk10 == g2 || tires[1].unk10 == g2
+                    || tires[3].unk10 == g2)
+                && m->vel.vy != 0) {
+                tires[2].unk10 = g2;
+                if (tires[2].unk0 == 0) {
+                    tires[2].unk0 = 1;
+                    if (tires[2].unk08 < numCheckBridges) {
+                        tires[2].unk08++;
+                    } else {
+                        tires[2].unk08--;
+                    }
+                }
+                tires[2].unk26 = 0;
+                tires[2].unk16 = tireOffset;
+                tires[2].unk24 = triggerPtGroups.pos[g2].vz;
+            }
+        } else if (value < 0) {
+            tires[2].unk10 = g2;
+            tires[2].unk0 = 1;
+            tires[2].unk14 = 0;
+            tires[2].unk26 = 0;
+            tires[2].unk16 = tireOffset;
+            tires[2].unk24 = triggerPtGroups.pos[g2].vz;
+            tires[2].unk3 = 1;
+        } else {
+            tires[2].unk10 = g2;
+        }
+    }
+    if (tires[3].unk10 != g3) {
+        previousGroup = tires[3].unk10;
+        value = triggerPtGroups.pos[g3].vz;
+        previousHeight = triggerPtGroups.pos[previousGroup].vz;
+        tireOffset = tires[3].unk40 - value;
+        value -= previousHeight;
+        if (value > 0) {
+            if (-stepLimit < tireOffset || tires[0].unk10 == g3 || tires[1].unk10 == g3
+                || tires[2].unk10 == g3) {
+                if (m->vel.vy != 0) {
+                    tires[3].unk10 = g3;
+                    if (tires[3].unk0 == 0) {
+                        tires[3].unk0 = 1;
+                        if (tires[3].unk08 < numCheckBridges) {
+                            tires[3].unk08++;
+                        } else {
+                            tires[3].unk08--;
+                        }
+                    }
+                    tires[3].unk26 = 0;
+                    tires[3].unk16 = tireOffset;
+                    tires[3].unk24 = triggerPtGroups.pos[g3].vz;
+                }
+            }
+        } else if (value < 0) {
+            tires[3].unk10 = g3;
+            tires[3].unk0 = 1;
+            tires[3].unk14 = 0;
+            tires[3].unk26 = 0;
+            tires[3].unk16 = tireOffset;
+            tires[3].unk24 = triggerPtGroups.pos[g3].vz;
+            tires[3].unk3 = 1;
+        } else {
+            tires[3].unk10 = g3;
+        }
+    }
+    if (isPlayer) {
+        if (g0 == g1 && g0 == g2 && g0 == g3) {
+            PLAYER_CAR(car)->unkC0 = g0;
+        }
+    } else {
+        AI_CAR(car)->unk176 = g0;
+    }
+}
+
+void CheckBridges(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    CarStats* st;
+    u8* flags;
+    CarTire* tires;
+    u8 padFlag;
+    CarCollision* collision;
+    s32 bearing;
+    s32 d;
+    s32 h;
+    u8 ok;
+    u8 any3;
+    u8 any0;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        collision = &PLAYER_CAR(car)->collision;
+        padFlag = PLAYER_CAR(car)->skid[0x15];
+        st = &PLAYER_CAR(car)->stats;
+        flags = PLAYER_CAR(car)->flags;
+        tires = PLAYER_CAR(car)->tires;
+        bearing = PLAYER_CAR(car)->bearing;
+    } else {
+        m = &AI_CAR(car)->motion;
+        collision = &AI_CAR(car)->collision;
+        bearing = AI_CAR(car)->bearing;
+        padFlag = 0;
+        st = &AI_CAR(car)->stats;
+        flags = AI_CAR(car)->flags;
+        tires = AI_CAR(car)->tires;
+    }
+    d = m->vel.vy / 32;
+    if (flags[10] == 0) {
+        h = st->unk5C + abs(d);
+    } else {
+        h = 0xA0;
+    }
+
+    if (tires[0].unk0) {
+        if (GetBridgeGroundHeight(&tires[0], tires[0].unk08, h) == 0) {
+            tires[0].unk22 = tires[0].unk24;
+        }
+        if (tires[0].unk3 != 0 && tires[0].unk08 < numCheckBridges) {
+            CheckForBridge(&tires[0], 0, h);
+        }
+        if (tires[0].bombDamaged == 0 && tires[0].catapulted == 0) {
+            if (d < (s16)tires[0].unk14) {
+                tires[0].unk14 = d;
+            } else if ((s16)tires[0].unk14 < -d) {
+                tires[0].unk14 = -d;
+            }
+        }
+        GetBridgeTireHeight(&tires[0], h);
+        if (isPlayer && tires[0].unk3 == 0 && tires[0].unk26 < 2) {
+            tires[0].unk14 = (bridges[tires[0].unk08].unk0A * m->vel.vy) / st->unkA8;
+        }
+        if ((tires[0].unk12 & 7) == 0) {
+            tires[0].unk12++;
+        }
+    } else {
+        tires[0].unk14 = -1;
+        CheckForBridge(&tires[0], 0, h);
+        if (tires[0].unk3 != 0) {
+            GetBridgeTireHeight(&tires[0], h);
+        }
+    }
+
+    if (tires[1].unk0) {
+        if (GetBridgeGroundHeight(&tires[1], tires[1].unk08, h) == 0) {
+            tires[1].unk22 = tires[1].unk24;
+        }
+        if (tires[1].unk3 != 0 && tires[1].unk08 < numCheckBridges) {
+            CheckForBridge(&tires[1], 0, h);
+        }
+        if (tires[1].bombDamaged == 0 && tires[1].catapulted == 0) {
+            if (d < (s16)tires[1].unk14) {
+                tires[1].unk14 = d;
+            } else if ((s16)tires[1].unk14 < -d) {
+                tires[1].unk14 = -d;
+            }
+        }
+        GetBridgeTireHeight(&tires[1], h);
+        if (isPlayer && tires[1].unk3 == 0 && tires[1].unk26 < 2) {
+            tires[1].unk14 = (bridges[tires[1].unk08].unk0A * m->vel.vy) / st->unkA8;
+        }
+        if ((tires[1].unk12 & 7) == 0) {
+            tires[1].unk12++;
+        }
+    } else {
+        tires[1].unk14 = -1;
+        CheckForBridge(&tires[1], 0, h);
+        if (tires[1].unk3 != 0) {
+            GetBridgeTireHeight(&tires[1], h);
+        }
+    }
+
+    if (tires[2].unk0) {
+        if (GetBridgeGroundHeight(&tires[2], tires[2].unk08, h) == 0) {
+            tires[2].unk22 = tires[2].unk24;
+        }
+        if (tires[2].unk3 != 0 && tires[2].unk08 < numCheckBridges) {
+            CheckForBridge(&tires[2], 0, h);
+        }
+        if (tires[2].bombDamaged == 0 && tires[2].catapulted == 0) {
+            if (d < (s16)tires[2].unk14) {
+                tires[2].unk14 = d;
+            } else if ((s16)tires[2].unk14 < -d) {
+                tires[2].unk14 = -d;
+            }
+        }
+        GetBridgeTireHeight(&tires[2], h);
+        if (isPlayer && tires[2].unk3 == 0 && tires[2].unk26 < 2) {
+            tires[2].unk14 = (bridges[tires[2].unk08].unk0A * m->vel.vy) / st->unkA8;
+        }
+    } else {
+        tires[2].unk14 = -1;
+        CheckForBridge(&tires[2], 0, h);
+        if (tires[2].unk3 != 0) {
+            GetBridgeTireHeight(&tires[2], h);
+        }
+    }
+
+    if (tires[3].unk0) {
+        if (GetBridgeGroundHeight(&tires[3], tires[3].unk08, h) == 0) {
+            tires[3].unk22 = tires[3].unk24;
+        }
+        if (tires[3].unk3 != 0 && tires[3].unk08 < numCheckBridges) {
+            CheckForBridge(&tires[3], 0, h);
+        }
+        if (tires[3].bombDamaged == 0 && tires[3].catapulted == 0) {
+            if (d < (s16)tires[3].unk14) {
+                tires[3].unk14 = d;
+            } else if ((s16)tires[3].unk14 < -d) {
+                tires[3].unk14 = -d;
+            }
+        }
+        GetBridgeTireHeight(&tires[3], h);
+        if (isPlayer && tires[3].unk3 == 0 && tires[3].unk26 < 2) {
+            tires[3].unk14 = (bridges[tires[3].unk08].unk0A * m->vel.vy) / st->unkA8;
+        }
+    } else {
+        tires[3].unk14 = -1;
+        CheckForBridge(&tires[3], 0, h);
+        if (tires[3].unk3 != 0) {
+            GetBridgeTireHeight(&tires[3], h);
+        }
+    }
+
+    if ((isPlayer && flags[23] == 0 && flags[11] == 0) || (!isPlayer && flags[23] == 0)) {
+        if (isPlayer) {
+            ok = !(abs(m->vel.vy) < st->unkAC && padFlag);
+        } else {
+            ok = flags[0] != 0;
+        }
+        if (ok) {
+            if (m->rot.vx >= 57) {
+                if (m->rot.vx >= 228) {
+                    m->vel.vy = m->vel.vy + 3 * st->unkA0;
+                } else if (m->rot.vx >= 114) {
+                    m->vel.vy = m->vel.vy + 2 * st->unkA0;
+                } else {
+                    m->vel.vy = m->vel.vy + st->unkA0;
+                }
+            } else if (m->rot.vx < -56) {
+                if (m->rot.vx < -227) {
+                    m->vel.vy = m->vel.vy - 3 * st->unkA0;
+                } else if (m->rot.vx < -113) {
+                    m->vel.vy = m->vel.vy - 2 * st->unkA0;
+                } else {
+                    m->vel.vy = m->vel.vy - st->unkA0;
+                }
+            }
+        }
+    }
+    if (isPlayer) {
+        if (st->unkAC < abs(m->vel.vy)) {
+            if (m->rot.vy >= 171) {
+                if (m->vel.vy <= 0) {
+                    if (m->rotDelta.vz < st->unkEC) {
+                        m->rotDelta.vz = m->rotDelta.vz + st->unkCC / 2;
+                    }
+                } else if (-st->unkEC < m->rotDelta.vz) {
+                    m->rotDelta.vz = m->rotDelta.vz - st->unkCC / 2;
+                }
+            } else if (m->rot.vy < -170) {
+                if (m->vel.vy > 0) {
+                    if (m->rotDelta.vz < st->unkEC) {
+                        m->rotDelta.vz = m->rotDelta.vz + st->unkCC / 2;
+                    }
+                } else if (-st->unkEC < m->rotDelta.vz) {
+                    m->rotDelta.vz = m->rotDelta.vz - st->unkCC / 2;
+                }
+            }
+        }
+    }
+
+    any3 = 0;
+    if (tires[0].unk3 != 0 || tires[1].unk3 != 0 || tires[2].unk3 != 0 || tires[3].unk3 != 0) {
+        any3 = 1;
+    }
+    flags[11] = any3;
+    if (flags[11]) {
+        SetFullCarDrift(m);
+    }
+    any0 = 0;
+    if (tires[0].unk0 != 0 || tires[1].unk0 != 0 || tires[2].unk0 != 0 || tires[3].unk0 != 0) {
+        any0 = 1;
+    }
+    if (any0) {
+        if (flags[10] == 0) {
+            collision->unk12 = 0xE;
+        }
+    } else if (flags[10] != 0) {
+        SetBounce(car, 3, 2, 1, isPlayer);
+        collision->unk12 = 0x27;
+    }
+    flags[10] = any0;
+    if (flags[10] == 0) {
+        return;
+    }
+
+    if (tires[0].unk6 != 0) {
+        if (tires[1].unk0 != 0) {
+            if (tires[0].unk08 == tires[1].unk08) {
+                tires[0].unk0 = 1;
+            }
+        } else if (tires[2].unk0 != 0) {
+            if (tires[0].unk08 == tires[2].unk08) {
+                tires[0].unk0 = 1;
+            }
+        } else if (tires[3].unk0 != 0) {
+            if (tires[0].unk08 == tires[3].unk08) {
+                tires[0].unk0 = 1;
+            }
+        }
+    }
+    if (tires[1].unk6 != 0) {
+        if (tires[0].unk0 != 0) {
+            if (tires[1].unk08 == tires[0].unk08) {
+                tires[1].unk0 = 1;
+            }
+        } else if (tires[2].unk0 != 0) {
+            if (tires[1].unk08 == tires[2].unk08) {
+                tires[1].unk0 = 1;
+            }
+        } else if (tires[3].unk0 != 0) {
+            if (tires[1].unk08 == tires[3].unk08) {
+                tires[1].unk0 = 1;
+            }
+        }
+    }
+    if (tires[2].unk6 != 0) {
+        if (tires[0].unk0 != 0) {
+            if (tires[2].unk08 == tires[0].unk08) {
+                tires[2].unk0 = 1;
+            }
+        } else if (tires[1].unk0 != 0) {
+            if (tires[2].unk08 == tires[1].unk08) {
+                tires[2].unk0 = 1;
+            }
+        } else if (tires[3].unk0 != 0) {
+            if (tires[2].unk08 == tires[3].unk08) {
+                tires[2].unk0 = 1;
+            }
+        }
+    }
+    if (tires[3].unk6 != 0) {
+        if (tires[0].unk0 != 0) {
+            if (tires[3].unk08 == tires[0].unk08) {
+                tires[3].unk0 = 1;
+            }
+        } else if (tires[1].unk0 != 0) {
+            if (tires[3].unk08 == tires[1].unk08) {
+                tires[3].unk0 = 1;
+            }
+        } else if (tires[2].unk0 != 0) {
+            if (tires[3].unk08 == tires[2].unk08) {
+                tires[3].unk0 = 1;
+            }
+        }
+    }
+    if (tires[0].unk0 != 0 && numCheckBridges < tires[0].unk08) {
+        if (tires[1].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[1], tires[0].unk08, h);
+        }
+        if (tires[2].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[2], tires[0].unk08, h);
+        }
+        if (tires[3].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[3], tires[0].unk08, h);
+        }
+    }
+    if (tires[1].unk0 != 0 && numCheckBridges < tires[1].unk08) {
+        if (tires[0].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[0], tires[1].unk08, h);
+        }
+        if (tires[2].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[2], tires[1].unk08, h);
+        }
+        if (tires[3].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[3], tires[1].unk08, h);
+        }
+    }
+    if (tires[2].unk0 != 0 && numCheckBridges < tires[2].unk08) {
+        if (tires[0].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[0], tires[2].unk08, h);
+        }
+        if (tires[1].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[1], tires[2].unk08, h);
+        }
+        if (tires[3].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[3], tires[2].unk08, h);
+        }
+    }
+    if (tires[3].unk0 != 0 && numCheckBridges < tires[3].unk08) {
+        if (tires[0].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[0], tires[3].unk08, h);
+        }
+        if (tires[1].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[1], tires[3].unk08, h);
+        }
+        if (tires[2].unk0 == 0) {
+            GetBridgeGroundHeight(&tires[2], tires[3].unk08, h);
+        }
+    }
+}
+
+void CheckForBridge(CarTire* tire, u8 which, s32 h)
+{
+    s16 i;
+    s16 n;
+
+    if (which) {
+        n = numBridges;
+    } else {
+        n = numCheckBridges;
+    }
+    for (i = 0; i < n; i++) {
+        if (GetBridgeGroundHeight(tire, i, h)) {
+            break;
+        }
+    }
+    if (tire->unk0 == 0) {
+        tire->unk22 = tire->unk24;
+    }
+}
+
+u8 GetBridgeGroundHeight(CarTire* tire, s16 idx, s32 h)
+{
+    u8 r;
+    s32 k;
+    s32 deltaHeight;
+    s32 extent;
+
+    s16 i;
+    s32 current;
+
+    r = 0;
+    if (idx >= 0 && numBridges >= idx) {
+        if (tire->unk38 >= bridges[idx].minX && tire->unk3C >= bridges[idx].minZ
+            && bridges[idx].minX + bridges[idx].extentX >= tire->unk38
+            && bridges[idx].minZ + bridges[idx].extentZ >= tire->unk3C) {
+            tire->unk22 = tire->unk24;
+            k = bridges[idx].rampDir;
+            if (k == 0) {
+                extent = bridges[idx].extentZ;
+                deltaHeight = bridges[idx].y1 - bridges[idx].y0;
+                tire->unk22
+                    += bridges[idx].y0 + deltaHeight * (tire->unk3C - bridges[idx].minZ) / extent;
+            } else if (k == 1) {
+                extent = bridges[idx].extentZ;
+                deltaHeight = bridges[idx].y0 - bridges[idx].y1;
+                tire->unk22 += bridges[idx].y1
+                    + deltaHeight * (bridges[idx].minZ + extent - tire->unk3C) / extent;
+            } else if (k == 2) {
+                extent = bridges[idx].extentX;
+                deltaHeight = bridges[idx].y1 - bridges[idx].y0;
+                tire->unk22
+                    += bridges[idx].y0 + deltaHeight * (tire->unk38 - bridges[idx].minX) / extent;
+            } else {
+                extent = bridges[idx].extentX;
+                deltaHeight = bridges[idx].y0 - bridges[idx].y1;
+                tire->unk22 += bridges[idx].y1
+                    + deltaHeight * (bridges[idx].minX + extent - tire->unk38) / extent;
+            }
+            if (h < (s16)tire->unk22 - tire->unk40) {
+                tire->unk6 = 1;
+                tire->unk08 = idx;
+                tire->unk22 = tire->unk24;
+                r = 0;
+            } else {
+                tire->unk08 = idx;
+                tire->unk6 = 0;
+                tire->unk0E = bridges[idx].unk08;
+                if (tire->unk0 == 0) {
+                    if ((s16)tire->unk22 < (s16)tire->unk24) {
+                        tire->unk3 = 1;
+                    }
+                    tire->unk26 = 0;
+                }
+                tire->unk0 = 1;
+                r = 1;
+            }
+        } else {
+            current = tire->unk08;
+            if (current == idx) {
+                if (tire->unk0 != 0) {
+                    if (tire->unk3 == 0) {
+                        tire->unk3 = 1;
+                        tire->unk22 = tire->unk24;
+                        tire->unk12 = 1;
+                        if (tire->unk26 < 2) {
+                            tire->unk14 = bridges[current].unk0A;
+                        }
+                    }
+                    for (i = 0; i < 4; i++) {
+                        if (bridges[idx].obj[i] == -1)
+                            break;
+                        r = GetBridgeGroundHeight(tire, bridges[idx].obj[i], h);
+                    }
+                } else if (tire->unk6 != 0) {
+                    tire->unk6 = 0;
+                }
+            }
+        }
+    }
+    return r;
+}
+
+void GetBridgeTireHeight(CarTire* tire, s32 h)
+{
+    s32 d;
+
+    if (tire->unk3) {
+        if ((s16)tire->unk12 > 0) {
+            tire->unk28 = ~(GetFieldsLastFrame() * 2) * ((s16)tire->unk12 * (s16)tire->unk12);
+        } else {
+            tire->unk28 = 0;
+        }
+        if (tire->unk28 < -4096 - ((s16)tire->unk14 * 32)) {
+            tire->unk28 = -4096 - ((s16)tire->unk14 * 32);
+        } else {
+            tire->unk12++;
+        }
+        d = tire->unk28;
+        tire->unk16 = tire->unk16 + (tire->unk14 + d / 32);
+        if ((s16)tire->unk24 + tire->unk16 <= (s16)tire->unk22) {
+            tire->unk3 = 0;
+            if (GetBridgeGroundHeight(tire, tire->unk08, h) == 0) {
+                tire->unk0 = 0;
+                tire->unk3 = 0;
+                tire->unk16 = 0;
+                tire->unk0E = 0;
+                CheckForBridge(tire, 0, h);
+                if (tire->unk0 == 0) {
+                    tire->unk22 = tire->unk24;
+                    tire->unk16 = 0;
+                    tire->unk14 = -1;
+                }
+            }
+        }
+        tire->unk26 = 0;
+    } else {
+        tire->unk14 = tire->unk22 - (tire->unk24 + tire->unk16);
+        (tire->unk26)++;
+        if (h < (s16)tire->unk14) {
+            tire->unk14 = h;
+        } else if ((s16)tire->unk14 < -h) {
+            tire->unk14 = -h;
+        }
+        tire->unk16 = tire->unk22 - tire->unk24;
+        tire->unk12 = 1;
+        tire->unk3 = 0;
+        if (GetBridgeGroundHeight(tire, tire->unk08, h) == 0) {
+            tire->unk0 = 0;
+            tire->unk3 = 0;
+            tire->unk16 = 0;
+        }
+    }
+}
+
+void CheckSlickSpots(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    u8* flags;
+    CarStats* st;
+    s16 i;
+    s16 n;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        flags = PLAYER_CAR(car)->flags;
+        st = &PLAYER_CAR(car)->stats;
+    } else {
+        m = &AI_CAR(car)->motion;
+        flags = AI_CAR(car)->flags;
+        st = &AI_CAR(car)->stats;
+    }
+    if (flags[18]) {
+        st->unk1C -= GetFieldsLastFrame();
+        if (st->unk1C <= 0) {
+            flags[13] = 0;
+            flags[18] = 0;
+        } else {
+            flags[13] = 1;
+        }
+    } else {
+        flags[13] = 0;
+    }
+    n = numSlickSpots;
+    for (i = 0; i < n; i++) {
+        if (m->pos.vx < slickSpots[i].x) {
+            continue;
+        }
+        if (m->pos.vy < slickSpots[i].z) {
+            continue;
+        }
+        if (slickSpots[i].x + slickSpots[i].w < m->pos.vx) {
+            continue;
+        }
+        if (slickSpots[i].z + slickSpots[i].h < m->pos.vy) {
+            continue;
+        }
+        flags[13] = 1;
+        return;
+    }
+}
+
+void CheckCurbs(Car* car, u8 isPlayer)
+{
+    CarTire* tires;
+    u8* flags;
+    CarCollision* collision;
+
+    if (isPlayer) {
+        tires = PLAYER_CAR(car)->tires;
+        flags = PLAYER_CAR(car)->flags;
+        collision = &PLAYER_CAR(car)->collision;
+    } else {
+        tires = AI_CAR(car)->tires;
+        flags = AI_CAR(car)->flags;
+        collision = &AI_CAR(car)->collision;
+    }
+    if (tires[0].unk3 == 0) {
+        CheckForCurb(&tires[0], collision);
+    }
+    if (tires[1].unk3 == 0) {
+        CheckForCurb(&tires[1], collision);
+    }
+    if (tires[2].unk3 == 0) {
+        CheckForCurb(&tires[2], collision);
+    }
+    if (tires[3].unk3 == 0) {
+        CheckForCurb(&tires[3], collision);
+    }
+    flags[14] = tires[0].unk2 || tires[1].unk2 || tires[2].unk2 || tires[3].unk2;
+}
+
+void CheckForCurb(CarTire* tire, CarCollision* collision)
+{
+    s16 i;
+    u8 found;
+
+    found = 0;
+    for (i = 0; i < numCurbs; i++) {
+        if (tire->unk38 < curbs[i].x) {
+            continue;
+        }
+        if (tire->unk3C < curbs[i].z) {
+            continue;
+        }
+        if (curbs[i].x + curbs[i].w < tire->unk38) {
+            continue;
+        }
+        if (curbs[i].z + curbs[i].h < tire->unk3C) {
+            continue;
+        }
+        if (tire->unk2 == 0) {
+            collision->unk12 = 0x11;
+        }
+        tire->unk2 = 1;
+        found = 1;
+        tire->unk0C = i;
+        break;
+    }
+    if (found) {
+        tire->unk1A = curbs[tire->unk0C].t;
+    } else {
+        tire->unk1A = 0;
+    }
+    if (tire->unk2 != 0 && found == 0) {
+        collision->unk12 = 0xD;
+    }
+    tire->unk2 = found;
+}
+
+void CheckPotHoles(Car* car, u8 isPlayer)
+{
+    CarTire* tires;
+    u8* flags;
+    CarCollision* collision;
+
+    if (isPlayer) {
+        tires = PLAYER_CAR(car)->tires;
+        flags = PLAYER_CAR(car)->flags;
+        collision = &PLAYER_CAR(car)->collision;
+    } else {
+        tires = AI_CAR(car)->tires;
+        flags = AI_CAR(car)->flags;
+        collision = &AI_CAR(car)->collision;
+    }
+    if (tires[0].unk3 == 0) {
+        CheckForPotHole(&tires[0], collision);
+    }
+    if (tires[1].unk3 == 0) {
+        CheckForPotHole(&tires[1], collision);
+    }
+    if (tires[2].unk3 == 0) {
+        CheckForPotHole(&tires[2], collision);
+    }
+    if (tires[3].unk3 == 0) {
+        CheckForPotHole(&tires[3], collision);
+    }
+    flags[12] = tires[0].unk1 || tires[1].unk1 || tires[2].unk1 || tires[3].unk1;
+}
+
+void CheckForPotHole(CarTire* tire, CarCollision* collision)
+{
+    s16 i;
+    u8 found;
+
+    found = 0;
+    for (i = 0; i < numCheckPotHoles; i++) {
+        if (tire->unk38 < potHoles[i].x) {
+            continue;
+        }
+        if (tire->unk3C < potHoles[i].z) {
+            continue;
+        }
+        if (potHoles[i].x + potHoles[i].a < tire->unk38) {
+            continue;
+        }
+        if (potHoles[i].z + potHoles[i].b < tire->unk3C) {
+            continue;
+        }
+        if (tire->unk1 == 0) {
+            collision->unk12 = 0x1D;
+        }
+        tire->unk1 = 1;
+        found = 1;
+        tire->unk0A = i;
+        break;
+    }
+    if (found) {
+        if (potHoles[(s16)tire->unk0A].active) {
+            tire->unk18 = potHoles[(s16)tire->unk0A].c;
+        } else {
+            tire->unk18 = (potHoles[(s16)tire->unk0A].c
+                              * (((tire->unk38 - potHoles[(s16)tire->unk0A].x) % 3)
+                                  + ((tire->unk3C - potHoles[(s16)tire->unk0A].z) % 3)))
+                / 6;
+        }
+    } else {
+        tire->unk18 = 0;
+    }
+    tire->unk1 = found;
+}
+
+void UpdateRollingCar(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    CarStats* st;
+    CarTire* tires;
+    u8* flags;
+    s32 lim;
+    s32 r;
+    s32 w;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        st = &PLAYER_CAR(car)->stats;
+        tires = PLAYER_CAR(car)->tires;
+        flags = PLAYER_CAR(car)->flags;
+    } else {
+        m = &AI_CAR(car)->motion;
+        st = &AI_CAR(car)->stats;
+        tires = AI_CAR(car)->tires;
+        flags = AI_CAR(car)->flags;
+    }
+    if (m->vel.vy < 32 * (2850 * GetFieldsLastFrame() / 100)) {
+        lim = 32 * (2850 * GetFieldsLastFrame() / 100);
+    } else {
+        lim = m->vel.vy;
+    }
+    r = m->vel.vy * (91 * GetFieldsLastFrame()) / lim;
+    if (r < 0) {
+        if (-45 * GetFieldsLastFrame() < r) {
+            r = -45 * GetFieldsLastFrame();
+        }
+    } else if (r < 45 * GetFieldsLastFrame()) {
+        r = 45 * GetFieldsLastFrame();
+    }
+    if (flags[11] == 0) {
+        if (arena_rand() & 1) {
+            explodeCreateFragments(1, &m->pos);
+        }
+        if ((arena_rand() & 1) == 0) {
+            do_smoke(&m->pos);
+        }
+    }
+    if (m->rotDelta.vy > 0) {
+        r += abs(rsin(m->rot.vy)) * r / 4096;
+        m->rot.vy = m->rot.vy + r;
+    } else {
+        r += abs(rsin(m->rot.vy)) * r / 4096;
+        m->rot.vy = m->rot.vy - r;
+    }
+    if (abs(m->vel.vy) < 32 * (950 * GetFieldsLastFrame() / 100)) {
+        if (abs(m->rot.vy) < abs(3 * r)) {
+            flags[23] = 0;
+            m->rotDelta.vy = 0;
+            m->rot.vy = 0;
+            SetNoCarDrift(m, flags);
+        }
+    } else {
+        w = rsin(m->rot.vy) * st->unk74 / 4096;
+        tires[0].unk40 += w;
+        tires[1].unk40 += w;
+        tires[2].unk40 += w;
+        tires[3].unk40 += w;
+        if (m->vel.vy != 0) {
+            if (m->vel.vy > 0) {
+                m->vel.vy = m->vel.vy - st->unkBC / 3;
+            } else {
+                m->vel.vy = m->vel.vy + st->unkBC / 3;
+            }
+        }
+        m->rot2.vz = (s16)m->unk02;
+        flags[1] = 1;
+        m->rot.vz = SmoothAngleValue(m->rot.vz, m->unk04, 95);
+    }
+}
+
+void UpdateTirePositions(Car* car, u8 isPlayer)
+{
+    CarMotion* m;
+    CarStats* st;
+    CarTire* tires;
+    u8* flags;
+    CarBounce* bounce;
+    s32 hi;
+    s32 lo;
+    s32 lim;
+    s32 d0;
+    s32 d1;
+    s32 t;
+    s32 p;
+    s32 ang;
+    s32 roll;
+    s32 width;
+
+    if (isPlayer) {
+        m = &PLAYER_CAR(car)->motion;
+        st = &PLAYER_CAR(car)->stats;
+        tires = PLAYER_CAR(car)->tires;
+        flags = PLAYER_CAR(car)->flags;
+        bounce = &PLAYER_CAR(car)->bounce;
+    } else {
+        m = &AI_CAR(car)->motion;
+        st = &AI_CAR(car)->stats;
+        tires = AI_CAR(car)->tires;
+        flags = AI_CAR(car)->flags;
+        bounce = &AI_CAR(car)->bounce;
+    }
+    tires[0].unk40 = (s16)tires[0].unk24 + tires[0].unk16 + tires[0].unk18 + (s16)tires[0].unk1C
+        + (s16)tires[0].unk1E + tires[0].unk20;
+    if (tires[0].unk0 == 0) {
+        tires[0].unk40 += tires[0].unk1A;
+    }
+    tires[1].unk40 = (s16)tires[1].unk24 + tires[1].unk16 + tires[1].unk18 + (s16)tires[1].unk1C
+        + (s16)tires[1].unk1E + tires[1].unk20;
+    if (tires[1].unk0 == 0) {
+        tires[1].unk40 += tires[1].unk1A;
+    }
+    tires[2].unk40 = (s16)tires[2].unk24 + tires[2].unk16 + tires[2].unk18 + (s16)tires[2].unk1C
+        + (s16)tires[2].unk1E + tires[2].unk20;
+    if (tires[2].unk0 == 0) {
+        tires[2].unk40 += tires[2].unk1A;
+    }
+    tires[3].unk40 = (s16)tires[3].unk24 + tires[3].unk16 + tires[3].unk18 + (s16)tires[3].unk1C
+        + (s16)tires[3].unk1E + tires[3].unk20;
+    if (tires[3].unk0 == 0) {
+        tires[3].unk40 += tires[3].unk1A;
+    }
+    if (tires[0].unk40 < tires[1].unk40) {
+        hi = tires[1].unk40;
+    } else {
+        hi = tires[0].unk40;
+    }
+    p = tires[2].unk40 < tires[3].unk40 ? tires[3].unk40 : tires[2].unk40;
+    lo = p;
+    if (hi >= lo) {
+        lo = hi;
+    }
+    lim = 3 * st->unk78 / 4;
+    lim = lo - lim;
+    if (tires[0].unk40 < lim) {
+        tires[0].unk40 = lim;
+    }
+    if (tires[1].unk40 < lim) {
+        tires[1].unk40 = lim;
+    }
+    if (tires[2].unk40 < lim) {
+        tires[2].unk40 = lim;
+    }
+    if (tires[3].unk40 < lim) {
+        tires[3].unk40 = lim;
+    }
+    roll = ((tires[1].unk40 - tires[0].unk40) + (tires[3].unk40 - tires[2].unk40)) / 2;
+    if (flags[23] != 0) {
+        UpdateRollingCar(car, isPlayer);
+    } else if (flags[0] == 0) {
+        m->rot.vy = ratan2(roll, st->unk74);
+        if (m->rot.vy >= 854) {
+            m->rot.vy = 853;
+        } else if (m->rot.vy < -853) {
+            m->rot.vy = -853;
+        }
+        d0 = 0;
+        if (tires[0].unk0 != tires[1].unk0 && tires[2].unk0 != tires[3].unk0) {
+            d0 = (s16)tires[0].unk14 / GetFieldsLastFrame();
+            d1 = (s16)tires[1].unk14 / GetFieldsLastFrame();
+        } else {
+            d1 = 0;
+        }
+        if (d0 + st->unk5C < d1 && m->vel.vy > st->unkC0) {
+            flags[23] = 1;
+            m->unk02 = m->rot2.vz;
+            m->rotDelta.vy = 1;
+            m->unk04 = m->rot2.vz + 1024;
+        } else if (d1 + st->unk5C < d0 && st->unkA8 / 2 < m->vel.vy) {
+            flags[23] = 1;
+            m->unk02 = m->rot2.vz;
+            m->rotDelta.vy = -1;
+            m->unk04 = m->rot2.vz - 1024;
+        }
+    }
+    if (flags[0] != 0 && flags[10] == 0) {
+        m->rot.vx = SmoothAngleValue(m->rot.vx, 0, 98);
+    } else {
+        m->rot.vx = -ratan2(
+            ((tires[0].unk40 - tires[2].unk40) + (tires[1].unk40 - tires[3].unk40)) / 2, st->unk78);
+    }
+    if (m->rot.vx >= 513) {
+        m->rot.vx = 512;
+    } else if (m->rot.vx < -512) {
+        m->rot.vx = -512;
+    }
+    if (flags[10] == 0) {
+        m->rot.vx += bounce->unk30;
+        m->rot.vy += bounce->unk34;
+    }
+    m->pos.vz = (tires[0].unk40 + tires[1].unk40 + tires[2].unk40 + tires[3].unk40) / 4;
+    width = st->unk74;
+    ang = abs(m->rot.vy);
+    t = width / 2 + 8;
+    BoundAngle(&ang);
+    if (ang < 1024) {
+        hi = t * ang / 1024;
+        hi += st->unk6C - st->unk6C * ang / 1024;
+    } else {
+        p = t * (ang - 1024);
+        ang -= 1024;
+        hi = t - p / 1024;
+        hi += st->unk70 * ang / 1024;
+    }
+    m->pos.vz += hi;
+}

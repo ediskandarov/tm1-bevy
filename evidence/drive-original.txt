@@ -1,0 +1,43 @@
+
+running 9 tests
+test drive::graph_tests::rejects_truncated_and_cyclic_collision_records ... ok
+test tests::original_timer_rounding_and_clamp ... ok
+test drive::reference::mips::executes_branch_and_load_delay_slots ... ok
+test tests::unsigned_clock_wrap_and_replay_reset ... ok
+test drive::reference::fire_missile_impact_original ... ok
+vehicle fixture at tick 13, taxi [1411, 1401, 16], police [1500, 1500, 16]
+test drive::reference::bullet_impact_original ... ok
+test drive::reference::police_update_original ... ok
+test drive::reference::coupled_arena_original ... ok
+wall fixture at tick 73, taxi [3946, 3946, 16], police [4096, 2896, 0]
+test drive::reference::vehicle_and_wall_contact_original ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s
+
+
+running 4 tests
+test mips::executes_branch_and_load_delay_slots ... ok
+arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 16], [776, 3545, 15], 1805839267))
+arena replay: 109 contact steps; first Some(([1123, 1123, 16], [4096, 2896, 15], 1303003706)); last Some(([460, 3467, 16], [776, 3545, 15], 1805839267))
+test arena_replay ... ok
+timing [3], ramp false, 360 steps, max body height 134, all tires airborne false
+timing [3, 4, 5, 3], ramp false, 360 steps, max body height 112, all tires airborne true
+timing [3], ramp true, 360 steps, max body height 164, all tires airborne true
+test drive_trace ... ok
+9381 original HDP world queries, 2742 solid contacts
+test world_projectile_contacts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+
+running 2 tests
+test mips::executes_branch_and_load_delay_slots ... ok
+test native_math_matches_original_instructions ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.73s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

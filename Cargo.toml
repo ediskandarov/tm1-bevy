@@ -1,0 +1,18 @@
+[package]
+name = "tm1-bevy"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bevy = { version = "=0.20.1", default-features = false, features = ["std", "default_app", "bevy_winit", "multi_threaded", "2d_bevy_render", "png", "bevy_text","default_font","bevy_audio", "bevy_gilrs", "wav"] }
+tm1-assets = { path = "crates/tm1-assets" }
+tm1-core = { path = "crates/tm1-core" }
+anyhow = "1"
+wgpu = {version="=30.0.2", default-features=false}
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

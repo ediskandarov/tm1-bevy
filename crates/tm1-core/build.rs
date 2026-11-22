@@ -1,0 +1,22 @@
+fn main() {
+    println!("cargo:rerun-if-changed=native");
+    cc::Build::new()
+        .file("native/upstream/TIMER.c")
+        .file("native/upstream/MATH.c")
+        .file("native/timer_host.c")
+        .file("native/upstream/car_dynamics.c")
+        .file("native/car_host.c")
+        .file("native/upstream/arena_ground.c")
+        .file("native/upstream/arena_hd.c")
+        .file("native/upstream/arena_hdp.c")
+        .file("native/upstream/arena_guns.c")
+        .file("native/upstream/arena_missiles.c")
+        .file("native/upstream/car_collision.c")
+        .file("native/upstream/arena_damage.c")
+        .file("native/collision_scene.c")
+        .file("native/upstream/ai_driving.c")
+        .include("native/include")
+        .flag_if_supported("-std=c99")
+        .flag_if_supported("-fwrapv")
+        .compile("tm1_core");
+}

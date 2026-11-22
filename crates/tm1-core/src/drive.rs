@@ -1,0 +1,377 @@
+//! Fixed-step vehicle, terrain, collision and projectile simulation for the JP arena.
+unsafe extern "C" {
+    fn tm1_use_scene(scene: *mut std::ffi::c_void);
+    fn tm1_taxi_init(state: *mut u8, seed: *mut u32);
+    fn tm1_drive_step(
+        state: *mut u8,
+        buttons: u16,
+        fields: i16,
+        frame: u32,
+        table: *const i16,
+        seed: *mut u32,
+    );
+}
+
+pub struct Taxi {
+    trig: Box<[i16]>,
+    seed: u32,
+    state: [u8; 0x4a4],
+    frame: u32,
+}
+#[derive(Default, Clone, Copy)]
+pub struct Input {
+    pub accelerate: bool,
+    pub reverse: bool,
+    pub left: bool,
+    pub right: bool,
+    pub hard_turn: bool,
+    pub turbo: bool,
+    pub fire_guns: bool,
+    pub missile: bool,
+    pub cycle_weapon: bool,
+}
+impl Input {
+    pub fn ps1_buttons(self) -> u16 {
+        ((self.accelerate as u16) << 7)
+            | ((self.reverse as u16) << 5)
+            | ((self.left as u16) << 15)
+            | ((self.right as u16) << 13)
+            | ((self.hard_turn as u16) << 6)
+            | ((self.turbo as u16) << 4)
+            | ((self.fire_guns as u16) << 1)
+            | self.missile as u16
+            | ((self.cycle_weapon as u16) << 2)
+    }
+}
+impl Taxi {
+    pub fn from_executable(exe: &[u8]) -> Option<Self> {
+        if exe.get(..8)? != b"PS-X EXE" {
+            return None;
+        }
+        let base = u32::from_le_bytes(exe.get(24..28)?.try_into().ok()?);
+        let offset = 2048 + 0x80183f14u32.checked_sub(base)? as usize;
+        let trig: Vec<_> = exe
+            .get(offset..offset + (0x80188d58 - 0x80183f14) + 2050)?
+            .chunks_exact(2)
+            .map(|b| i16::from_le_bytes([b[0], b[1]]))
+            .collect();
+        let trig = trig.into_boxed_slice();
+
+        let mut state = [0; 0x4a4];
+        let mut seed = 1;
+        {
+            let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            unsafe { tm1_taxi_init(state.as_mut_ptr(), &mut seed) };
+        }
+        Some(Self {
+            state,
+            frame: 0,
+            trig,
+            seed,
+        })
+    }
+}
+impl Taxi {
+    pub fn reset(&mut self) {
+        self.seed = 1;
+        self.frame = 0;
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { tm1_taxi_init(self.state.as_mut_ptr(), &mut self.seed) }
+    }
+    pub fn rng_state(&self) -> u32 {
+        self.seed
+    }
+
+    /// Reproducible start behind the arena's 80-unit northbound ramp.
+    pub fn reset_at_test_ramp(&mut self) {
+        self.reset();
+        for (offset, value) in [(0x388, 2080i32), (0x38c, 1590), (0x3a8, 0), (0x3c0, 0)] {
+            self.state[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    pub fn state(&self) -> &[u8] {
+        &self.state
+    }
+    pub fn position(&self) -> [i32; 3] {
+        std::array::from_fn(|i| self.word(0x388 + i * 4))
+    }
+    pub fn rotation(&self) -> [[i16; 3]; 3] {
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let offset = 0x3d0 + 2 * (3 * i + j);
+                i16::from_le_bytes(self.state[offset..offset + 2].try_into().unwrap())
+            })
+        })
+    }
+    pub fn heading(&self) -> i32 {
+        self.word(0x3a8)
+    }
+    fn word(&self, i: usize) -> i32 {
+        i32::from_le_bytes(self.state[i..i + 4].try_into().unwrap())
+    }
+    pub fn step(&mut self, input: Input, fields: u8) {
+        self.step_in_scene(input, fields, std::ptr::null_mut())
+    }
+    fn step_in_scene(&mut self, input: Input, fields: u8, scene: *mut std::ffi::c_void) {
+        assert!((1..=5).contains(&fields));
+        self.frame = self.frame.wrapping_add(1);
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_use_scene(scene);
+            tm1_drive_step(
+                self.state.as_mut_ptr(),
+                input.ps1_buttons(),
+                fields.into(),
+                self.frame,
+                self.trig.as_ptr(),
+                &mut self.seed,
+            );
+            tm1_use_scene(std::ptr::null_mut());
+        }
+    }
+}
+
+unsafe extern "C" {
+    fn tm1_police_step(
+        scene: *mut std::ffi::c_void,
+        state: *mut u8,
+        target: *mut u8,
+        table: *const i16,
+        seed: *mut u32,
+        init: u8,
+        fields: i16,
+        frame: u32,
+    );
+}
+pub struct PoliceCar {
+    state: [u8; 0x560],
+}
+impl PoliceCar {
+    pub fn spawn(player: &mut Taxi) -> Self {
+        let mut car = Self { state: [0; 0x560] };
+        car.update(player, 3, true, std::ptr::null_mut());
+        car
+    }
+    pub fn step(&mut self, player: &mut Taxi, fields: u8) {
+        assert!((1..=5).contains(&fields));
+        self.update(player, fields, false, std::ptr::null_mut());
+    }
+    fn update(&mut self, player: &mut Taxi, fields: u8, init: bool, scene: *mut std::ffi::c_void) {
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_police_step(
+                scene,
+                self.state.as_mut_ptr(),
+                player.state.as_mut_ptr(),
+                player.trig.as_ptr(),
+                &mut player.seed,
+                init as u8,
+                fields.into(),
+                player.frame,
+            );
+        }
+    }
+    pub fn position(&self) -> [i32; 3] {
+        std::array::from_fn(|i| {
+            let at = 0x444 + 4 * i;
+            i32::from_le_bytes(self.state[at..at + 4].try_into().unwrap())
+        })
+    }
+    pub fn rotation(&self) -> [[i16; 3]; 3] {
+        std::array::from_fn(|i| {
+            std::array::from_fn(|j| {
+                let at = 0x48c + 2 * (3 * i + j);
+                i16::from_le_bytes(self.state[at..at + 2].try_into().unwrap())
+            })
+        })
+    }
+}
+
+unsafe extern "C" {
+    fn tm1_scene_load(
+        data: *const u8,
+        size: usize,
+        base: u32,
+        world: u32,
+        taxi: u32,
+        police: u32,
+    ) -> *mut std::ffi::c_void;
+    fn tm1_reset_projectiles(scene: *mut std::ffi::c_void);
+    fn tm1_scene_free(scene: *mut std::ffi::c_void);
+    fn tm1_contacts(
+        scene: *mut std::ffi::c_void,
+        player: *mut u8,
+        ai: *mut u8,
+        is_player: u8,
+        tables: *const i16,
+        seed: *mut u32,
+        fields: i16,
+        frame: u32,
+    );
+}
+pub struct CollisionScene(std::ptr::NonNull<std::ffi::c_void>);
+// The graph owns its allocations. Mutation requires exclusive access, and all
+// calls that bind a scene to the original C globals hold the core mutex.
+unsafe impl Send for CollisionScene {}
+unsafe impl Sync for CollisionScene {}
+impl CollisionScene {
+    pub fn from_dmd(data: &[u8], world: u32, taxi: u32, police: u32) -> Option<Self> {
+        let base = u32::from_le_bytes(data.get(12..16)?.try_into().ok()?);
+        std::ptr::NonNull::new(unsafe {
+            tm1_scene_load(data.as_ptr(), data.len(), base, world, taxi, police)
+        })
+        .map(Self)
+    }
+    pub fn reset_projectiles(&mut self) {
+        unsafe {
+            tm1_reset_projectiles(self.0.as_ptr());
+        }
+    }
+    pub fn step(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, input: Input, fields: u8) {
+        self.phase(player, opponent, 2, fields);
+        player.step_in_scene(input, fields, self.0.as_ptr());
+        self.phase(player, opponent, 1, fields);
+        opponent.update(player, fields, false, self.0.as_ptr());
+        self.phase(player, opponent, 0, fields);
+    }
+    fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {
+        assert!((1..=5).contains(&fields));
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe {
+            tm1_contacts(
+                self.0.as_ptr(),
+                player.state.as_mut_ptr(),
+                opponent.state.as_mut_ptr(),
+                phase,
+                player.trig.as_ptr(),
+                &mut player.seed,
+                fields.into(),
+                player.frame,
+            );
+        }
+    }
+}
+impl Drop for CollisionScene {
+    fn drop(&mut self) {
+        unsafe { tm1_scene_free(self.0.as_ptr()) }
+    }
+}
+
+impl CollisionScene {
+    pub fn world_point(&mut self, mut point: [i32; 3]) -> [i32; 4] {
+        unsafe extern "C" {
+            fn tm1_world_point(scene: *mut std::ffi::c_void, point: *mut i32, result: *mut i32);
+        }
+        let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+        let mut result = [0; 4];
+        unsafe {
+            tm1_world_point(self.0.as_ptr(), point.as_mut_ptr(), result.as_mut_ptr());
+        }
+        result
+    }
+    pub fn bullet_segments(&self, segments: &mut [[[i32; 3]; 2]; 40]) -> usize {
+        unsafe extern "C" {
+            fn tm1_bullet_segments(scene: *mut std::ffi::c_void, out: *mut [[i32; 3]; 2]) -> usize;
+        }
+        unsafe { tm1_bullet_segments(self.0.as_ptr(), segments.as_mut_ptr()) }
+    }
+}
+
+impl Taxi {
+    pub fn health(&self) -> (i32, i32) {
+        (self.word(0x178), self.word(0x17c))
+    }
+    pub fn gun_heat(&self) -> i16 {
+        i16::from_le_bytes(self.state[0x48e..0x490].try_into().unwrap())
+    }
+}
+impl PoliceCar {
+    pub fn health(&self) -> (i32, i32) {
+        let word = |at: usize| i32::from_le_bytes(self.state[at..at + 4].try_into().unwrap());
+        (word(0x24c), word(0x250))
+    }
+}
+
+impl CollisionScene {
+    pub fn effects(&self, out: &mut [[i32; 5]; 122]) -> usize {
+        unsafe extern "C" {
+            fn tm1_effects(scene: *mut std::ffi::c_void, out: *mut [i32; 5]) -> usize;
+        }
+        unsafe { tm1_effects(self.0.as_ptr(), out.as_mut_ptr()) }
+    }
+}
+impl Taxi {
+    pub fn missiles(&self) -> i16 {
+        i16::from_le_bytes(self.state[0x464..0x466].try_into().unwrap())
+    }
+}
+
+impl Taxi {
+    pub fn rev(&self) -> i32 {
+        let gear = self.state[0xa0 + 4] != 0;
+        if gear && self.state[0xa0 + 13] != 0 {
+            return 99;
+        }
+        (self.word(0x398).abs() * 49 / self.word(0x1e0).max(1) + if gear { 49 } else { 0 })
+            .clamp(0, 99)
+    }
+}
+
+#[cfg(test)]
+#[path = "drive_reference.rs"]
+mod reference;
+
+impl CollisionScene {
+    pub fn hidden_pickups(&self) -> u64 {
+        unsafe extern "C" {
+            fn tm1_hidden_pickups(scene: *mut std::ffi::c_void) -> u64;
+        }
+        unsafe { tm1_hidden_pickups(self.0.as_ptr()) }
+    }
+}
+
+impl Taxi {
+    pub fn weapon(&self) -> (&'static str, i16) {
+        let names = [
+            "Fire missile",
+            "Freeze missile",
+            "Homing missile",
+            "Power missile",
+            "Singing missile",
+            "Rear missile",
+            "Catapult",
+            "Flamethrower",
+            "Bomb",
+            "Oil",
+            "Spike",
+            "Taxi special",
+        ];
+        let slot = self.word(0x460) as usize;
+        if slot >= names.len() {
+            return ("Machine gun", 0);
+        }
+        let at = 0x464 + 2 * slot;
+        (
+            names[slot],
+            i16::from_le_bytes(self.state[at..at + 2].try_into().unwrap()),
+        )
+    }
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::CollisionScene;
+    #[test]
+    fn rejects_truncated_and_cyclic_collision_records() {
+        let base = 0x8001_88b8u32;
+        let node = base + 16;
+        let mut data = [0u8; 44];
+        data[12..16].copy_from_slice(&base.to_le_bytes());
+        data[16] = 1;
+        data[36] = 1;
+        data[40..].copy_from_slice(&node.to_le_bytes());
+        assert!(CollisionScene::from_dmd(&data, node, node, node).is_none());
+        assert!(CollisionScene::from_dmd(&data[..38], node, node, node).is_none());
+    }
+}

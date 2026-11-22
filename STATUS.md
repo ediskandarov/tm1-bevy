@@ -1,0 +1,45 @@
+# Playable arena status
+
+The macOS application launches XARENA1 from the verified JP BIN/CUE. The player drives the taxi against the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
+
+## Reference execution
+
+The test interpreter executes instructions loaded from the verified retail executable. The two vehicle records are copied to PS1-layout memory and compared byte by byte. The RNG starts at 1 for spawning and is then shared by both cars. Tests provide the BIOS random service, relevant GTE instructions, and explicit calls or stubs for presentation endpoints. These are controlled function-level scenarios. They do not execute an entire booted PlayStation or compare PCM and draw packets.
+
+| Scenario | Observed result |
+| --- | --- |
+| Player dynamics | Three 360-step recordings, fixed three fields, repeating 3/4/5/3 fields, and a ramp. Full 0x4a4 bytes and RNG compared at each step. Ramp peak 164 with all four tires airborne. |
+| Taxi and police together | 360 consecutive steps through both original update calls. Accelerate, hold the gun after step ten, steer left on steps 24–39. Cycle 4/5/3/3 fields starting at step one. Both complete car records and RNG agree after every step. |
+| Contacts | Original car-to-car and wall fixtures contact at steps 13 and 73. Both car records, RNG and normalized contact identities compared. 9,381 original world point queries included 2,742 solid contacts. |
+| Weapons | A machine-gun round and a fire missile hit the police car. Compared projectile movement/lifetime, damage (one and seven points), car state and RNG. |
+| Input and round | Keyboard and virtual gamepad reach identical sampled state at different presentation rates. Focus loss, twenty seconds paused, gamepad removal/reconnection and restart checked. In a simulation run the police destroyed the unattended taxi after 741 idle steps; the round froze and restarted cleanly. |
+| Arithmetic | 8,192 matrix, 4,096 normalization and 4,444 square-root cases compared with the original executable. |
+
+Reproduce from the port root with the supported absolute CUE path exported as `TM1_CUE`.
+
+```sh
+cargo test --release --offline --locked --manifest-path crates/tm1-core/Cargo.toml -- --include-ignored --nocapture
+cargo test --offline --locked --manifest-path crates/tm1-assets/Cargo.toml -- --include-ignored --nocapture
+cargo test --offline --locked -- --include-ignored --nocapture
+cargo run --offline --locked -- "$TM1_CUE" --demo-screenshot local/arena-combat.png
+cargo run --offline --locked -- "$TM1_CUE" --realtime-screenshot local/realtime.png
+cargo run --offline --locked -- "$TM1_CUE" --object-mesh --demo-screenshot local/object-mesh.png
+```
+
+Inputs, initial conditions, original entry addresses and comparisons are in the tests. [Core output](evidence/drive-original.txt), [asset output](evidence/asset-tests.txt) and [frontend output](evidence/frontend-tests.txt) record the runs. Images under `local/` contain disc-derived material and stay out of version control.
+
+## Native presentation
+
+On the Apple M3 Pro (18 GPU cores, macOS 15.8.3) the native Metal capture showed the taxi, arena textures, projectiles and HUD in a 1280 × 800 logical window. With the normal 50 ms simulation clock and scripted input, the app presented 300 steps over 15.0046 seconds with 4.5956 ms remaining. The final frame showed the police colliding with the taxi and the taxi down to 66 health. Median / p95 timings were 0.0269 / 0.0447 ms per simulation step, 0.7122 / 0.7644 ms for CPU geometry preparation, and 0.8596 / 1.1361 ms for the GPU graph interval. There were 80 CPU samples after warmup, 79 valid GPU timestamp pairs and 310,704 KiB RSS at capture. Engine and music playback cursors advanced. [Native run output](evidence/metal-realtime.txt). The separate demo capture advances one simulation step per presentation frame to compare two render paths at the same point.
+
+The default GPU triangle batch clips polygons to the near plane, draws the floor first and orders the other triangles by polygon distance. The optional M path uses a retained taxi mesh in source-local 3D coordinates with a ColorMaterial, a regular Bevy Transform and a perspective Camera2d on its own render layer. Camera pose comes from the same chase view. The taxi was visible in both Metal captures. A foreground particle overlaps the taxi in the batch capture and falls behind it when the separate camera draws last. Migrating occluding objects requires a common depth or ordering policy.
+
+Texture zero is transparent. Semi-transparent primitives honor the texture word's STP bit with an alpha approximation. The arena imports eight billboard instances with original center, extents and UVs; the primitive camera expands them in view space. PS1 additive/subtractive blend equations, exact ordering-table placement and animated scenery are incomplete. Combat effects use replacement geometry. Camera and HUD are port-specific.
+
+The arena plays CDDA track 3 and VAB programs for the taxi engine, gun, impact, explosion and missile launch. Pitched engine looping uses the ADPCM loop marker; shots retain bank stereo with five listener-relative pan positions. The port caps effects at 22 concurrent voices plus music and engine. SPU reverb, ADSR, noise and exact voice priorities differ. Original SOUND.c uses key status for voice management. The tested car and weapon updates agree while audio output endpoints are stubbed. Metal smoke reported live audio sinks. Speaker output and the balance of the effects still need a listening check.
+
+## Source baseline and outstanding acceptance
+
+A fresh offline linux/amd64 build of pinned source `fb8f9dd4c3aff275893c2573c432a94f644e9970` with pinned maspsx produced ROM SHA-256 `32f36dbb4e9451d767869cd7c6f226d35fa97884fd39c0409ecdf4469f974b43`. The retail reference ROM hash is `95b57efc67c0625f98c76442d6c939b509e5e8b375aed9c344c858aaeccb5bc9`. Both ROMs are 610,304 bytes long, with 325,480 differing byte positions. The first difference is at file offset 12616 (zero based). Differential tests use the verified retail executable directly. The project's fixed source snapshot does not establish a byte-matching rebuild.
+
+The native run reported zero gamepads. Physical mapping, disconnect/reconnect and a listening check remain open. Full-game parity, other arenas, exact mixed rendering occlusion and exact SPU behavior are outside the evidence above.
