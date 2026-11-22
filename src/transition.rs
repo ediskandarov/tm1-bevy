@@ -18,6 +18,7 @@ struct CardThrow;
 pub struct Transition {
     stage: Stage,
     fonts: Fonts,
+    trig: tm1_core::math::TrigTables,
     lines: Vec<&'static str>,
     cards: Vec<Card>,
     half_size: [i32; 2],
@@ -122,24 +123,17 @@ impl Transition {
         // AddPrim prepends the settled cards, then the OT draws the moving card last.
         let index = (elapsed / 11) as usize;
         for card in self.cards[..index.min(self.cards.len())].iter().rev() {
-            card.draw(&mut pixels, card.center, self.half_size, 360 + card.angle);
+            card.draw(
+                &self.trig,
+                &mut pixels,
+                card.center,
+                self.half_size,
+                360 + card.angle,
+            );
         }
         if let Some(card) = self.cards.get(index) {
-            let tick = elapsed % 11;
-            let (center, angle) = if tick == 10 {
-                (card.center, 360 + card.angle)
-            } else {
-                let mut center = [160, 320];
-                let mut angle = 0;
-                for _ in 0..=tick {
-                    for (position, target) in center.iter_mut().zip(card.center) {
-                        *position = (85 * *position + 15 * target) / 100;
-                    }
-                    angle = (85 * angle + 15 * 1080) / 100;
-                }
-                (center, angle)
-            };
-            card.draw(&mut pixels, center, self.half_size, angle);
+            let (center, angle) = card.pose(elapsed % 11);
+            card.draw(&self.trig, &mut pixels, center, self.half_size, angle);
         }
         if let Some(t) = elapsed.checked_sub(self.cards.len() as u32 * 11 + 2) {
             let x = -(self.fonts.width(Face::Text, self.meet()) / 2) + 20 * t as i32;
@@ -150,24 +144,52 @@ impl Transition {
     }
 }
 impl Card {
-    fn draw(&self, out: &mut [u8], [cx, cy]: [i32; 2], [w, h]: [i32; 2], degrees: i32) {
-        let (sin, cos) = ((degrees * 4096 / 360) as f32 * std::f32::consts::TAU / 4096.).sin_cos();
-        let radius = ((w * w + h * h) as f32).sqrt().ceil() as i32;
-        for y in (cy - radius).max(0)..=(cy + radius).min(HEIGHT as i32 - 1) {
-            for x in (cx - radius).max(0)..=(cx + radius).min(WIDTH as i32 - 1) {
-                let dx = (x - cx) as f32 + 0.5;
-                let dy = (y - cy) as f32 + 0.5;
-                let u = (dx * cos + dy * sin) / w as f32;
-                let v = (-dx * sin + dy * cos) / h as f32;
-                if (-1.0..1.0).contains(&u) && (-1.0..1.0).contains(&v) {
-                    let color =
-                        self.pixels[((v + 1.) * 32.) as usize * 128 + ((u + 1.) * 64.) as usize];
-                    if color[3] != 0 {
-                        let at = (y as usize * WIDTH + x as usize) * 4;
-                        out[at..at + 4].copy_from_slice(&color);
-                    }
+    fn pose(&self, tick: u32) -> ([i32; 2], i32) {
+        if tick == 10 {
+            (self.center, 360 + self.angle)
+        } else {
+            let mut center = [160, 320];
+            let mut angle = 0;
+            for _ in 0..=tick {
+                for (position, target) in center.iter_mut().zip(self.center) {
+                    *position = (85 * *position + 15 * target) / 100;
                 }
+                angle = (85 * angle + 15 * 1080) / 100;
             }
+            (center, angle)
+        }
+    }
+    fn corners(
+        trig: &tm1_core::math::TrigTables,
+        [cx, cy]: [i32; 2],
+        [w, h]: [i32; 2],
+        degrees: i32,
+    ) -> [[i32; 2]; 4] {
+        let [sin, cos] = trig.sin_cos(i64::from(degrees * 4096 / 360)).map(i32::from);
+        [[w, -h], [w, h], [-w, -h], [-w, h]].map(|[x, y]| {
+            [
+                cx + ((cos * x - sin * y) >> 12),
+                cy + ((sin * x + cos * y) >> 12),
+            ]
+        })
+    }
+    fn draw(
+        &self,
+        trig: &tm1_core::math::TrigTables,
+        out: &mut [u8],
+        center: [i32; 2],
+        size: [i32; 2],
+        degrees: i32,
+    ) {
+        let xy = Self::corners(trig, center, size, degrees);
+        let uv = [[127, 0], [127, 63], [0, 0], [0, 63]];
+        for tri in [[0, 1, 2], [1, 3, 2]] {
+            screen::raster_triangle(tri.map(|i| xy[i]), tri.map(|i| uv[i]), |at, [u, v]| {
+                let color = self.pixels[v * 128 + u];
+                if color[3] != 0 {
+                    out[at..at + 4].copy_from_slice(&color);
+                }
+            });
         }
     }
 }
@@ -182,6 +204,8 @@ pub fn begin(
     let level = stage.drive.player.level();
     let (labels, centers, half_size) = layout(level);
     let fonts = Fonts::load(disc)?;
+    let trig = tm1_core::math::TrigTables::from_executable(&disc.read("SIPS_600.07")?)
+        .ok_or_else(|| anyhow::anyhow!("missing SDK rotation table"))?;
     let mut lines = vec![
         if advanced {
             "CONGRATULATIONS!"
@@ -239,6 +263,7 @@ pub fn begin(
     let mut transition = Transition {
         stage,
         fonts,
+        trig,
         lines,
         cards,
         half_size,
@@ -437,6 +462,64 @@ mod tests {
     use super::*;
     use crate::sfx::pcm::{Levels, StereoPcm};
     use bevy::audio::Decodable;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn deal_vertices_match_the_retail_card_packets() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let trig = tm1_core::math::TrigTables::from_executable(&exe).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        for addr in [0x8015e39c, 0x8015e808, 0x80160c74, 0x80160d34] {
+            cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        let mut seed = cpu.random_state;
+        for level in [
+            Level::Arena,
+            Level::Warehouse,
+            Level::Freeway,
+            Level::CityPark,
+            Level::Cyburbia,
+            Level::Rooftops,
+            Level::Arena5,
+        ] {
+            let (_, centers, size) = layout(level);
+            cpu.call(0x8013dac8, &[level as u32, centers.len() as u32, 0]);
+            for (index, &center) in centers.iter().enumerate() {
+                cpu.call(0x8013de04, &[u32::MAX]);
+                let random = tm1_core::drive::bios_rand(&mut seed) as i32;
+                let card = Card {
+                    pixels: vec![],
+                    center,
+                    angle: if random & 8 == 0 {
+                        random & 6
+                    } else {
+                        -(random & 6)
+                    },
+                };
+                for tick in 0..11 {
+                    cpu.call_until(
+                        0x8013ded0,
+                        &[index as u32, u32::from(tick == 10), 0],
+                        0x8013e2ec,
+                    );
+                    let (center, angle) = card.pose(tick);
+                    for (vertex, [x, y]) in Card::corners(&trig, center, size, angle)
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let xy = cpu.word(0x8019cc2c + 8 + vertex as u32 * 8);
+                        assert_eq!(
+                            [x, y],
+                            [i32::from(xy as i16), i32::from((xy >> 16) as i16)],
+                            "{level:?} card {index} tick {tick} vertex {vertex}"
+                        );
+                    }
+                }
+                assert_eq!(cpu.random_state, seed);
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

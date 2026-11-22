@@ -469,53 +469,66 @@ impl Cockpit {
     }
 
     fn draw_triangle(&self, pixels: &mut [u8], xy: [[i32; 2]; 3], uv: [[i32; 2]; 3]) {
-        let edge = |[ax, ay]: [i32; 2], [bx, by]: [i32; 2], x: i32, y: i32| {
-            (bx - ax) * (y - 2 * ay) - (by - ay) * (x - 2 * ax)
-        };
-        let area = edge(xy[0], xy[1], 2 * xy[2][0], 2 * xy[2][1]);
-        if area == 0 {
-            return;
-        }
-        let [xs, ys] = [0, 1].map(|axis| xy.map(|p| p[axis]));
-        let bounds = |v: [i32; 3], limit| {
-            (*v.iter().min().unwrap()).max(0)..(*v.iter().max().unwrap()).min(limit)
-        };
-        for y in bounds(ys, HEIGHT as i32) {
-            for x in bounds(xs, WIDTH as i32) {
-                let edges = [(1, 2), (2, 0), (0, 1)];
-                let weights =
-                    edges.map(|(a, b)| edge(xy[a], xy[b], 2 * x + 1, 2 * y + 1) * area.signum());
-                // Include top and left edges only, so translucent shared edges blend once.
-                if edges.iter().zip(weights).any(|(&(a, b), w)| {
-                    let dx = (xy[b][0] - xy[a][0]) * area.signum();
-                    let dy = (xy[b][1] - xy[a][1]) * area.signum();
-                    w < 0 || (w == 0 && !(dy < 0 || dy == 0 && dx > 0))
-                }) {
-                    continue;
-                }
-                let [u, v] = [0, 1].map(|axis| {
-                    (0..3)
-                        .map(|i| i64::from(weights[i]) * i64::from(uv[i][axis]))
-                        .sum::<i64>()
-                        / i64::from(area.abs())
-                });
-                let src = 4 * (v as usize * 256 + u as usize);
-                let dst = 4 * (y as usize * WIDTH + x as usize);
-                let alpha = self.steering[src + 3];
-                if alpha == 0 {
-                    continue;
-                }
-                let blend = alpha == 128 && pixels[dst + 3] != 0;
-                for c in 0..3 {
-                    let front = (u16::from(self.steering[src + c]) * 255 / 128).min(255);
-                    pixels[dst + c] = if blend {
-                        ((front + u16::from(pixels[dst + c])) / 2) as u8
-                    } else {
-                        front as u8
-                    };
-                }
-                pixels[dst + 3] = if blend { 255 } else { alpha };
+        raster_triangle(xy, uv, |dst, [u, v]| {
+            let src = 4 * (v * 256 + u);
+            let alpha = self.steering[src + 3];
+            if alpha == 0 {
+                return;
             }
+            let blend = alpha == 128 && pixels[dst + 3] != 0;
+            for c in 0..3 {
+                let front = (u16::from(self.steering[src + c]) * 255 / 128).min(255);
+                pixels[dst + c] = if blend {
+                    ((front + u16::from(pixels[dst + c])) / 2) as u8
+                } else {
+                    front as u8
+                };
+            }
+            pixels[dst + 3] = if blend { 255 } else { alpha };
+        });
+    }
+}
+
+/// Visit covered pixel offsets and affine texture coordinates in a 320 by 240 frame.
+pub fn raster_triangle(
+    xy: [[i32; 2]; 3],
+    uv: [[i32; 2]; 3],
+    mut pixel: impl FnMut(usize, [usize; 2]),
+) {
+    let edge = |[ax, ay]: [i32; 2], [bx, by]: [i32; 2], x: i32, y: i32| {
+        (bx - ax) * (y - 2 * ay) - (by - ay) * (x - 2 * ax)
+    };
+    let area = edge(xy[0], xy[1], 2 * xy[2][0], 2 * xy[2][1]);
+    if area == 0 {
+        return;
+    }
+    let [xs, ys] = [0, 1].map(|axis| xy.map(|p| p[axis]));
+    let bounds = |v: [i32; 3], limit| {
+        (*v.iter().min().unwrap()).max(0)..(*v.iter().max().unwrap()).min(limit)
+    };
+    for y in bounds(ys, HEIGHT as i32) {
+        for x in bounds(xs, WIDTH as i32) {
+            let edges = [(1, 2), (2, 0), (0, 1)];
+            let weights =
+                edges.map(|(a, b)| edge(xy[a], xy[b], 2 * x + 1, 2 * y + 1) * area.signum());
+            // Include top and left edges only, so translucent shared edges blend once.
+            if edges.iter().zip(weights).any(|(&(a, b), w)| {
+                let dx = (xy[b][0] - xy[a][0]) * area.signum();
+                let dy = (xy[b][1] - xy[a][1]) * area.signum();
+                w < 0 || (w == 0 && !(dy < 0 || dy == 0 && dx > 0))
+            }) {
+                continue;
+            }
+            let [u, v] = [0, 1].map(|axis| {
+                (0..3)
+                    .map(|i| i64::from(weights[i]) * i64::from(uv[i][axis]))
+                    .sum::<i64>()
+                    / i64::from(area.abs())
+            });
+            pixel(
+                4 * (y as usize * WIDTH + x as usize),
+                [u as usize, v as usize],
+            );
         }
     }
 }
