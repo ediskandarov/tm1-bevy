@@ -112,6 +112,21 @@ fn supported_disc_arena_and_audio() {
                 assert_eq!(wheels.count() > 0, kind != 80);
             }
         }
+        let visibility = |stage: &tm1_assets::scene::Scene, eye| {
+            let mut hidden = vec![false; stage.polygons.len()];
+            for lod in stage.lods.as_ref().unwrap() {
+                lod.hide_other_branches(eye, 3, &mut hidden);
+            }
+            hidden
+        };
+        for stage in &db.vehicle_bodies_with_lights(kind, true).unwrap() {
+            let near = visibility(stage, [0.; 3]);
+            let far = visibility(stage, [0., 24000., 0.]);
+            assert_ne!(near, far, "vehicle {kind}");
+            for (i, p) in stage.polygons.iter().enumerate() {
+                assert!(!(near[i] || far[i]) || p.lod_dependent);
+            }
+        }
         let rest = db.extract_kind(kind).unwrap();
         let visible: Vec<_> = intact
             .polygons

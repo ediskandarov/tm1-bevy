@@ -80,6 +80,7 @@ pub enum Wheel {
 #[derive(Clone, Debug)]
 pub struct Polygon {
     pub animation: Vec<AnimationFrame>,
+    pub lod_dependent: bool,
     pub wheel: Option<Wheel>,
     pub car_shadow: bool,
     pub billboard: Option<[f32; 2]>,
@@ -495,13 +496,22 @@ impl<'a> Dmd<'a> {
     }
     /// Read the three body-switch branches selected by UA's damage update.
     pub fn vehicle_bodies(&self, kind: u16) -> Result<[Scene; 3]> {
-        self.vehicle_bodies_with_lights(kind, true)
+        self.extract_vehicle_bodies(kind, true, false)
     }
     pub fn vehicle_bodies_with_lights(&self, kind: u16, headlights: bool) -> Result<[Scene; 3]> {
+        self.extract_vehicle_bodies(kind, headlights, true)
+    }
+
+    fn extract_vehicle_bodies(
+        &self,
+        kind: u16,
+        headlights: bool,
+        include_lods: bool,
+    ) -> Result<[Scene; 3]> {
         Ok([
-            self.extract(kind, Some((Some(0), headlights)), false)?,
-            self.extract(kind, Some((Some(1), headlights)), false)?,
-            self.extract(kind, Some((Some(2), headlights)), false)?,
+            self.extract(kind, Some((Some(0), headlights)), include_lods)?,
+            self.extract(kind, Some((Some(1), headlights)), include_lods)?,
+            self.extract(kind, Some((Some(2), headlights)), include_lods)?,
         ])
     }
     pub fn garage_vehicle(&self, kind: u16) -> Result<Scene> {
@@ -702,6 +712,9 @@ impl<'a> Dmd<'a> {
                     if scene.lods.is_some() {
                         let first = scene.polygons.len();
                         self.visit(child, transform, selection, pickup, ancestors, scene)?;
+                        for polygon in &mut scene.polygons[first..] {
+                            polygon.lod_dependent = true;
+                        }
                         branches.push((near, u32le(d, r)?, first..scene.polygons.len()));
                     } else if nearest.is_none_or(|(best, _)| near < best) {
                         nearest = Some((near, child));
@@ -1043,6 +1056,7 @@ impl<'a> Dmd<'a> {
             }
             scene.polygons.push(Polygon {
                 animation: Vec::new(),
+                lod_dependent: false,
                 wheel: None,
                 car_shadow: false,
                 billboard,

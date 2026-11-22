@@ -21,6 +21,20 @@ use bevy::camera::visibility::RenderLayers;
 pub struct VehicleMesh(usize);
 #[derive(Component)]
 pub struct BodyStage(usize);
+struct BodyGeometry {
+    polygons: std::ops::Range<usize>,
+    lods: Vec<tm1_assets::scene::LevelOfDetail>,
+}
+
+fn cached_body_face(p: &tm1_assets::scene::Polygon) -> bool {
+    !p.lod_dependent
+        && !p.car_shadow
+        && p.wheel.is_none()
+        && p.animation.is_empty()
+        && p.billboard.is_none()
+        && !p.semi_transparent
+}
+
 struct CarPose {
     origin: Vec3,
     matrix: [[i16; 3]; 3],
@@ -75,7 +89,7 @@ pub struct Arena {
     burn_frames: [SpriteFrame; 8],
     smoke_frames: [[SpriteFrame; 16]; 2],
     vehicle_start: usize,
-    body_ranges: Vec<[std::ops::Range<usize>; 3]>,
+    body_ranges: Vec<[BodyGeometry; 3]>,
     overview: bool,
     icons: tm1_assets::scene::DashboardIcons,
     arrows: [SpriteFrame; 4],
@@ -125,7 +139,10 @@ impl Arena {
                 variants.map(|variant| {
                     let start = scene.polygons.len();
                     scene.polygons.extend(variant.polygons);
-                    start..scene.polygons.len()
+                    BodyGeometry {
+                        polygons: start..scene.polygons.len(),
+                        lods: variant.lods.unwrap_or_default(),
+                    }
                 })
             })
             .collect();
@@ -408,13 +425,8 @@ pub fn setup(
         }
         for (stage, range) in ranges.iter().enumerate() {
             let mut batch = Batch::default();
-            for polygon in &arena.scene.polygons[range.clone()] {
-                if polygon.car_shadow
-                    || polygon.wheel.is_some()
-                    || !polygon.animation.is_empty()
-                    || polygon.billboard.is_some()
-                    || polygon.semi_transparent
-                {
+            for polygon in &arena.scene.polygons[range.polygons.clone()] {
+                if !cached_body_face(polygon) {
                     continue;
                 }
                 let slot = arena.tiles[&(polygon.texture, false)];
@@ -1118,7 +1130,7 @@ fn draw_view(
         if index >= arena.vehicle_start {
             let car = arena
                 .body_ranges
-                .partition_point(|ranges| ranges[2].end <= index);
+                .partition_point(|ranges| ranges[2].polygons.end <= index);
             let pose = &poses[car];
             let p = if let Some(Wheel::Hammerhead { pivot, axis }) =
                 arena.scene.polygons[index].wheel
@@ -1162,20 +1174,38 @@ fn draw_view(
             .filter(|(slot, _)| Some(*slot) != hidden_car)
             .flat_map(|(_, (ranges, pose))| {
                 ranges[pose.body_stage]
+                    .polygons
                     .clone()
                     .filter(|&i| pose.shadow_visible || !arena.scene.polygons[i].car_shadow)
             }),
     );
-    let mut hidden_world = vec![false; arena.vehicle_start];
+    let mut hidden_geometry = vec![false; arena.scene.polygons.len()];
+    for (stages, pose) in arena.body_ranges.iter().zip(poses) {
+        let body = &stages[pose.body_stage];
+        let delta = pose.origin - eye;
+        let matrix = tm1_core::math::Matrix {
+            rotation: pose.matrix,
+            ..Default::default()
+        };
+        let cs_position = tm1_core::math::multiply(
+            &matrix,
+            [delta.x as i32, -delta.z as i32, delta.y as i32],
+            false,
+        );
+        let local_eye = cs_position.map(|v| -(v as f32));
+        for lod in &body.lods {
+            lod.hide_other_branches(local_eye, 3, &mut hidden_geometry[body.polygons.clone()]);
+        }
+    }
     for lod in arena.scene.lods.iter().flatten() {
-        lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_world);
+        lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_geometry);
     }
     for controller in &arena.scene.visibility {
-        hidden_world[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
+        hidden_geometry[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
     }
     for (address, branch, polygons) in &arena.scene.damage_branches {
         if contacts.damage_branch(*address) != *branch {
-            hidden_world[polygons.clone()].fill(true);
+            hidden_geometry[polygons.clone()].fill(true);
         }
     }
     let billboard_point = |center: Vec3, extent: Option<[f32; 2]>, corner: usize| {
@@ -1188,7 +1218,7 @@ fn draw_view(
         }
     };
     for i in visible {
-        if i < arena.vehicle_start && hidden_world[i] {
+        if hidden_geometry[i] {
             continue;
         }
         let p = &arena.scene.polygons[i];
@@ -1209,14 +1239,7 @@ fn draw_view(
         {
             continue;
         }
-        if !batch_bodies
-            && i >= arena.vehicle_start
-            && !p.car_shadow
-            && p.wheel.is_none()
-            && p.animation.is_empty()
-            && p.billboard.is_none()
-            && !p.semi_transparent
-        {
+        if !batch_bodies && i >= arena.vehicle_start && cached_body_face(p) {
             continue;
         }
         if p.arena_switches
@@ -1257,7 +1280,7 @@ fn draw_view(
         let tint = if i >= arena.vehicle_start {
             let car = arena
                 .body_ranges
-                .partition_point(|ranges| ranges[2].end <= i);
+                .partition_point(|ranges| ranges[2].polygons.end <= i);
             body_light_color(lights[car])
         } else {
             [1.; 3]
