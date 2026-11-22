@@ -1017,6 +1017,7 @@ unsafe extern "C" {
         taxi: u32,
         opponents: *const u32,
         count: usize,
+        duel: i32,
     ) -> *mut std::ffi::c_void;
     fn tm1_level_won(scene: *const std::ffi::c_void) -> bool;
     fn tm1_reset_projectiles(scene: *mut std::ffi::c_void);
@@ -1060,6 +1061,18 @@ impl CollisionScene {
         Self::for_opponents(data, world, taxi, &[police])
     }
     pub fn for_opponents(data: &[u8], world: u32, taxi: u32, opponents: &[u32]) -> Option<Self> {
+        Self::load_models(data, world, taxi, opponents, false)
+    }
+    pub fn for_duel(data: &[u8], world: u32, players: [u32; 2]) -> Option<Self> {
+        Self::load_models(data, world, players[0], &players[1..], true)
+    }
+    fn load_models(
+        data: &[u8],
+        world: u32,
+        taxi: u32,
+        opponents: &[u32],
+        duel: bool,
+    ) -> Option<Self> {
         let base = u32::from_le_bytes(data.get(12..16)?.try_into().ok()?);
         std::ptr::NonNull::new(unsafe {
             tm1_scene_load(
@@ -1070,11 +1083,12 @@ impl CollisionScene {
                 taxi,
                 opponents.as_ptr(),
                 opponents.len(),
+                duel.into(),
             )
         })
         .map(|native| Self {
             native,
-            opponent_count: opponents.len(),
+            opponent_count: if duel { 0 } else { opponents.len() },
             battle: [0; 3],
         })
     }

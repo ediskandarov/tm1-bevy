@@ -659,8 +659,19 @@ fn group_battle_selection_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn warehouse_group_hit_ids_original() {
+    compare_car_hits(false);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn duel_hit_ids_original() {
+    compare_car_hits(true);
+}
+
+fn compare_car_hits(duel: bool) {
     use std::ffi::c_void;
     unsafe extern "C" {
+        fn CAR_HD(point: *const i32, owner: i32, radius: i32) -> i32;
         fn GetPlayerCs3D(i: i16) -> *mut c_void;
         fn GetAICs3D(i: i16) -> *mut c_void;
         fn tm1_contact_setup(cs: *mut c_void, motion: *const i32, stats: *const i32);
@@ -673,16 +684,29 @@ fn warehouse_group_hit_ids_original() {
     let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
     cpu.put(0x800188b8, &data);
     let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
-    let kinds = [20, 30, 100, 60];
-    let ids = [1, 50, 51, 52];
-    let scene =
+    let (kinds, ids): (&[u16], &[u32]) = if duel {
+        (&[20, 30], &[1, 2])
+    } else {
+        (&[20, 30, 100, 60], &[1, 50, 51, 52])
+    };
+    let scene = if duel {
+        CollisionScene::for_duel(&data, root(1), [root(20), root(30)])
+    } else {
         CollisionScene::for_opponents(&data, root(1), root(20), &[root(30), root(100), root(60)])
-            .unwrap();
+    }
+    .unwrap();
     put(&mut cpu, 0x8018c4b0, WORLD);
     put(&mut cpu, WORLD + 0x104, root(1));
     put(&mut cpu, WORLD + 0xc0, 8);
     cpu.call(0x80103a4c, &[HDP_STACK]);
     let model = |i: usize| EXTRA_MODELS + i as u32 * 0x200;
+    if duel {
+        cpu.put(0x8018c334, &2u16.to_le_bytes());
+        cpu.put(0x8018c338, &0u16.to_le_bytes());
+        for slot in 0..2 {
+            put(&mut cpu, 0x8018c634 + slot * 4, model(slot as usize));
+        }
+    }
     let mut head = 0;
     for &(node, kind) in &roots {
         if let Some(i) = kinds.iter().position(|v| *v == kind) {
@@ -714,7 +738,7 @@ fn warehouse_group_hit_ids_original() {
     }
     let _unbind = Unbind;
     for overlap in [false, true] {
-        for (i, id) in ids.into_iter().enumerate() {
+        for (i, &id) in ids.iter().enumerate() {
             let x = if overlap { 0 } else { i as i32 * 2500 };
             let mut motion = [0i32; 80];
             motion[2] = x;
@@ -724,8 +748,8 @@ fn warehouse_group_hit_ids_original() {
             let mut player = -1;
             let mut slot = 99;
             unsafe {
-                let cs = if i == 0 {
-                    GetPlayerCs3D(0)
+                let cs = if duel || i == 0 {
+                    GetPlayerCs3D(i as i16)
                 } else {
                     GetAICs3D((i - 1) as i16)
                 };
@@ -734,7 +758,14 @@ fn warehouse_group_hit_ids_original() {
             }
             assert_eq!(
                 (player, slot),
-                (i8::from(i == 0), i.saturating_sub(1) as u16)
+                (
+                    i8::from(duel || i == 0),
+                    if duel {
+                        i as u16
+                    } else {
+                        i.saturating_sub(1) as u16
+                    }
+                )
             );
         }
         for x in [0, 2500, 5000, 7500, 10000] {
@@ -742,15 +773,24 @@ fn warehouse_group_hit_ids_original() {
             for (j, v) in p.into_iter().enumerate() {
                 put(&mut cpu, 0x80011200 + 4 * j as u32, v as u32);
             }
-            for skip0 in [0, 1, 50, 51, 52] {
-                for skip1 in [0, 1, 50, 51, 52] {
+            if duel {
+                for owner in [1, 2] {
+                    let original = cpu.call(0x8010c1d0, &[0x80011200, owner, 0]);
+                    assert_eq!(
+                        unsafe { CAR_HD(p.as_ptr(), owner as i32, 0) },
+                        original as i32
+                    );
+                }
+            }
+            for skip0 in std::iter::once(0).chain(ids.iter().copied()) {
+                for skip1 in std::iter::once(0).chain(ids.iter().copied()) {
                     cpu.call(0x801038b0, &[skip0, skip1, 0x80011200, 0x80011240]);
                     let mut id = -1;
                     unsafe {
                         HdPntTest(skip0 as i32, skip1 as i32, p.as_ptr(), &mut id);
                     }
                     assert_eq!(id, cpu.word(0x80011240) as i32);
-                    if !overlap && x < 10000 {
+                    if !overlap && x < 2500 * ids.len() as i32 {
                         let car = ids[(x / 2500) as usize];
                         assert_eq!(
                             id,

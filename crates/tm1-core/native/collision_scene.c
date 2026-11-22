@@ -50,7 +50,7 @@ typedef struct CollisionScene {
     Cs world, taxi, opponents[8];
     Cs* first_car;
     int opponent_count, model_count;
-    bool beat_level;
+    bool duel, beat_level;
     int wheel_distance[14];
     int64_t wheel_steps[14];
     struct { Cs* node; int count; } hit_lights[6];
@@ -492,9 +492,9 @@ int tm1_merc_pose(const CollisionScene* scene, int slot, int* out)
     return 1;
 }
 CollisionScene* tm1_scene_load(
-    const u8* data, size_t size, u32 base, u32 world, u32 taxi, const u32* opponents, size_t count)
+    const u8* data, size_t size, u32 base, u32 world, u32 taxi, const u32* opponents, size_t count, int duel)
 {
-    if (!count || count > 8)
+    if (!count || count > 8 || (duel && count != 1))
         return NULL;
     CollisionScene* s = calloc(1, sizeof(*s));
     if (!s)
@@ -516,7 +516,9 @@ CollisionScene* tm1_scene_load(
         s->missiles[i].life = -15;
         s->missile_cs[i].unkC0 = 200 + i;
     }
-    s->opponent_count = s->model_count = count;
+    s->duel = duel;
+    s->model_count = count;
+    s->opponent_count = duel ? 0 : count;
     s->world.unkC0 = 8;
     s->taxi.unkC0 = 1;
     u32 roots;
@@ -561,7 +563,7 @@ CollisionScene* tm1_scene_load(
             Cs* cs = j ? &s->opponents[j - 1] : &s->taxi;
             if (cs->drawMode || !(cs->epNode = decode(s, root, 0)))
                 goto invalid;
-            cs->unkC0 = j ? 49 + j : 1;
+            cs->unkC0 = j ? (duel ? 2 : 49 + j) : 1;
             cs->unk0C = cs->drawMode = 1;
             cs->next = s->first_car;
             s->first_car = cs;
@@ -808,6 +810,10 @@ void tm1_check_victory(const PlayerCar* player, const AICar* cars, int count)
     current->beat_level = true;
 }
 
+s16 GetNumPlayers(void)
+{
+    return current && current->duel ? 2 : 1;
+}
 s16 GetNumAICars(void)
 {
     return current ? current->opponent_count : 0;
@@ -818,8 +824,7 @@ Cs* csGetCsList(void)
 }
 Cs* GetPlayerCs3D(s16 i)
 {
-    (void)i;
-    return &current->taxi;
+    return i == 1 && current->duel ? &current->opponents[0] : &current->taxi;
 }
 Cs* GetAICs3D(s16 i)
 {
@@ -827,8 +832,8 @@ Cs* GetAICs3D(s16 i)
 }
 u8 uaIsCarCS(Cs* cs, u8* player, s16* idx)
 {
-    if (cs == &current->taxi) {
-        *idx = 0;
+    if (cs == &current->taxi || (current->duel && cs == &current->opponents[0])) {
+        *idx = cs != &current->taxi;
         *player = 1;
         return 1;
     }
@@ -858,9 +863,9 @@ void tm1_contact_setup(Cs* cs, const CarMotion* motion, const CarStats* stats)
 
 s32 uaIsCarMatID(s16 id, s8* player, u16* idx)
 {
-    if (id == 1 || (id >= 50 && id < 50 + current->opponent_count)) {
-        *player = id == 1;
-        *idx = *player ? 0 : id - 50;
+    if (id == 1 || (current->duel && id == 2) || (id >= 50 && id < 50 + current->opponent_count)) {
+        *player = id < 50;
+        *idx = *player ? id - 1 : id - 50;
         return 1;
     }
     return 0;
@@ -1054,7 +1059,9 @@ s32 bulDispatchDamage(s32 id, s32 tag, s32 sub, s32 dmg, VECTOR3* dir, s32 owner
             || tag == 708 || tag == 713;
     }
     (void)owner;
-    if (id == 1 || (id >= 50 && id < 50 + current->opponent_count))
+    s8 player;
+    u16 slot;
+    if (uaIsCarMatID(id, &player, &slot))
         carTakeHit(id, dmg, dir, 0);
     return 1;
 }
@@ -1627,8 +1634,8 @@ void tm1_clear_freeze_light(u8 player, s16 index)
 }
 void tm1_capture_car_lights(void)
 {
-    for (int i = 0; i <= current->opponent_count; i++) {
-        Cs* cs = i ? GetAICs3D(i - 1) : GetPlayerCs3D(0);
+    for (int i = 0; i <= current->opponent_count + current->duel; i++) {
+        Cs* cs = current->duel || !i ? GetPlayerCs3D(i) : GetAICs3D(i - 1);
         current->displayed_lights[i] = cs->env ? cs->env->index : 0;
     }
 }

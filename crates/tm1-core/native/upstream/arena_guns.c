@@ -9,7 +9,7 @@ s32 CAR_HD(VECTOR3* pt, s32 owner, s32 flag)
     s32 nai;
     Cs* cs;
 
-    np = 1;
+    np = GetNumPlayers();
     i = 0;
     nai = GetNumAICars();
     for (i = 0; i < np; i++) {
@@ -695,10 +695,10 @@ void arena_update_weapons(Car* car, u8 player)
     case WEAPON_SINGING_MISSILE:
     case WEAPON_REAR_MISSILE:
         arena_launch_missile(
-            stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player ? 1 : 50 + ai->playerIdx);
+            stats, player ? &p->motion : &ai->motion, pad, player ? p->flags : ai->flags, player ? 1 + p->playerIdx : 50 + ai->playerIdx);
         break;
     case WEAPON_FLAMETHROWER: {
-        Cs* cs = player ? GetPlayerCs3D(0) : GetAICs3D(ai->playerIdx);
+        Cs* cs = player ? GetPlayerCs3D(p->playerIdx) : GetAICs3D(ai->playerIdx);
         arena_effect(&cs->pos, 11);
         if (arena_launch_flame(cs, 0)) {
             pad->fireDelay = 20;
@@ -711,7 +711,7 @@ void arena_update_weapons(Car* car, u8 player)
     case WEAPON_CATAPULT:
     case WEAPON_BOMB:
         launchDrop(stats, player ? &p->motion : &ai->motion, player ? p->tires : ai->tires, pad,
-            player ? p->flags : ai->flags, player ? 1 : 50 + ai->playerIdx);
+            player ? p->flags : ai->flags, player ? 1 + p->playerIdx : 50 + ai->playerIdx);
         break;
     }
 }
