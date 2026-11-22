@@ -154,7 +154,13 @@ impl Art {
         );
         out
     }
-    pub fn frame(&self, fonts: &Fonts, level: Level, page: Page, settings: Settings) -> Vec<u8> {
+    pub fn frame(
+        &self,
+        fonts: &Fonts,
+        level: Option<Level>,
+        page: Page,
+        settings: Settings,
+    ) -> Vec<u8> {
         let face = |selected| {
             if selected {
                 Face::Selected
@@ -178,7 +184,8 @@ impl Art {
                 let mut out = [0, 0, 0, 128].repeat(screen::WIDTH * screen::HEIGHT);
                 if let Page::Choices(row) = page {
                     fonts.centered(&mut out, Face::Text, 60, "PAUSED");
-                    if let Some(code) = level.password() {
+                    if let Some((level, code)) = level.and_then(|l| l.password().map(|pw| (l, pw)))
+                    {
                         let name = if level == Level::Rooftops {
                             "FINAL".into()
                         } else {
@@ -229,7 +236,7 @@ pub fn draw(
         if let Some(mut image) = images.get_mut(&sprite.image) {
             image.data = Some(arena.pause_art.frame(
                 &arena.fonts,
-                drive.player.level(),
+                Some(drive.player.level()),
                 page,
                 drive.settings,
             ));

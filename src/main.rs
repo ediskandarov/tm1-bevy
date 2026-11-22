@@ -181,7 +181,7 @@ fn main() -> Result<()> {
     };
     if duel_car.is_some() {
         eprintln!(
-            "P1: WASD, Space guns, F weapon, E cycle, C camera. P2: arrows, Comma guns, Period weapon, L cycle, O camera. Enter rematch, Esc title."
+            "P1: WASD, Space guns, F weapon, E cycle, C camera. P2: arrows, Comma guns, Period weapon, L cycle, O camera. P or keypad Enter pauses. Enter rematch, Esc title."
         );
     } else {
         eprintln!(
@@ -204,6 +204,8 @@ fn main() -> Result<()> {
             if let Err(e) = duel::start(world, level, [vehicle, second], difficulty, [0; 2]) {
                 error!("Loading duel failed: {e:#}");
                 world.write_message(AppExit::error());
+            } else if pause_demo {
+                world.resource_mut::<duel::Duel>().pause = Some(pause::Page::Choices(0));
             }
         });
     } else if let Some(stage) = stage {
@@ -253,7 +255,12 @@ fn main() -> Result<()> {
     }
     app.add_systems(
         Update,
-        (duel::advance, render::duel_view, duel::round_menu)
+        (
+            duel::pause_menu,
+            duel::advance,
+            render::duel_view,
+            duel::round_menu,
+        )
             .chain()
             .run_if(resource_exists::<duel::Duel>),
     );

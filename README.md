@@ -34,6 +34,8 @@ After both picks, choose **START** to play or **OPTIONS** to change the battlegr
 | Machine guns / selected weapon | Space / F | Comma / Period |
 | Cycle weapon / camera | E / C | L / O |
 
+Press P or the numeric keypad Enter to pause both views. Either player can navigate the pause menu. Choose CONTROLLER OPTIONS with Space for player one or Comma for player two. AUDIO adjusts the shared music and effects mix. START resumes the round and QUIT returns to the title movie.
+
 After the round, Enter starts a rematch and keeps the score. Esc returns to the title. To launch a specific match directly, use the second car’s slug after `--duel`.
 
 ```sh

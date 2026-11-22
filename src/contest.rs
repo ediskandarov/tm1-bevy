@@ -351,7 +351,7 @@ impl Contest {
             Page::Controls => {
                 return self.controls.frame(
                     &self.fonts,
-                    self.level,
+                    None,
                     crate::pause::Page::Controls,
                     self.settings,
                 );
@@ -371,12 +371,9 @@ impl Contest {
             Page::DuelControls(slot) => {
                 let mut settings = self.settings;
                 settings.layout = self.duel_layouts[slot];
-                let mut out = self.controls.frame(
-                    &self.fonts,
-                    self.level,
-                    crate::pause::Page::Controls,
-                    settings,
-                );
+                let mut out =
+                    self.controls
+                        .frame(&self.fonts, None, crate::pause::Page::Controls, settings);
                 self.fonts
                     .centered(&mut out, Face::Control, 32, ["Player 1", "Player 2"][slot]);
                 return out;
@@ -1433,6 +1430,76 @@ mod tests {
         let menu = world.resource::<Contest>();
         assert!(menu.page == Page::DuelOptions(0));
         assert_eq!(menu.duel_layouts, [0, 2]);
+    }
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn duel_pause_freezes_both_cars_and_returns_to_title_movie() {
+        use crate::{duel, pause::Page as Pause};
+        use KeyCode::*;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = menu_world();
+        duel::start(
+            &mut world,
+            Level::Warehouse,
+            [Vehicle::Outlaw, Vehicle::RoadKill],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        let step = |world: &mut World, pressed: &[KeyCode]| {
+            let mut keys = ButtonInput::default();
+            for &key in pressed {
+                keys.press(key);
+            }
+            world.insert_resource(keys);
+            world.run_system_once(duel::pause_menu).unwrap();
+            world.run_system_once(duel::advance).unwrap();
+            duel::round_menu(world);
+        };
+        step(&mut world, &[KeyW, ArrowUp]);
+        let positions = |world: &World| {
+            world
+                .resource::<duel::Duel>()
+                .cars
+                .each_ref()
+                .map(tm1_core::drive::PlayerVehicle::position)
+        };
+        let start = positions(&world);
+        step(&mut world, &[NumpadEnter]);
+        for _ in 0..12 {
+            step(&mut world, &[KeyT, ShiftRight]);
+        }
+        assert_eq!(positions(&world), start);
+        step(&mut world, &[ArrowUp]);
+        step(&mut world, &[Comma]);
+        assert!(world.resource::<duel::Duel>().pause == Some(Pause::Controls));
+        step(&mut world, &[ArrowRight]);
+        assert_eq!(world.resource::<duel::Duel>().settings.layout, 2);
+        step(&mut world, &[Escape]);
+        assert!(world.resource::<duel::Duel>().pause.is_none());
+        for _ in 0..8 {
+            step(&mut world, &[KeyW, ArrowUp]);
+        }
+        assert_ne!(positions(&world), start);
+        for key in [KeyP, KeyS, KeyS, Space, KeyD] {
+            step(&mut world, &[key]);
+        }
+        assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
+        for key in [KeyP, NumpadEnter, ArrowDown, Comma] {
+            step(&mut world, &[key]);
+        }
+        assert!(world.resource::<duel::Duel>().pause == Some(Pause::Aborted));
+        for _ in 0..10 {
+            step(&mut world, &[]);
+        }
+        assert!(world.contains_resource::<duel::Duel>());
+        step(&mut world, &[]);
+        assert!(!world.contains_resource::<duel::Duel>());
+        assert!(world.resource::<Contest>().cinema.as_ref().unwrap().clip == Clip::Title);
     }
     fn password(world: &mut World, keys: &[KeyCode]) {
         press(world, KeyCode::KeyP);

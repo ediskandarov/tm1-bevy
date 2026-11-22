@@ -38,6 +38,10 @@ pub struct Duel {
     score: [u32; 2],
     pub(crate) settings: crate::pause::Settings,
     winner: Option<usize>,
+    pub(crate) pause: Option<crate::pause::Page>,
+    control_slot: usize,
+    abort_elapsed: Duration,
+    wait_release: bool,
     layouts: [u8; 2],
 }
 
@@ -119,6 +123,10 @@ pub fn start(
         remainder: Duration::ZERO,
         score,
         winner: None,
+        pause: None,
+        control_slot: 0,
+        abort_elapsed: Duration::ZERO,
+        wait_release: false,
         layouts,
         settings,
     });
@@ -129,6 +137,7 @@ pub fn start(
     let track = world.resource_mut::<Assets<AudioSource>>().add(music);
     world.spawn((
         StageEntity,
+        DuelMusic,
         AudioPlayer::new(track),
         PlaybackSettings::LOOP
             .with_volume(bevy::audio::Volume::Linear(0.35 * settings.music_gain())),
@@ -146,6 +155,165 @@ pub fn start(
 #[derive(Component)]
 pub struct DuelHud;
 
+#[derive(Component)]
+pub struct DuelMusic;
+#[derive(Component)]
+pub struct DuelEffect;
+#[derive(Component)]
+pub struct PauseVoice;
+
+pub fn pause_menu(
+    mut commands: Commands,
+    mut duel: ResMut<Duel>,
+    keys: Res<ButtonInput<KeyCode>>,
+    arena: Res<render::Arena>,
+    window: Single<&Window>,
+    time: Res<Time<Real>>,
+    sounds: Res<crate::sfx::Sounds>,
+    mut images: ResMut<Assets<Image>>,
+    mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
+    mut audio: Query<
+        (
+            Entity,
+            Has<DuelEffect>,
+            Has<DuelMusic>,
+            &mut PlaybackSettings,
+            Option<&mut AudioSink>,
+        ),
+        (With<StageEntity>, Without<PauseVoice>),
+    >,
+) {
+    use crate::pause::{Action, Page};
+    use KeyCode::*;
+    if duel.winner.is_some() || !window.focused {
+        return;
+    }
+    let before = duel.pause;
+    if before == Some(Page::Aborted) {
+        duel.abort_elapsed += time.delta();
+        return;
+    }
+    let mut sound = None;
+    let before_settings = duel.settings;
+    if let Some(page) = before {
+        let (up, down, left, right, select) = if page == Page::Controls {
+            if duel.control_slot == 1 {
+                (
+                    false,
+                    false,
+                    keys.just_pressed(ArrowLeft),
+                    keys.just_pressed(ArrowRight),
+                    keys.just_pressed(Comma),
+                )
+            } else {
+                (
+                    false,
+                    false,
+                    keys.just_pressed(KeyA),
+                    keys.just_pressed(KeyD),
+                    keys.just_pressed(Space),
+                )
+            }
+        } else {
+            (
+                keys.any_just_pressed([KeyW, ArrowUp]),
+                keys.any_just_pressed([KeyS, ArrowDown]),
+                keys.any_just_pressed([KeyA, ArrowLeft]),
+                keys.any_just_pressed([KeyD, ArrowRight]),
+                keys.any_just_pressed([Space, Comma]),
+            )
+        };
+        let action = if keys.any_just_pressed([KeyP, NumpadEnter, Escape]) {
+            Some(Action::Resume)
+        } else if up {
+            Some(Action::Up)
+        } else if down {
+            Some(Action::Down)
+        } else if select || keys.just_pressed(Enter) {
+            Some(Action::Select)
+        } else if left {
+            Some(Action::Left)
+        } else if right {
+            Some(Action::Right)
+        } else {
+            None
+        };
+        if let Some(action) = action {
+            if page == Page::Choices(3) && matches!(action, Action::Select) {
+                duel.control_slot = usize::from(keys.just_pressed(Comma));
+                duel.settings.layout = duel.layouts[duel.control_slot];
+            }
+            duel.pause = crate::pause::navigate(page, action, &mut duel.settings);
+            if page == Page::Controls {
+                let slot = duel.control_slot;
+                let layout = duel.settings.layout;
+                duel.layouts[slot] = layout;
+                duel.cars[slot].set_pad_layout(layout);
+            }
+            if before != duel.pause || before_settings != duel.settings {
+                sound = Some(matches!(action, Action::Select | Action::Resume));
+            }
+        }
+    } else if keys.any_just_pressed([KeyP, NumpadEnter]) {
+        duel.pause = Some(Page::Choices(0));
+    }
+    let (sprite, visibility) = &mut *hud;
+    let changed = before != duel.pause || before_settings != duel.settings;
+    if let Some(page) = duel.pause {
+        sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
+        if changed || **visibility == Visibility::Hidden {
+            let mut frame = arena
+                .pause_art
+                .frame(&arena.fonts, None, page, duel.settings);
+            if page == Page::Controls {
+                arena.fonts.centered(
+                    &mut frame,
+                    tm1_assets::screen::Face::Control,
+                    32,
+                    ["Player 1", "Player 2"][duel.control_slot],
+                );
+            }
+            images.get_mut(&sprite.image).unwrap().data = Some(frame);
+            **visibility = Visibility::Visible;
+        }
+    } else if before.is_some() {
+        **visibility = Visibility::Hidden;
+        duel.wait_release = true;
+    }
+    if duel.pause.is_some() || before.is_some() {
+        for (entity, effect, music, mut playback, sink) in &mut audio {
+            if effect {
+                commands.entity(entity).despawn();
+                continue;
+            }
+            playback.paused = duel.pause.is_some();
+            playback.volume = bevy::audio::Volume::Linear(if music {
+                0.35 * duel.settings.music_gain()
+            } else {
+                0.28 * duel.settings.effects_gain()
+            });
+            if let Some(mut sink) = sink {
+                sink.set_volume(playback.volume);
+                if playback.paused {
+                    sink.pause()
+                } else {
+                    sink.play()
+                }
+            }
+        }
+    }
+    if let Some(select) = sound {
+        commands.spawn((
+            StageEntity,
+            PauseVoice,
+            sounds.menu_voice(select),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
+                0.44 * duel.settings.effects_gain(),
+            )),
+        ));
+    }
+}
+
 pub fn advance(
     mut commands: Commands,
     sounds: Res<crate::sfx::Sounds>,
@@ -160,8 +328,15 @@ pub fn advance(
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
 ) {
     use KeyCode::*;
-    if (!window.focused && !capture.demo) || capture.holding_battle_frame() {
+    if duel.pause.is_some() || (!window.focused && !capture.demo) || capture.holding_battle_frame()
+    {
         return;
+    }
+    if duel.wait_release {
+        if keys.any_pressed([Space, Comma, Enter, Escape, KeyP, NumpadEnter]) {
+            return;
+        }
+        duel.wait_release = false;
     }
     let duel = &mut *duel;
     for (slot, k) in [KeyC, KeyO].into_iter().enumerate() {
@@ -214,6 +389,7 @@ pub fn advance(
         let mut play = |id, volume| {
             commands.spawn((
                 StageEntity,
+                DuelEffect,
                 sounds.centered(id),
                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
                     volume * duel.settings.effects_gain(),
@@ -292,9 +468,18 @@ pub fn round_menu(world: &mut World) {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let duel = world.resource::<Duel>();
     let difficulty = duel.cars[0].difficulty();
-    let result = if keys.just_pressed(KeyCode::Escape) {
-        let result =
-            crate::contest::show(world, Vehicle::SweetTooth, Level::Arena, difficulty, None);
+    let aborted = duel.pause == Some(crate::pause::Page::Aborted)
+        && duel.abort_elapsed >= Duration::from_secs_f64(31. / 60.);
+    let result = if aborted
+        || (duel.pause.is_none() && !duel.wait_release && keys.just_pressed(KeyCode::Escape))
+    {
+        let result = crate::contest::show(
+            world,
+            Vehicle::SweetTooth,
+            Level::Arena,
+            difficulty,
+            aborted.then_some(crate::cinema::Clip::Title),
+        );
         if result.is_ok() {
             world.remove_resource::<Duel>();
         }

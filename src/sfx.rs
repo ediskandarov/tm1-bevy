@@ -98,6 +98,9 @@ impl Sounds {
         }
         world.insert_resource(self);
     }
+    pub fn menu_voice(&self, select: bool) -> AudioPlayer {
+        self.centered(self.voices.len() / 5 - 2 + usize::from(select))
+    }
     pub fn centered(&self, id: usize) -> AudioPlayer {
         AudioPlayer::new(self.voices[id * 5 + 2].clone())
     }
@@ -308,10 +311,9 @@ pub fn update(
         }
     }
     if let Some(select) = drive.pause_sound {
-        let program = sounds.voices.len() / 5 - 2 + usize::from(select);
         commands.spawn((
             crate::campaign::StageEntity,
-            AudioPlayer::new(sounds.voices[program * 5 + 2].clone()),
+            sounds.menu_voice(select),
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
         ));
     }
