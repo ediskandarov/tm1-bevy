@@ -37,13 +37,18 @@ impl Reference {
             })
             .unwrap();
         let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
+        let opponent = match level {
+            Level::Arena => Vehicle::Outlaw,
+            Level::Warehouse => vehicle.warehouse_opponents()[0],
+        };
         let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
         let exe = disc.read("SIPS_600.07").unwrap();
         let mut cpu = Cpu::new(&exe);
         let scene =
-            CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(50)).unwrap();
+            CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(opponent as u16))
+                .unwrap();
         let mut player = PlayerVehicle::on_level(&exe, vehicle, level).unwrap();
-        let mut police = PoliceCar::spawn(&mut player);
+        let mut police = PoliceCar::for_vehicle(&mut player, opponent);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
         for (at, v) in [
@@ -58,7 +63,7 @@ impl Reference {
             (WORLD + 0x104, root(1)),
             (WORLD + 0xc0, 8),
             (TAXI_CS + 0x104, root(vehicle as u16)),
-            (POLICE_CS + 0x104, root(50)),
+            (POLICE_CS + 0x104, root(opponent as u16)),
         ] {
             put(&mut cpu, at, v);
         }
@@ -91,7 +96,8 @@ impl Reference {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         if !retail_particles {
-            cpu.put(0x80135f90, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            // An exhausted explosion pool returns NULL to its callers.
+            cpu.put(0x80135f90, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
         }
         Self {
             cpu,
@@ -148,6 +154,53 @@ impl Reference {
         assert_eq!(self.player.seed, self.cpu.random_state);
     }
 }
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn warehouse_lineups_and_ai_profiles_original() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut player = PlayerVehicle::from_executable(&exe).unwrap();
+    put(&mut cpu, 0x8018c36c, 1);
+    let mut deck = ArenaDeck::default();
+    let mut seed = 1;
+    cpu.random_state = seed;
+    for vehicle in [Vehicle::YellowJacket; 24]
+        .into_iter()
+        .chain(Vehicle::ROSTER)
+    {
+        cpu.call(0x80150a40, &[vehicle as u32, 0, 0x80030000, 0x80030004]);
+        assert_eq!(cpu.word(0x80030000), 1);
+        assert_eq!(cpu.word(0x80030004), deck.draw(vehicle, &mut seed) as u32);
+        assert_eq!(cpu.random_state, seed);
+    }
+    for vehicle in Vehicle::ROSTER {
+        let count = 0x80030000;
+        let cards = count + 4;
+        cpu.call(0x80150a40, &[vehicle as u32, 1, count, cards]);
+        let lineup = vehicle.warehouse_opponents();
+        assert_eq!(cpu.word(count) as usize, lineup.len());
+        for (i, opponent) in lineup.iter().enumerate() {
+            assert_eq!(cpu.word(cards + 4 * i as u32), *opponent as u32);
+        }
+        let seed = player.seed;
+        let ai = PoliceCar::for_vehicle(&mut player, vehicle);
+        cpu.put(POLICE, &[0; 0x560]);
+        cpu.put(0x80170238, &3u16.to_le_bytes());
+        cpu.put(0x8017023a, &20u16.to_le_bytes());
+        put(&mut cpu, 0x8019f788, POLICE_CS);
+        cpu.call(0x80125bc0, &[]);
+        cpu.random_state = seed;
+        cpu.call(0x80124d34, &[POLICE, vehicle as u32, 1]);
+        cpu.call(0x80142064, &[POLICE]);
+        let base = (POLICE & 0x1fffff) as usize;
+        for (i, &v) in ai.state.iter().enumerate() {
+            assert_eq!(v, cpu.ram[base + i], "{vehicle:?} AI spawn at {i:#x}");
+        }
+        assert_eq!(cpu.random_state, player.seed);
+    }
+}
+
 fn vec3(state: &mut [u8], at: usize, xyz: [i32; 3]) {
     for (i, v) in xyz.into_iter().enumerate() {
         state[at + 4 * i..at + 4 * i + 4].copy_from_slice(&v.to_le_bytes());
@@ -640,14 +693,23 @@ fn hammerhead_crush_original() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn warehouse_encounter_original() {
-    compare_encounter(Vehicle::YellowJacket, 20, Level::Warehouse);
+    for player in [
+        Vehicle::YellowJacket,
+        Vehicle::Outlaw,
+        Vehicle::Spectre,
+        Vehicle::PitViper,
+    ] {
+        println!("Warehouse retail encounter with {player:?}");
+        compare_encounter(player, 20, Level::Warehouse);
+    }
 }
 fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
-    let mut r = Reference::on_level(vehicle, false, level);
+    let mut r = Reference::on_level(vehicle, true, level);
+    r.cpu.call(0x80137268, &[]);
     let crush = vehicle == Vehicle::Hammerhead;
     let mut engaged = false;
     put(&mut r.cpu, 0x8019edd8, vehicle as u32);
-    put(&mut r.cpu, 0x8019eddc, 50);
+    put(&mut r.cpu, 0x8019eddc, r.police.vehicle as u32);
     if crush {
         r.player.state[0x47a..0x47c].copy_from_slice(&charge.to_le_bytes());
         let [x, y, _] = r.player.position();
@@ -721,9 +783,11 @@ fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
         r.cpu.call(0x800ffb98, &[2, input.ps1_buttons() as u32]);
         r.cpu.call(0x80110810, &[]);
         r.cpu.call(0x801344e0, &[0x800d8000, 0]);
+        r.cpu.call(0x801351b0, &[]);
         r.cpu.call(0x801333d0, &[0x800d8000, 0]);
         r.cpu.call(0x8010e3d8, &[]);
         r.cpu.call(0x80137d2c, &[]);
+        r.cpu.call(0x801360bc, &[]);
         r.cpu.call(0x8014ecd4, &[TAXI_CS, PLAYER]);
         // Run the retail PlayGame battle scheduler up to the AI update loop.
         r.cpu.call_until(0x8014dcf0, &[], 0x8014df5c);

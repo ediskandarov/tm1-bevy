@@ -14,14 +14,18 @@ pub struct Sounds {
 }
 
 impl Sounds {
-    pub fn load(disc: &Disc, vehicle: tm1_core::drive::Vehicle) -> Result<Self> {
+    pub fn load(
+        disc: &Disc,
+        vehicle: tm1_core::drive::Vehicle,
+        opponent: tm1_core::drive::Vehicle,
+    ) -> Result<Self> {
         let bank = disc.read("SND/UACORE.VAB")?;
         let mut sources = Vec::new();
         let mut engine_range = 0.;
         let mut engine_loop = std::time::Duration::ZERO;
         use tm1_core::drive::Vehicle::*;
         // UA_SOUND.c sound IDs resolved through SOUND.c's VAB program table.
-        let (engine, special) = match vehicle {
+        let programs = |car| match car {
             SweetTooth => (1, 41),
             YellowJacket => (0, 43),
             Darkside => (2, 40),
@@ -35,9 +39,25 @@ impl Sounds {
             MrGrimm => (11, 47),
             PitViper => (9, 46),
         };
-        for (id, prog) in [engine, 12, 13, 29, 19, special, 21, 16, 15, 18, 17, 21]
-            .into_iter()
-            .enumerate()
+        let (engine, special) = programs(vehicle);
+        let (_, opponent_special) = programs(opponent);
+        for (id, prog) in [
+            engine,
+            12,
+            13,
+            29,
+            19,
+            special,
+            21,
+            16,
+            15,
+            18,
+            17,
+            21,
+            opponent_special,
+        ]
+        .into_iter()
+        .enumerate()
         {
             let tones = program(&bank, prog)?;
             let mut mix = Vec::<[f32; 2]>::new();

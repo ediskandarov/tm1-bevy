@@ -90,11 +90,16 @@ fn main() -> Result<()> {
     for issue in &scene.omitted_nodes {
         eprintln!("Preview omission: {issue}");
     }
+    let mut seed = 1;
+    let opponent_kind = match level {
+        Level::Arena => tm1_core::drive::ArenaDeck::default().draw(vehicle, &mut seed),
+        Level::Warehouse => vehicle.warehouse_opponents()[0],
+    };
     let player =
-        tm1_core::drive::PlayerVehicle::on_level(&disc.read("SIPS_600.07")?, vehicle, level)
+        tm1_core::drive::PlayerVehicle::seeded(&disc.read("SIPS_600.07")?, vehicle, level, seed)
             .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?;
     let player_mesh = dmd.vehicle_bodies(vehicle as u16)?;
-    let opponent_mesh = dmd.vehicle_bodies(50)?;
+    let opponent_mesh = dmd.vehicle_bodies(opponent_kind as u16)?;
     let contacts = tm1_core::drive::CollisionScene::from_dmd(
         &data,
         scene.root_id,
@@ -120,9 +125,9 @@ fn main() -> Result<()> {
     let mut app = App::new();
     app.insert_resource(capture)
         .insert_resource(arena)
-        .insert_resource(sfx::Sounds::load(&disc, vehicle)?)
+        .insert_resource(sfx::Sounds::load(&disc, vehicle, opponent_kind)?)
         .insert_resource(music::Music::level(&disc, level)?)
-        .insert_resource(driving::Drive::new(player, contacts))
+        .insert_resource(driving::Drive::new(player, contacts, opponent_kind))
         .insert_resource(ClearColor(match level {
             Level::Arena => Color::srgb(0.035, 0.045, 0.065),
             Level::Warehouse => Color::srgb_u8(75, 70, 55),

@@ -200,14 +200,12 @@ static void mount_missile(Missile* m, CarMotion* motion, VECTOR3 local)
     m->model = 201;
 }
 
-void arena_special_missiles(PlayerCar* car)
+void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags)
 {
-    int kind = car->uaIndex;
     int cost = arena_player_special_cost(kind);
-    if (car->weap.ammo[WEAPON_SPECIAL] >= cost) {
+    if (pad->ammo[WEAPON_SPECIAL] >= cost) {
         VECTOR3* target;
-        car_lockon(1, 0, &target);
-        CarStats* stats = &car->stats;
+        car_lockon(owner < 50, 0, &target);
         VECTOR3 mounts[] = { { (s16)stats->dropPower, 0, stats->unk70 + 8 },
             { stats->unk110, stats->unk112, stats->unk114 },
             { -stats->unk110, stats->unk112, stats->unk114 } };
@@ -217,9 +215,9 @@ void arena_special_missiles(PlayerCar* car)
             if (index < 0)
                 break;
             Missile* m = &mlist[index];
-            mount_missile(m, &car->motion, mounts[i]);
+            mount_missile(m, motion, mounts[i]);
             m->target = target;
-            m->unk50 = 1;
+            m->unk50 = owner;
             m->life = 30;
             m->unk38 = 150;
             switch (kind) {
@@ -249,13 +247,13 @@ void arena_special_missiles(PlayerCar* car)
             }
             start_trail(m, kind == UA_CORVETTE ? 0xcdcdff : 0x808080);
             if (i == 0) {
-                car->weap.ammo[WEAPON_SPECIAL] -= cost;
-                arena_effect(&m->pos, 10);
+                pad->ammo[WEAPON_SPECIAL] -= cost;
+                arena_effect(&m->pos, owner < 50 ? 10 : 18);
             }
         }
     }
-    car->weap.fireDelay = 20;
-    car->flags[9] = 1;
+    pad->fireDelay = 20;
+    flags[9] = 1;
 }
 
 // Fire slot from FireMissiles, basic_missile_launch and create_FIRE_missile.

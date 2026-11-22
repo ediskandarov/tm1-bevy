@@ -52,6 +52,32 @@ impl Vehicle {
         Self::Spectre,
         Self::RoadKill,
     ];
+    // UA card order differs from the DMD vehicle IDs.
+    const CARD_ORDER: [Vehicle; 12] = [
+        Self::SweetTooth,
+        Self::YellowJacket,
+        Self::Darkside,
+        Self::Outlaw,
+        Self::Thumper,
+        Self::CrimsonFury,
+        Self::PitViper,
+        Self::Warthog,
+        Self::MrGrimm,
+        Self::Spectre,
+        Self::Hammerhead,
+        Self::RoadKill,
+    ];
+    pub fn warehouse_opponents(self) -> Vec<Self> {
+        const MASKS: [u16; 12] = [
+            0x016, 0x034, 0x032, 0x016, 0x026, 0x016, 0x980, 0x940, 0x8c0, 0x1c0, 0x1c0, 0x1c0,
+        ];
+        let mask = MASKS[Self::CARD_ORDER.iter().position(|v| *v == self).unwrap()];
+        Self::CARD_ORDER
+            .into_iter()
+            .enumerate()
+            .filter_map(|(bit, car)| (mask & (1 << bit) != 0).then_some(car))
+            .collect()
+    }
     pub fn slug(self) -> &'static str {
         match self {
             Self::SweetTooth => "sweet-tooth",
@@ -85,11 +111,39 @@ impl Vehicle {
         }
     }
 }
+/// Arena draws exclude the player and previously drawn cars until the deck resets.
+#[derive(Default)]
+pub struct ArenaDeck {
+    used: u16,
+    draws: u8,
+}
+impl ArenaDeck {
+    pub fn draw(&mut self, player: Vehicle, seed: &mut u32) -> Vehicle {
+        let index = Vehicle::CARD_ORDER
+            .iter()
+            .position(|car| *car == player)
+            .unwrap();
+        if self.draws >= 11 || self.used & (1 << index) != 0 {
+            *self = Self::default();
+        }
+        loop {
+            *seed = seed.wrapping_mul(1103515245).wrapping_add(12345);
+            let card = ((*seed >> 16) & 32767) as usize % 12;
+            if card != index && self.used & (1 << card) == 0 {
+                self.used |= 1 << card;
+                self.draws += 1;
+                return Vehicle::CARD_ORDER[card];
+            }
+        }
+    }
+}
+
 pub type Taxi = PlayerVehicle;
 pub struct PlayerVehicle {
     level: Level,
     vehicle: Vehicle,
     trig: Box<[i16]>,
+    initial_seed: u32,
     seed: u32,
     state: [u8; 0x4a4],
     frame: u32,
@@ -127,6 +181,9 @@ impl PlayerVehicle {
         Self::on_level(exe, vehicle, Level::Arena)
     }
     pub fn on_level(exe: &[u8], vehicle: Vehicle, level: Level) -> Option<Self> {
+        Self::seeded(exe, vehicle, level, 1)
+    }
+    pub fn seeded(exe: &[u8], vehicle: Vehicle, level: Level, initial_seed: u32) -> Option<Self> {
         if exe.get(..8)? != b"PS-X EXE" {
             return None;
         }
@@ -140,7 +197,7 @@ impl PlayerVehicle {
         let trig = trig.into_boxed_slice();
 
         let mut state = [0; 0x4a4];
-        let mut seed = 1;
+        let mut seed = initial_seed;
         {
             let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
             unsafe {
@@ -154,19 +211,23 @@ impl PlayerVehicle {
             state,
             frame: 0,
             trig,
+            initial_seed,
             seed,
         })
     }
 }
 impl PlayerVehicle {
     pub fn reset(&mut self) {
-        self.seed = 1;
+        self.seed = self.initial_seed;
         self.frame = 0;
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_level(self.level as i32);
             tm1_player_init(self.state.as_mut_ptr(), &mut self.seed, self.vehicle as i32)
         }
+    }
+    pub fn level(&self) -> Level {
+        self.level
     }
     pub fn vehicle(&self) -> Vehicle {
         self.vehicle
@@ -237,23 +298,35 @@ impl PlayerVehicle {
 }
 
 unsafe extern "C" {
-    fn tm1_police_step(
+    fn tm1_ai_step(
         scene: *mut std::ffi::c_void,
         state: *mut u8,
         target: *mut u8,
         table: *const i16,
         seed: *mut u32,
+        kind: i32,
         init: u8,
         fields: i16,
         frame: u32,
     );
 }
-pub struct PoliceCar {
+pub type PoliceCar = Opponent;
+pub struct Opponent {
+    vehicle: Vehicle,
     state: [u8; 0x560],
 }
-impl PoliceCar {
+impl Opponent {
+    pub fn vehicle(&self) -> Vehicle {
+        self.vehicle
+    }
     pub fn spawn(player: &mut Taxi) -> Self {
-        let mut car = Self { state: [0; 0x560] };
+        Self::for_vehicle(player, Vehicle::Outlaw)
+    }
+    pub fn for_vehicle(player: &mut Taxi, vehicle: Vehicle) -> Self {
+        let mut car = Self {
+            vehicle,
+            state: [0; 0x560],
+        };
         car.update(player, 3, true, std::ptr::null_mut());
         car
     }
@@ -265,12 +338,13 @@ impl PoliceCar {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_level(player.level as i32);
-            tm1_police_step(
+            tm1_ai_step(
                 scene,
                 self.state.as_mut_ptr(),
                 player.state.as_mut_ptr(),
                 player.trig.as_ptr(),
                 &mut player.seed,
+                self.vehicle as i32,
                 init as u8,
                 fields.into(),
                 player.frame,
@@ -419,7 +493,7 @@ impl PlayerVehicle {
         i16::from_le_bytes(self.state[0x48e..0x490].try_into().unwrap())
     }
 }
-impl PoliceCar {
+impl Opponent {
     pub fn body_stage(&self) -> usize {
         body_stage(self.health(), self.state[0x213] as i8)
     }

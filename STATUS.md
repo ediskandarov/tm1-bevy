@@ -1,19 +1,18 @@
 # Playable arena status
 
-The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of twelve vehicles and fights the police car on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
+The macOS application launches XARENA1 from the verified JP BIN/CUE. The player selects one of twelve vehicles and fights a computer-controlled opponent on medium difficulty. The arena includes acceleration, reversing, steering, turbo, tire contact, bridges, collision damage, police pursuit and attacks, gun heat, missiles, pickups and regeneration. Health, selected ammunition and gun heat are visible in the chase view. Zero health ends the encounter and restart reconstructs the starting state. CDDA and decoded VAB voices play through Bevy.
 
 The player completed a manual keyboard playthrough, heard game sounds and reached the **Arena cleared** victory screen. Keyboard play is the accepted input configuration for this milestone.
 
 Sweet Tooth, Yellow Jacket, Darkside, Hammerhead, Outlaw, Crimson Fury, Warthog, Mr. Grimm, Pit Viper, Thumper, Spectre and Road Kill
 load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
-Apple M3 Pro Metal backend and its chase-view frame inspected. The default
-encounter still uses one police opponent. The boss, remaining arenas,
+Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. The boss, remaining arenas,
 campaign, front end and multiplayer are outstanding.
 
 ## Warehouse
 
-Launch with `--level warehouse` to drive WH1 against one police opponent. The game reads the level geometry, sky and textures from the disc, spawns the player at the original Warehouse start, and plays CDDA track 4. Warehouse uses its own trigger points, bridges, curbs, potholes and AI lane selection. The encounter can be restarted from the keyboard. Campaign progression and the original multi-opponent bout are still outstanding.
+Launch with `--level warehouse` to drive WH1 against the first of the original three opponent cards for the selected player. The game reads the level geometry, sky and textures from the disc, spawns the player at the original Warehouse start, and plays CDDA track 4. Warehouse uses its own trigger points, bridges, curbs, potholes and AI lane selection. The encounter can be restarted from the keyboard. Campaign progression and the original multi-opponent bout are still outstanding.
 
 ## Reference execution
 
@@ -24,7 +23,8 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Player dynamics | Three 360-step recordings, fixed three fields, repeating 3/4/5/3 fields, and a ramp. Full 0x4a4 bytes and RNG compared at each step. Ramp peak 164 with all four tires airborne. |
 | Twelve player vehicles | For each vehicle the independently initialized 288-byte stat block and 360 mixed-timing movement steps match the disc executable. A separate firing scenario compares both car records, RNG and three steps of the special projectile trajectory for the six projectile-based specials. |
 | Taxi and police together | 360 consecutive steps through both original update calls. Accelerate, hold the gun after step ten, steer left on steps 24–39. Cycle 4/5/3/3 fields starting at step one. Both complete car records and RNG agree after every step. |
-| Warehouse pursuit | Compared the player spawn with retail InitPlayerPositions. Across 360 mixed-timing steps, both car records and RNG agreed with retail while driving, steering and firing. The reference executes the PlayGame battle scheduler before updating the police. |
+| Opponent selection and initialization | Compared all twelve Warehouse lineups and 36 successive Arena draws with retail uaSelectOpponents, including deck resets and RNG. For each regular opponent, compared all 0x560 bytes after AICarInit and AICarSetDefaultWeapons, and the resulting RNG. |
+| Warehouse pursuit | Four 360-step runs with Yellow Jacket, Outlaw, Spectre and Pit Viper as the player. Compared starting position and heading, then both full car records and RNG on every step. The reference executes the PlayGame battle scheduler and updates active flamethrowers and explosion particles. |
 | Contacts | Original car-to-car and wall fixtures contact at steps 13 and 73. Both car records, RNG and normalized contact identities compared. 9,381 original world point queries included 2,742 solid contacts. |
 | Body damage | The renderer selects one of three retail DMD branches for each car. The stage matches the retail damage-update routines for every positive HP value, descending and ascending, for both cars (420 comparisons). At 75% health the body changes to damaged and below 11% it changes to critical. |
 | Hammerhead crush | A moving Hammerhead reaches a stunned opponent at step 15, spends six charges and climbs over it. Both vehicle records and RNG match the disc executable through separation at step 19. With five charges the same approach leaves the crush inactive. |

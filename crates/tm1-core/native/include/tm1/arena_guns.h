@@ -34,7 +34,7 @@ typedef struct {
 } Missile;
 Missile *arena_missiles(void);
 s32 CAR_HD(VECTOR3 *,s32,s32);
-void arena_special_missiles(PlayerCar*);
+void arena_special_missiles(int kind, int owner, CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags);
 void arena_launch_missile(CarStats *,CarMotion *,CarWeap *,u8 *,u8);
 void arena_update_weapons(Car *,u8);
 typedef struct {VECTOR3 pos; s32 life,power,kind,idx,type;} DropWeap;
@@ -57,3 +57,5 @@ void arena_effect(VECTOR3 *,s32);
 void arena_regenerate_pickups(void);
 
 void arena_move_fragments(void);
+
+void arena_ai_weapon_profile(AICar* car);

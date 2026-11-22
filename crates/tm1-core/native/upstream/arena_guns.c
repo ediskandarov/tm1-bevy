@@ -401,25 +401,25 @@ s32 arena_player_special_cost(s32 kind)
     return (kind == UA_POLICE_CAR || kind == UA_MONSTER_TRUCK) ? 6
                                                                : playerProjectileSpecial(kind).cost;
 }
-static void firePlayerProjectileSpecial(PlayerCar* car)
+static void fireProjectileSpecial(int kind, int owner, CarStats* stats, CarMotion* motion, CarWeap* pad, u8* flags)
 {
-    ProjectileSpecial special = playerProjectileSpecial(car->uaIndex);
-    if (car->weap.ammo[WEAPON_SPECIAL] >= special.cost) {
-        VECTOR3 local = { 0, car->stats.unk112, car->stats.unk114 }, d;
-        mathMulTransVec(&car->motion.mat2, &local, &d);
-        d.vx += car->motion.pos.vx;
-        d.vy += car->motion.pos.vy;
-        d.vz += car->motion.pos.vz;
-        VECTOR3 dir = { rsin(car->motion.rot.vz) >> 6, rsin(car->motion.rot.vz + 1024) >> 6,
-            -rsin(car->motion.rot.vx) >> 6 };
-        if (car->uaIndex == 30)
+    ProjectileSpecial special = playerProjectileSpecial(kind);
+    if (pad->ammo[WEAPON_SPECIAL] >= special.cost) {
+        VECTOR3 local = { 0, stats->unk112, stats->unk114 }, d;
+        mathMulTransVec(&motion->mat2, &local, &d);
+        d.vx += motion->pos.vx;
+        d.vy += motion->pos.vy;
+        d.vz += motion->pos.vz;
+        VECTOR3 dir = { rsin(motion->rot.vz) >> 6, rsin(motion->rot.vz + 1024) >> 6,
+            -rsin(motion->rot.vx) >> 6 };
+        if (kind == 30)
             d.vz -= 16;
-        s_create_bullet(1, &dir, &d, special.projectile, special.damage, special.life, 0);
-        car->weap.ammo[WEAPON_SPECIAL] -= special.cost;
-        arena_effect(&d, 10);
+        s_create_bullet(owner, &dir, &d, special.projectile, special.damage, special.life, 0);
+        pad->ammo[WEAPON_SPECIAL] -= special.cost;
+        arena_effect(&d, owner < 50 ? 10 : 18);
     }
-    car->weap.fireDelay = special.delay;
-    car->flags[9] = 1;
+    pad->fireDelay = special.delay;
+    flags[9] = 1;
 }
 
 static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player)
@@ -439,8 +439,7 @@ static void firePoliceSpecial(CarWeap* weapon, u8* flags, int player)
             tasers[i].owner = owner->unkC0;
             tasers[i].target = in_range ? other->unkC0 : -1;
             weapon->ammo[WEAPON_SPECIAL] -= player ? 6 : 3;
-            if (player)
-                arena_effect(origin, 10);
+            arena_effect(origin, player ? 10 : 18);
             break;
         }
     }
@@ -586,26 +585,30 @@ void arena_update_weapons(Car* car, u8 player)
     if (!pad->ammo[pad->cur])
         return;
     switch (pad->cur) {
-    case WEAPON_SPECIAL:
-        if (player
-            && (p->uaIndex == UA_HUMVEE || p->uaIndex == UA_CORVETTE || p->uaIndex == UA_MAD_MAX))
-            arena_special_missiles(p);
-        else if (player && p->uaIndex == UA_LOW_RIDER) {
+    case WEAPON_SPECIAL: {
+        int kind = player ? p->uaIndex : ai->uaIndex;
+        int owner = player ? p->playerIdx + 1 : ai->playerIdx + 50;
+        u8* flags = player ? p->flags : ai->flags;
+        CarMotion* motion = player ? &p->motion : &ai->motion;
+        if (kind == UA_HUMVEE || kind == UA_CORVETTE || kind == UA_MAD_MAX)
+            arena_special_missiles(kind, owner, stats, motion, pad, flags);
+        else if (kind == UA_LOW_RIDER) {
             if (pad->ammo[WEAPON_SPECIAL] >= 5) {
-                arena_launch_flame(GetPlayerCs3D(0), 1);
+                arena_launch_flame(player ? GetPlayerCs3D(p->playerIdx) : GetAICs3D(ai->playerIdx), 1);
                 pad->ammo[WEAPON_SPECIAL] -= 5;
-                arena_effect(&p->motion.pos, 10);
+                arena_effect(&motion->pos, player ? 10 : 18);
             }
             pad->fireDelay = 20;
-            p->flags[9] = 1;
-        } else if (player && p->uaIndex == UA_MONSTER_TRUCK) {
+            flags[9] = 1;
+        } else if (kind == UA_MONSTER_TRUCK) {
             pad->fireDelay = 20;
-            p->flags[9] = 1;
-        } else if (player && p->uaIndex != UA_POLICE_CAR)
-            firePlayerProjectileSpecial(p);
+            flags[9] = 1;
+        } else if (kind == UA_POLICE_CAR)
+            firePoliceSpecial(pad, flags, player);
         else
-            firePoliceSpecial(pad, player ? p->flags : ai->flags, player);
+            fireProjectileSpecial(kind, owner, stats, motion, pad, flags);
         break;
+    }
     case WEAPON_FIRE_MISSILE:
     case WEAPON_HOMING_MISSILE:
     case WEAPON_FREEZE_MISSILE:
@@ -632,13 +635,45 @@ void arena_update_weapons(Car* car, u8 player)
         break;
     }
 }
+typedef struct {
+    u32 address;
+    s16 special_chance, fore_chance, aft_chance;
+    s32 front[4], rear[6];
+} AIWeaponProfile;
+
+// AICARUPD uses the original 32-bit profile addresses inside each car record.
+static const AIWeaponProfile ai_weapons[] = {
+    [UA_BOSS_CAR / 10] = { 0x80171260, 100, 75, 75, { 15, 15, 35, 35 }, { 20, 10, 25, 20, 10, 15 } },
+    [UA_ICE_CREAM_TRUCK / 10] = { 0x80171080, 35, 60, 90, { 33, 0, 65, 2 }, { 0, 90, 10, 0, 0, 0 } },
+    [UA_TAXI_CAB / 10] = { 0x801710a8, 90, 10, 75, { 70, 0, 30, 0 }, { 10, 0, 0, 90, 0, 0 } },
+    [UA_SEMI_TRUCK / 10] = { 0x801710d0, 35, 70, 10, { 20, 80, 0, 0 }, { 20, 70, 10, 0, 0, 0 } },
+    [UA_MONSTER_TRUCK / 10] = { 0x80171120, 50, 20, 50, { 10, 90, 0, 0 }, { 0, 80, 0, 20, 0, 0 } },
+    [UA_POLICE_CAR / 10] = { 0x80171170, 35, 25, 50, { 10, 90, 0, 0 }, { 0, 20, 0, 0, 80, 0 } },
+    [UA_LAMBORGHINI / 10] = { 0x80171238, 95, 30, 80, { 95, 0, 0, 5 }, { 90, 0, 10, 0, 0, 0 } },
+    [UA_HUMVEE / 10] = { 0x801711e8, 60, 60, 60, { 90, 0, 5, 5 }, { 0, 0, 100, 0, 0, 0 } },
+    [UA_HARLEY / 10] = { 0x801711c0, 35, 80, 60, { 80, 20, 0, 0 }, { 0, 0, 10, 0, 0, 90 } },
+    [UA_DUNE_BUGGY / 10] = { 0x80171148, 50, 50, 90, { 90, 5, 5, 0 }, { 50, 20, 0, 0, 0, 30 } },
+    [UA_LOW_RIDER / 10] = { 0x801710f8, 75, 80, 80, { 20, 20, 0, 0 }, { 35, 5, 60, 0, 0, 0 } },
+    [UA_CORVETTE / 10] = { 0x80171210, 90, 30, 10, { 100, 0, 0, 0 }, { 0, 0, 0, 100, 0, 0 } },
+    [UA_MAD_MAX / 10] = { 0x80171198, 80, 50, 20, { 100, 0, 0, 0 }, { 20, 0, 20, 0, 30, 30 } },
+};
+
+void arena_ai_weapon_profile(AICar* car)
+{
+    const AIWeaponProfile* p = &ai_weapons[car->uaIndex / 10];
+    car->weap.foreProfile = p->address;
+    car->weap.aftProfile = p->address + sizeof(p->front);
+    car->weap.specialChance = p->special_chance;
+    car->weap.foreChance = p->fore_chance;
+    car->weap.aftChance = p->aft_chance;
+}
+
 void AICarChooseForeWeapon(AICar* car)
 {
     s32 sum = 0;
     s16 roll = arena_rand() % 100;
     s32 i = WEAPON_FIRE_MISSILE;
-    static const s32 weights[] = { 10, 90, 0, 0 };
-    const s32* p = weights;
+    const s32* p = ai_weapons[car->uaIndex / 10].front;
 
     do {
         sum += *p;
@@ -654,8 +689,7 @@ void AICarChooseAftWeapon(AICar* car)
 {
     s32 sum = 0;
     s16 roll = arena_rand() % 100;
-    static const s32 weights[] = { 0, 20, 0, 0, 80, 0 };
-    const s32* probs = weights;
+    const s32* probs = ai_weapons[car->uaIndex / 10].rear;
     s32 i = WEAPON_REAR_MISSILE;
 
     do {
@@ -667,13 +701,46 @@ void AICarChooseAftWeapon(AICar* car)
         i++;
     } while (i <= WEAPON_SPIKE);
 }
+static u8 AIInSpecialParameters(AICar* car)
+{
+    s32 value;
+
+    value = car->uaIndex;
+    switch (value) {
+    case UA_ICE_CREAM_TRUCK:
+    case UA_TAXI_CAB:
+    case UA_SEMI_TRUCK:
+    case UA_LAMBORGHINI:
+    case UA_HARLEY:
+    case UA_DUNE_BUGGY:
+    case UA_CORVETTE:
+        return car->direction == DIRECTION_FRONT;
+    case UA_BOSS_CAR:
+        if (car->direction == DIRECTION_FRONT) {
+            return 1;
+        }
+        if (car->unk44 != 0) {
+            return 1;
+        }
+        return car->direction == DIRECTION_REAR;
+    default:
+        value = car->direction;
+        if (value != DIRECTION_FRONT) {
+            return 0;
+        }
+        return car->unk44 != 0;
+    case UA_POLICE_CAR:
+        return car->unk44 != 0;
+    }
+}
+
 void AIPickAttackWeapon(AICar* car)
 {
     s16 lvl;
 
     car->weap.cur = WEAPON_NONE;
     lvl = car->weap.ammo[WEAPON_SPECIAL];
-    if (lvl >= 6 && car->unk44 != 0) {
+    if (lvl >= 6 && AIInSpecialParameters(car)) {
         if (arena_rand() % 24 < car->weap.ammo[WEAPON_SPECIAL]) {
             car->weap.cur = WEAPON_SPECIAL;
             return;

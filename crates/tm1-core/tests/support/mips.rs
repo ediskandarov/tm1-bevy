@@ -256,7 +256,7 @@ impl Cpu {
                 self.put(addr, &(b as u16).to_le_bytes());
             }
             43 => {
-                assert_eq!(addr & 3, 0);
+                assert_eq!(addr & 3, 0, "unaligned store to {addr:#x} at {pc:#x}");
                 self.put(addr, &b.to_le_bytes());
             }
             _ => panic!("unsupported opcode {ins:#x} at {pc:#x}"),

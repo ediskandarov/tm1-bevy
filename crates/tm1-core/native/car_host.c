@@ -187,6 +187,48 @@ void tm1_bind_level(int level)
     numSlickSpots = 0;
 }
 
+static void init_vehicle_stats(CarStats* stats, s32 kind)
+{
+    switch (kind) {
+    case 10:
+        InitIceCreamTruck(stats);
+        break;
+    case 30:
+        InitSemiTruck(stats);
+        break;
+    case UA_MONSTER_TRUCK:
+        InitMonsterTruck(stats);
+        break;
+    case UA_HUMVEE:
+        InitHumvee(stats);
+        break;
+    case UA_CORVETTE:
+        InitCorvette(stats);
+        break;
+    case UA_MAD_MAX:
+        InitMadMax(stats);
+        break;
+    case UA_LOW_RIDER:
+        InitLowRider(stats);
+        break;
+    case UA_POLICE_CAR:
+        InitPoliceCar(stats);
+        break;
+    case 60:
+        InitLamborghini(stats);
+        break;
+    case 80:
+        InitHarley(stats);
+        break;
+    case 90:
+        InitDuneBuggy(stats);
+        break;
+    default:
+        InitTaxiCab(stats);
+        break;
+    }
+}
+
 void tm1_player_init(u8* state, u32* seed, s32 kind)
 {
     PlayerCar car = { 0 };
@@ -216,44 +258,7 @@ void tm1_player_init(u8* state, u32* seed, s32 kind)
     car.stats.unkE8 = 3;
     car.stats.unkFC = 100;
     car.stats.updateRate = 60;
-    switch (kind) {
-    case 10:
-        InitIceCreamTruck(&car.stats);
-        break;
-    case 30:
-        InitSemiTruck(&car.stats);
-        break;
-    case UA_MONSTER_TRUCK:
-        InitMonsterTruck(&car.stats);
-        break;
-    case UA_HUMVEE:
-        InitHumvee(&car.stats);
-        break;
-    case UA_CORVETTE:
-        InitCorvette(&car.stats);
-        break;
-    case UA_MAD_MAX:
-        InitMadMax(&car.stats);
-        break;
-    case UA_LOW_RIDER:
-        InitLowRider(&car.stats);
-        break;
-    case UA_POLICE_CAR:
-        InitPoliceCar(&car.stats);
-        break;
-    case 60:
-        InitLamborghini(&car.stats);
-        break;
-    case 80:
-        InitHarley(&car.stats);
-        break;
-    case 90:
-        InitDuneBuggy(&car.stats);
-        break;
-    default:
-        InitTaxiCab(&car.stats);
-        break;
-    }
+    init_vehicle_stats(&car.stats, kind);
     car.stats.damageThreshold = 75;
     car.stats.unk78 = abs(car.stats.unk80) + abs(car.stats.unk84);
     RecomputeCarDeltas(&car.stats);
@@ -358,8 +363,8 @@ void GetPlayerPosition(s16 idx, VECTOR3* out)
 }
 void tm1_ai_restore_battle(AICar*);
 
-void tm1_police_step(struct CollisionScene* scene, u8* state, u8* target, const s16* table,
-    u32* seed, u8 init, s16 fields, u32 frame)
+void tm1_ai_step(struct CollisionScene* scene, u8* state, u8* target, const s16* table,
+    u32* seed, s32 kind, u8 init, s16 fields, u32 frame)
 {
     PlayerCar player;
     AICar car;
@@ -375,24 +380,26 @@ void tm1_police_step(struct CollisionScene* scene, u8* state, u8* target, const 
     tm1_use_scene(scene);
     tm1_ai_restore_battle(&car);
     if (init) {
-        car.uaIndex = UA_POLICE_CAR;
+        car.uaIndex = kind;
         car.stats.unk38 = 1;
-        car.weap.foreProfile = 0x80171170;
-        car.weap.aftProfile = 0x80171180;
-        car.weap.specialChance = 35;
-        car.weap.foreChance = 25;
-        car.weap.aftChance = 50;
+        arena_ai_weapon_profile(&car);
         car.weap.ammo[WEAPON_SPECIAL] = 20;
         car.weap.ammo[0] = car.weap.totalAmmo = 2;
         car.weap.maxAmmo = 28;
-        car.weap.unk48 = 6;
-        InitPoliceCar(&car.stats);
+        car.weap.unk48 = arena_player_special_cost(kind);
+        car.flags[25] = 1;
+        car.weap.cur = WEAPON_SPECIAL;
+        car.weap.unk46 = 2;
+        car.stats.unk3C = 1;
+        car.stats.unk4C = 1;
         car.stats.damageThreshold = 75;
         car.stats.unkDC = 25;
         car.stats.unkE8 = 3;
+        init_vehicle_stats(&car.stats, kind);
         car.stats.unkFC = car.stats.unk100 = GetAICarStrength();
         car.stats.unk78 = abs(car.stats.unk80) + abs(car.stats.unk84);
         RecomputeCarDeltas(&car.stats);
+        car.stats.updateRate = 60;
         AICarInitProfiles(&car);
         car.stats.unk40 = car.stats.unk44;
         car.unk18 = 0x140;

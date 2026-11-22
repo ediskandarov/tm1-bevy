@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 use std::time::Duration;
-use tm1_core::drive::{CollisionScene, Input, PlayerVehicle, PoliceCar};
+use tm1_core::drive::{CollisionScene, Input, Opponent, PlayerVehicle, Vehicle};
 
 #[derive(Resource)]
 pub struct Drive {
     pub player: PlayerVehicle,
-    pub opponent: PoliceCar,
+    pub opponent: Opponent,
     pub contacts: CollisionScene,
     pub sounds: Vec<(usize, [i32; 3])>,
     remainder: Duration,
@@ -14,8 +14,12 @@ pub struct Drive {
     was_focused: bool,
 }
 impl Drive {
-    pub fn new(mut player: PlayerVehicle, contacts: CollisionScene) -> Self {
-        let opponent = PoliceCar::spawn(&mut player);
+    pub fn new(
+        mut player: PlayerVehicle,
+        contacts: CollisionScene,
+        opponent_kind: Vehicle,
+    ) -> Self {
+        let opponent = Opponent::for_vehicle(&mut player, opponent_kind);
         Self {
             opponent,
             contacts,
@@ -51,7 +55,8 @@ pub fn advance(
         drive.contacts.reset_projectiles();
         drive.paused = false;
         drive.player.reset();
-        drive.opponent = PoliceCar::spawn(&mut drive.player);
+        let opponent_kind = drive.opponent.vehicle();
+        drive.opponent = Opponent::for_vehicle(&mut drive.player, opponent_kind);
         drive.restart_count = drive.restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
@@ -68,12 +73,16 @@ pub fn advance(
     } else if drive.paused {
         "Paused • P to resume"
     } else {
-        "Arena"
+        match drive.player.level() {
+            tm1_core::drive::Level::Arena => "Arena",
+            tm1_core::drive::Level::Warehouse => "Warehouse",
+        }
     };
     let title = format!(
-        "TM1 • {status}   |   {} {}   Police {}   |   Fire missiles {}",
+        "TM1 • {status}   |   {} {}   {} {}   |   Fire missiles {}",
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
+        drive.opponent.vehicle().name(),
         drive.opponent.health().0.max(0),
         drive.player.missiles()
     );
@@ -142,6 +151,7 @@ pub fn advance(
                 (0, 2) => 1,
                 (11, 2) => 6,
                 (10, 2) => 5,
+                (18, 2) => 12,
                 (1, 2) => 2,
                 (2, 7) => 3,
                 (12, 2) => 4,
@@ -183,6 +193,7 @@ mod tests {
             app.insert_resource(Drive::new(
                 PlayerVehicle::from_executable(&exe).unwrap(),
                 scene,
+                Vehicle::Outlaw,
             ))
             .insert_resource(crate::smoke::Capture::new(None, false, false))
             .init_resource::<ButtonInput<KeyCode>>()

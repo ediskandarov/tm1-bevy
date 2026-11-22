@@ -19,7 +19,7 @@ use bevy::camera::visibility::RenderLayers;
 #[derive(Component)]
 pub enum VehicleMesh {
     Player,
-    Police,
+    Opponent,
 }
 #[derive(Component)]
 pub struct BodyStage(usize);
@@ -241,7 +241,7 @@ pub fn setup(
                 if car == 0 {
                     VehicleMesh::Player
                 } else {
-                    VehicleMesh::Police
+                    VehicleMesh::Opponent
                 },
                 BodyStage(stage),
                 if stage == 0 {
@@ -339,8 +339,9 @@ pub fn hud(
     };
     let (weapon, ammo) = drive.player.weapon();
     let message = format!(
-        "Police  {}      {}  {}
+        "{}  {}      {}  {}
 {}  × {}     {}",
+        drive.opponent.vehicle().name(),
         drive.opponent.health().0.max(0),
         drive.player.vehicle().name(),
         drive.player.health().0.max(0),
@@ -447,7 +448,7 @@ pub fn update(
     for (vehicle, stage, mut visibility, mut entity) in &mut vehicles {
         let (selected, origin, matrix) = match vehicle {
             VehicleMesh::Player => (active[0], origin, matrix),
-            VehicleMesh::Police => (active[1], opponent_origin, opponent_matrix),
+            VehicleMesh::Opponent => (active[1], opponent_origin, opponent_matrix),
         };
         if stage.0 != selected {
             *visibility = Visibility::Hidden;
