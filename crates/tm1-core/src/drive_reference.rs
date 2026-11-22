@@ -5097,12 +5097,22 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn rooftop_pyramid_bullet_matches_retail_clouds() {
-    verify_pyramid_clouds(0);
-    verify_pyramid_clouds(80);
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let original = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+    for prefill in [0, 40, 72, 80] {
+        verify_pyramid_clouds(prefill, &original);
+    }
 }
 
-fn verify_pyramid_clouds(prefill: usize) {
+fn verify_pyramid_clouds(prefill: usize, original: &Cpu) {
     let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Rooftops);
+    // Ordinary contact tests stub sparks and puffs. Here they must compete
+    // with the destruction cloud for the same 80 slots.
+    for address in [0x801369b0, 0x8013721c] {
+        for pc in [address, address + 4] {
+            put(&mut r.cpu, pc, original.word(pc));
+        }
+    }
     let (slot, record) = (0..50)
         .filter_map(|i| target_record(&r.scene, i).map(|v| (i, v)))
         .find(|(_, v)| v[0] == 1000 && v[1] < 30)
@@ -5182,24 +5192,40 @@ fn verify_pyramid_clouds(prefill: usize) {
         })
         .collect();
     assert_eq!(emitted, clouds);
-    if prefill == 80 {
+    // The host phase includes the particle update after moving the bullet.
+    // Advance the JP pool through the same update before reading its slots.
+    r.cpu.call(0x801360bc, &[]);
+    let mut visible = Vec::new();
+    for slot in 0..80 {
+        let p = 0x8019a088 + slot * 64;
+        if r.cpu.word(p + 24) as i32 >= 0 {
+            let kind = match (r.cpu.word(p + 0x24), r.cpu.word(p + 0x10)) {
+                (0x8019c738, 0x20) => 34,
+                (0x8019c638, 0x60) => 30,
+                _ => continue,
+            };
+            visible.push([
+                r.cpu.word(p) as i32,
+                r.cpu.word(p + 4) as i32,
+                r.cpu.word(p + 8) as i32,
+                kind,
+            ]);
+        }
+    }
+    assert_eq!(
+        native, visible,
+        "original slot order with {prefill} occupied"
+    );
+    assert_eq!(
+        effects[..count].iter().filter(|e| e[3] == 35).count(),
+        prefill
+    );
+    if prefill == 0 {
+        assert_eq!(native.len(), clouds.len());
+    } else if prefill == 80 {
         assert!(native.is_empty());
-        assert_eq!(effects[..count].iter().filter(|e| e[3] == 35).count(), 80);
-        for slot in 0..80 {
-            let p = 0x8019a088 + slot * 64;
-            assert_eq!(r.cpu.word(p + 24), 0);
-            assert_eq!(r.cpu.word(p + 0x20), 80);
-        }
     } else {
-        for p in &mut clouds {
-            if p[3] == 34 {
-                p[2] += 10;
-            }
-        }
-        let mut visible = native;
-        visible.sort();
-        clouds.sort();
-        assert_eq!(visible, clouds);
+        assert!(!native.is_empty() && native.len() < clouds.len());
     }
     assert_eq!(r.player.seed, r.cpu.random_state);
 }
