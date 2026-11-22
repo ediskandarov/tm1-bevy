@@ -48,3 +48,4 @@ void CheckSpikeDamage(Car*,u8);
 void tm1_contact_setup(Cs*,const CarMotion*,const CarStats*);
 struct CollisionScene;
 void tm1_use_scene(struct CollisionScene *scene);
+void tm1_display_hit_sheet(struct CollisionScene*, u32 frame);

@@ -434,6 +434,14 @@ impl PlayerVehicle {
             trig: self.trig.clone(),
         }
     }
+    pub fn set_battle_view(&mut self, view: PlayerView, fixed: bool) {
+        let mode = match view {
+            PlayerView::Helicopter => 4,
+            PlayerView::Car(_) if fixed => 5,
+            PlayerView::Car(car) => car as i32,
+        };
+        self.state[0xf4..0xf8].copy_from_slice(&mode.to_le_bytes());
+    }
     pub fn set_pad_layout(&mut self, layout: u8) {
         assert!(layout < 4);
         unsafe extern "C" {
@@ -1141,6 +1149,16 @@ impl CollisionScene {
             tm1_new_life(self.native.as_ptr());
         }
         self.battle = [0; 3];
+    }
+    pub fn hit_sheet(&self) -> [u8; 4] {
+        unsafe extern "C" {
+            fn tm1_hit_sheet(scene: *const std::ffi::c_void, rgba: *mut u8);
+        }
+        let mut rgba = [0; 4];
+        unsafe {
+            tm1_hit_sheet(self.native.as_ptr(), rgba.as_mut_ptr());
+        }
+        rgba
     }
     pub fn level_won(&self) -> bool {
         unsafe { tm1_level_won(self.native.as_ptr()) }

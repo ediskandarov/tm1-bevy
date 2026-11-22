@@ -120,8 +120,7 @@ impl Reference {
         cpu.call(0x80103a4c, &[HDP_STACK]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
         for at in [
-            0x80146754, 0x80110d90, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524,
-            0x80106d60,
+            0x80146754, 0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524, 0x80106d60,
         ] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
@@ -972,6 +971,55 @@ fn fire_at_player(r: &mut Reference) {
         r.cpu.call(0x80137d2c, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         r.compare();
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn cockpit_damage_sheet_original() {
+    unsafe extern "C" {
+        fn SetFXSheet(count: i32, r: i32, g: i32, b: i32);
+        fn tm1_display_hit_sheet(scene: *mut std::ffi::c_void, frame: u32);
+    }
+    for mode in [CarView::Cockpit, CarView::Chase] {
+        let mut r = Reference::new();
+        r.player.set_battle_view(PlayerView::Car(mode), false);
+        vec3(&mut r.player.state, 0x388, [2700, 3050, 400]);
+        vec3(&mut r.police.state, 0x444, [2700, 2000, 400]);
+        r.sync();
+        fire_at_player(&mut r);
+        assert_eq!(
+            r.cpu.word(0x8018bfcc),
+            if mode == CarView::Cockpit { 2 } else { 0 }
+        );
+        // Overwrite the red bullet flash with a longer white flash while it is active.
+        for frame in 1..=14 {
+            if frame == 2 {
+                r.cpu.call(0x80110d90, &[10, 255, 255, 255]);
+                let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+                unsafe {
+                    tm1_use_scene(r.scene.native.as_ptr());
+                    SetFXSheet(10, 255, 255, 255);
+                    tm1_use_scene(std::ptr::null_mut());
+                }
+            }
+            unsafe {
+                tm1_display_hit_sheet(r.scene.native.as_ptr(), frame);
+            }
+            let rgba = r.scene.hit_sheet();
+            if r.cpu.word(0x8018bfcc) == 0 {
+                assert_eq!(rgba[3], 0);
+                continue;
+            }
+            put(&mut r.cpu, 0x8018bfa8, frame & 1);
+            r.cpu.call(0x80110ea8, &[RENDER_SCRATCH]);
+            let packet = 0x80000000 | (r.cpu.word(RENDER_SCRATCH) & 0x00ffffff);
+            let [red, green, blue, opcode] = r.cpu.word(packet + 4).to_le_bytes();
+            assert_eq!(
+                rgba,
+                [red, green, blue, if opcode & 2 != 0 { 128 } else { 255 }]
+            );
+        }
     }
 }
 

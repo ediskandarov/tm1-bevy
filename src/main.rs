@@ -243,6 +243,7 @@ fn main() -> Result<()> {
                 render::controls,
                 render::update,
                 render::cockpit,
+                render::hit_sheet,
                 render::mirror_display,
                 render::hud_letters,
                 render::hud,

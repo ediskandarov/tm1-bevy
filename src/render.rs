@@ -295,6 +295,13 @@ pub fn setup(
         Visibility::Hidden,
         Transform::from_xyz(0., 0., -1.),
     ));
+    commands.spawn((
+        crate::campaign::StageEntity,
+        HitSheet,
+        Sprite::default(),
+        Visibility::Hidden,
+        Transform::from_xyz(0., 0., -2.),
+    ));
     let texture = images.add(image);
     let additive_material = additive_materials.add(crate::additive::Additive {
         atlas: texture.clone(),
@@ -598,6 +605,25 @@ pub fn cockpit(
         }
     }
 }
+#[derive(Component)]
+pub struct HitSheet;
+
+pub fn hit_sheet(
+    window: Single<&Window>,
+    drive: Res<crate::driving::Drive>,
+    mut sheet: Single<(&mut Sprite, &mut Visibility), With<HitSheet>>,
+) {
+    let [r, g, b, a] = drive.contacts.hit_sheet();
+    let (sprite, visibility) = &mut *sheet;
+    **visibility = if a == 0 {
+        Visibility::Hidden
+    } else {
+        Visibility::Visible
+    };
+    sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
+    sprite.color = Color::srgba_u8(r, g, b, a);
+}
+
 #[derive(Component, Default)]
 pub struct HudLetters {
     last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16, bool)>,

@@ -25,6 +25,10 @@ A normal launch displays the three original JP startup TIMs and plays the Sony l
 
 After 1,201 idle fields the title cycles through the battle movie, the contest history, and the vehicle demonstration on successive visits. History scrolls the 31 lines of HISTORY.TXT over SCRNCALY.TIM. Natural completion introduces the twelve competitors, while Enter skips to the title movie. The vehicle demonstration uses SCRND2.TIM, rotates through the original card order at 361 fields per vehicle, and plays each signature over the title theme. A disc-backed integration test covers startup order, logo skip timing, title frame changes, the theme handoff and the idle demo. To inspect the title movie in a deterministic Metal run, use `--menu --demo-screenshot local/title-cinema.png 378`.
 
+## Cockpit damage flash
+
+The selected camera mode reaches the car update before each battle step. A cockpit hit sets the original red or white full-screen primitive. The damage timer uses the number of video fields per step. Each simulation step selects the next primitive and applies the original integer color fade. A JP executable replay compares the submitted polygon color and semitransparency flag for both buffers, including replacement of an active flash. The Bevy cockpit and instruments draw above the flash. The semitransparent buffer uses Bevy alpha blending. A Metal capture of the opaque flash during the Warehouse encounter is reproducible with `--level warehouse --demo-cockpit-screenshot local/warehouse-cockpit-hit.png 155`.
+
 ## Defeat and Minion introduction
 
 The single-player battle records victory after the AI updates, before arena targets move. Incoming weapon hits during the 180-field return delay now follow the original damage guard. A disc-backed replay checks that the JP executable queues one victory, a late bullet leaves the winner’s health unchanged, and the same shot deals damage after a stage reset. A simultaneous player and opponent death leaves the victory flag clear. Activating Minion clears the flag for the boss encounter.

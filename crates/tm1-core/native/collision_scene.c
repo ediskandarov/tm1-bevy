@@ -51,6 +51,10 @@ typedef struct CollisionScene {
     Cs* first_car;
     int opponent_count, model_count;
     bool beat_level;
+    struct {
+        int count;
+        u8 rgb[3], displayed[4];
+    } hit_sheet;
     // Freeway barricades occupy 0..3. Rooftop crate and window pairs follow.
     DbSwitch* arena_switches[8];
     int drop_box_tick, window_tick;
@@ -701,6 +705,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
     s->beat_level = false;
+    memset(&s->hit_sheet, 0, sizeof s->hit_sheet);
     for (int i = 0; i < s->num_targets; i++)
         s->targets[i].health = target_health(s->targets[i].type);
     for (int group = 0; group <= 1; group++) {
@@ -1535,10 +1540,30 @@ void do_puff(VECTOR3* pos)
 }
 void SetFXSheet(s32 n, s32 r, s32 g, s32 b)
 {
-    (void)n;
-    (void)r;
-    (void)g;
-    (void)b;
+    if (!current)
+        return;
+    current->hit_sheet.count = n;
+    current->hit_sheet.rgb[0] = r;
+    current->hit_sheet.rgb[1] = g;
+    current->hit_sheet.rgb[2] = b;
+}
+
+// DisplayFXSheet links one of two primitives and fades both before GPU submission.
+void tm1_display_hit_sheet(CollisionScene* scene, u32 frame)
+{
+    if (scene->hit_sheet.count <= 0) {
+        scene->hit_sheet.displayed[3] = 0;
+        return;
+    }
+    if (--scene->hit_sheet.count < 8)
+        for (int i = 0; i < 3; i++)
+            scene->hit_sheet.rgb[i] = (scene->hit_sheet.rgb[i] * 3 + 128) >> 2;
+    memcpy(scene->hit_sheet.displayed, scene->hit_sheet.rgb, 3);
+    scene->hit_sheet.displayed[3] = frame & 1 ? 255 : 128;
+}
+void tm1_hit_sheet(const CollisionScene* scene, u8* rgba)
+{
+    memcpy(rgba, scene->hit_sheet.displayed, 4);
 }
 void UAeffectActHitLights(Cs* cs, s32 n, u8* rgb)
 {

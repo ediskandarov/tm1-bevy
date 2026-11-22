@@ -509,6 +509,9 @@ pub fn advance(
         }
         state.update_rooftop_passage(state.selected_view());
         state
+            .player
+            .set_battle_view(state.selected_view(), state.camera.fixed_pose.is_some());
+        state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
         if state.helicopter_active

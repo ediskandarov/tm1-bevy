@@ -1091,6 +1091,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
         tm1_move_static_cops(&player.motion.pos);
     }
     UpdateNumPotHoles();
+    tm1_display_hit_sheet(scene, frame);
     tm1_store_battle(battle);
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));
