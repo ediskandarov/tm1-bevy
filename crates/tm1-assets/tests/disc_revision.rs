@@ -22,6 +22,12 @@ fn supported_disc_arena_and_audio() {
     ] {
         let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
         let level = Dmd::parse(&data).unwrap();
+        let smoke = level.smoke_frames(false).unwrap();
+        let steam = level.smoke_frames(true).unwrap();
+        for (smoke, steam) in smoke.iter().zip(steam) {
+            assert_eq!((smoke.texture.page >> 5) & 3, 2, "{name}");
+            assert_eq!((steam.texture.page >> 5) & 3, 1, "{name}");
+        }
         let available = level
             .special_bullet_frames()
             .unwrap()

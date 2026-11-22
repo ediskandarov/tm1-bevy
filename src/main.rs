@@ -1,5 +1,4 @@
 //! Arena driving frontend.
-mod additive;
 mod campaign;
 mod cinema;
 mod contest;
@@ -14,6 +13,7 @@ mod pause;
 #[allow(dead_code)]
 #[path = "../crates/tm1-core/tests/support/mips.rs"]
 mod reference_cpu;
+mod texture_blend;
 
 mod render;
 mod scroll;
@@ -259,7 +259,7 @@ fn main() -> Result<()> {
             }
         }
     }
-    app.add_plugins(additive::AdditivePlugin);
+    app.add_plugins(texture_blend::TextureBlendPlugin);
     if demo {
         app.add_plugins((
             bevy::render::diagnostic::RenderDiagnosticsPlugin,

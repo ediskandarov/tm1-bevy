@@ -39,19 +39,15 @@ const MIRROR_WIDTH: u32 = 101;
 const MIRROR_HEIGHT: u32 = 30;
 const MIRROR_FOCAL: f32 = 91.;
 
-// PS1 ABR modes 1 and 3 add the foreground at full and quarter strength.
-fn additive_index(texture: TextureKey) -> Option<usize> {
-    match (texture.page >> 5) & 3 {
-        1 => Some(0),
-        3 => Some(1),
-        _ => None,
-    }
+// Mode zero uses the regular alpha batch. Modes 1..=3 each have a GPU material.
+fn texture_blend_index(texture: TextureKey) -> Option<usize> {
+    usize::from((texture.page >> 5) & 3).checked_sub(1)
 }
 
 #[derive(Default)]
 struct ViewMeshes {
     secondary: bool,
-    additive: [Handle<Mesh>; 2],
+    texture_blends: [Handle<Mesh>; 3],
     solids: Handle<Mesh>,
     transparent: Handle<Mesh>,
 }
@@ -253,7 +249,7 @@ pub fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    mut additive_materials: ResMut<Assets<crate::additive::Additive>>,
+    mut texture_materials: ResMut<Assets<crate::texture_blend::TextureBlend>>,
 ) {
     let mut image = Image::new(
         Extent3d {
@@ -336,11 +332,16 @@ pub fn setup(
         Transform::from_xyz(0., 0., -2.),
     ));
     let texture = images.add(image);
-    let additive_handles = [1., 0.25].map(|foreground_scale| {
-        additive_materials.add(crate::additive::Additive {
+    let blend_handles = [1, 2, 3].map(|mode| {
+        texture_materials.add(crate::texture_blend::TextureBlend {
             atlas: texture.clone(),
-            foreground_scale,
+            mode,
         })
+    });
+    let subtractive_opaque = materials.add(ColorMaterial {
+        texture: Some(texture.clone()),
+        alpha_mode: AlphaMode2d::Mask(0.75),
+        ..default()
     });
     let masked = materials.add(ColorMaterial {
         texture: Some(texture.clone()),
@@ -443,7 +444,7 @@ pub fn setup(
         (3, &mut arena_views.rear_view),
     ] {
         view.secondary = layer == 3;
-        for (handle, material) in view.additive.iter_mut().zip(&additive_handles) {
+        for (handle, material) in view.texture_blends.iter_mut().zip(&blend_handles) {
             *handle = meshes.add(Batch::default().mesh());
             commands.spawn((
                 crate::campaign::StageEntity,
@@ -453,6 +454,15 @@ pub fn setup(
                 NoFrustumCulling,
             ));
         }
+        // Reverse subtraction operates only on STP texels. Draw ordinary
+        // texels from the same geometry with the opaque cutout pipeline.
+        commands.spawn((
+            crate::campaign::StageEntity,
+            Mesh2d(view.texture_blends[1].clone()),
+            MeshMaterial2d(subtractive_opaque.clone()),
+            RenderLayers::layer(layer),
+            NoFrustumCulling,
+        ));
         for (handle, material) in [
             (&mut view.solids, masked.clone()),
             (&mut view.transparent, blend.clone()),
@@ -1141,7 +1151,7 @@ fn draw_view(
     let (_, stand_branches) = contacts.health_stands();
     let mut solids = Batch::default();
     let mut transparent = Batch::default();
-    let mut additive = [Batch::default(), Batch::default()];
+    let mut texture_blends: [Batch; 3] = std::array::from_fn(|_| Batch::default());
     let visible = (0..arena.vehicle_start).chain(
         arena
             .body_ranges
@@ -1232,9 +1242,9 @@ fn draw_view(
         let batch = if let Some(i) = p
             .texture
             .filter(|_| p.semi_transparent)
-            .and_then(additive_index)
+            .and_then(texture_blend_index)
         {
-            &mut additive[i]
+            &mut texture_blends[i]
         } else if p.semi_transparent {
             &mut transparent
         } else {
@@ -1281,7 +1291,7 @@ fn draw_view(
         let tint = [16, 8, 0].map(|shift| ((face[1] >> shift) & 255) as f32 / 128.);
         for &i in indices(4) {
             let [u, v] = frame.uv[i ^ 1];
-            additive[0].push(
+            texture_blends[0].push(
                 points[i],
                 arena.uv(slot, Vec2::new(u.into(), v.into())),
                 [tint[0], tint[1], tint[2], 1.],
@@ -1333,9 +1343,9 @@ fn draw_view(
             let batch = if let Some(i) = p
                 .texture
                 .filter(|_| p.semi_transparent)
-                .and_then(additive_index)
+                .and_then(texture_blend_index)
             {
-                &mut additive[i]
+                &mut texture_blends[i]
             } else if p.semi_transparent {
                 &mut transparent
             } else {
@@ -1480,8 +1490,8 @@ fn draw_view(
         } else {
             [1.; 4]
         };
-        let batch = if let Some(i) = additive_index(sprite.texture) {
-            &mut additive[i]
+        let batch = if let Some(i) = texture_blend_index(sprite.texture) {
+            &mut texture_blends[i]
         } else {
             &mut transparent
         };
@@ -1593,8 +1603,8 @@ fn draw_view(
                 };
                 let sprite = &frames[frame];
                 let tile = arena.tiles[&(Some(sprite.texture), true)];
-                let batch = if let Some(i) = additive_index(sprite.texture) {
-                    &mut additive[i]
+                let batch = if let Some(i) = texture_blend_index(sprite.texture) {
+                    &mut texture_blends[i]
                 } else {
                     &mut transparent
                 };
@@ -1613,11 +1623,11 @@ fn draw_view(
             }
         }
     }
-    for (batch, handle) in additive.into_iter().zip(&view.additive) {
+    for (batch, handle) in texture_blends.into_iter().zip(&view.texture_blends) {
         batch.write(meshes, handle);
     }
     solids.write(meshes, &view.solids);
-    // Sort all translucent surfaces together, including smoke and tracers.
+    // Sort the regular alpha batch back to front.
     let mut triangles: Vec<_> = transparent
         .positions
         .chunks_exact(3)
