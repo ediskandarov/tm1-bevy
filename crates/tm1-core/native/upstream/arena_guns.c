@@ -242,6 +242,8 @@ void arena_update_guns(Car* car, u8 isPlayer)
     }
     {
 
+        if (!isPlayer)
+            arena_request_battle_music();
         // Keep muzzle setup together to preserve PsyQ's load scheduling.
         do {
             if (pad->unk04 != 0) {
@@ -648,6 +650,8 @@ void arena_update_weapons(Car* car, u8 player)
         pad->ammo[pad->cur] = 5;
     if (!pad->ammo[pad->cur])
         return;
+    if (!player)
+        arena_request_battle_music();
     switch (pad->cur) {
     case WEAPON_SPECIAL: {
         int kind = player ? p->uaIndex : ai->uaIndex;

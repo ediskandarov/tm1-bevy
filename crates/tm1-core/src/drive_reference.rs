@@ -1882,8 +1882,8 @@ fn compare_battle_controls(
         r.cpu.call(entry, &[]);
     }
     for at in [
-        0x801417d0, 0x801466b0, 0x80146930, 0x801073cc, 0x8014b208, 0x80108604, 0x80116bcc,
-        0x80107f84, 0x801371cc, 0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
+        0x801417d0, 0x801466b0, 0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84,
+        0x801371cc, 0x80137190, 0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -2001,6 +2001,7 @@ fn compare_battle_controls(
         }
         put(&mut r.cpu, 0x8018bf14, head);
     }
+    initialize_retail_music(&mut r.cpu, level);
     r.start_pedestrians(level);
     if cheats {
         r.player.set_weapon_and_damage_modes(false, true);
@@ -2055,6 +2056,7 @@ fn compare_battle_controls(
         r.cpu.call(0x8011c080, &[]);
         r.cpu.call(0x80135784, &[]);
         r.cpu.call(0x80135e10, &[]);
+        r.cpu.call_until(0x8014e130, &[], 0x8014e1b0);
         if level != Level::Arena {
             r.cpu.call(0x8014843c, &[]);
             r.cpu.call(0x80149764, &[]);
@@ -2120,6 +2122,11 @@ fn compare_battle_controls(
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
         }
+        assert_eq!(
+            r.scene.battle_music_playing(),
+            matches!(r.cpu.word(0x8018bf64), 5 | 7),
+            "{level:?} tick {tick} music"
+        );
         if boss {
             compare_projectiles(&r, vehicle, tick);
             if tick == 360 {
@@ -3070,5 +3077,81 @@ fn pedestrians_match_disc() {
                 .map(|i| r.scene.pedestrian_pose(i))
                 .collect::<Vec<_>>()
         );
+    }
+}
+
+fn initialize_retail_music(cpu: &mut Cpu, level: Level) {
+    // Keep soundStartPlayDA's current track store and bypass the CD device.
+    for (i, ins) in [0x3c088019, 0x03e00008, 0xad04bf64].into_iter().enumerate() {
+        put(cpu, 0x801057e0 + 4 * i as u32, ins);
+    }
+    put(cpu, 0x8018c378, level as u32 + 1);
+    let track = match level {
+        Level::Warehouse | Level::CityPark => 4,
+        Level::Cyburbia => 6,
+        Level::Arena => 3,
+        Level::Rooftops => 8,
+        _ => 2,
+    };
+    put(cpu, 0x8018bf64, track);
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn hunt_and_battle_music_match_disc() {
+    unsafe extern "C" {
+        fn arena_request_battle_music();
+        fn tm1_update_battle_music(scene: *mut std::ffi::c_void, level: i32, engaged: i32);
+    }
+    for level in [
+        Level::Warehouse,
+        Level::CityPark,
+        Level::Cyburbia,
+        Level::Freeway,
+    ] {
+        let mut r = Reference::on_level(Vehicle::YellowJacket, false, level);
+        initialize_retail_music(&mut r.cpu, level);
+        let mut changes = Vec::new();
+        let mut last = false;
+        for tick in 0..290 {
+            let engaged = matches!(tick, 2..=145|198..=250);
+            let fired = (tick < 2 || tick % 3 != 0) && !(99..120).contains(&tick);
+            let _lock = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+            if fired {
+                r.cpu.call(0x8014b208, &[]);
+            }
+            r.cpu.put(0x8018bfd0, &i16::from(engaged).to_le_bytes());
+            r.cpu.call_until(0x8014e130, &[], 0x8014e1b0);
+            unsafe {
+                tm1_use_scene(r.scene.native.as_ptr());
+                if fired {
+                    arena_request_battle_music();
+                }
+                tm1_update_battle_music(r.scene.native.as_ptr(), level as i32, i32::from(engaged));
+                tm1_use_scene(std::ptr::null_mut());
+            }
+            let battle = r.scene.battle_music_playing();
+            if battle != last {
+                changes.push((tick, battle));
+                last = battle;
+            }
+            let track = r.cpu.word(0x8018bf64);
+            assert_eq!(
+                battle,
+                matches!(track, 5 | 7),
+                "{level:?} tick {tick}, track {track}"
+            );
+            if battle {
+                assert_eq!(track, if level == Level::CityPark { 5 } else { 7 });
+            }
+        }
+        if level == Level::Freeway {
+            assert!(changes.is_empty());
+        } else {
+            assert_eq!(
+                changes.iter().map(|&(_, b)| b).collect::<Vec<_>>(),
+                [true, false, true, false]
+            );
+        }
     }
 }

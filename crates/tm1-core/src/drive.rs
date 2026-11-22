@@ -943,14 +943,20 @@ impl CollisionScene {
             battle: [0; 3],
         })
     }
-    pub fn continue_static_cop_cycle(&mut self, previous: &Self) {
+    pub fn continue_stage_state(&mut self, previous: &Self) {
         unsafe extern "C" {
-            fn tm1_continue_static_cop_cycle(
+            fn tm1_continue_stage_state(
                 scene: *mut std::ffi::c_void,
                 previous: *const std::ffi::c_void,
             );
         }
-        unsafe { tm1_continue_static_cop_cycle(self.native.as_ptr(), previous.native.as_ptr()) }
+        unsafe { tm1_continue_stage_state(self.native.as_ptr(), previous.native.as_ptr()) }
+    }
+    pub fn battle_music_playing(&self) -> bool {
+        unsafe extern "C" {
+            fn tm1_battle_music_playing(scene: *const std::ffi::c_void) -> i32;
+        }
+        unsafe { tm1_battle_music_playing(self.native.as_ptr()) != 0 }
     }
     pub fn pedestrian_models(&self) -> Vec<u32> {
         unsafe extern "C" {

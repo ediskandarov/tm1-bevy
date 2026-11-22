@@ -7,19 +7,27 @@ use std::time::Duration;
 use tm1_assets::disc::Disc;
 
 #[derive(Resource)]
-pub struct Music(Option<AudioSource>);
+pub struct Music {
+    opening: Option<AudioSource>,
+    battle: Option<AudioSource>,
+}
 impl Music {
     pub fn level(disc: &Disc, level: tm1_core::drive::Level) -> Result<Self> {
         // shellSoundForThisLevel selects the stage track. soundStartPlayDA
         // starts 150 sectors after INDEX 01 and ends before the next pregap.
-        let track = match level {
-            tm1_core::drive::Level::Rooftops => 8,
-            tm1_core::drive::Level::Cyburbia => 6,
-            tm1_core::drive::Level::Freeway | tm1_core::drive::Level::Arena5 => 2,
-            tm1_core::drive::Level::Arena => 3,
-            tm1_core::drive::Level::Warehouse | tm1_core::drive::Level::CityPark => 4,
+        use tm1_core::drive::Level::*;
+        let (opening, battle) = match level {
+            Rooftops => (8, None),
+            Cyburbia => (6, Some(7)),
+            Freeway | Arena5 => (2, None),
+            Arena => (3, None),
+            Warehouse => (4, Some(7)),
+            CityPark => (4, Some(5)),
         };
-        Ok(Self(Some(self::track(disc, track)?)))
+        Ok(Self {
+            opening: Some(track(disc, opening)?),
+            battle: battle.map(|n| track(disc, n)).transpose()?,
+        })
     }
 }
 pub fn track(disc: &Disc, number: usize) -> Result<AudioSource> {
@@ -46,42 +54,70 @@ pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
     Ok(AudioSource { bytes: wav.into() })
 }
 #[derive(Component)]
-pub struct ArenaMusic;
+pub struct ArenaMusic {
+    opening: Handle<AudioSource>,
+    battle: Option<Handle<AudioSource>>,
+    restart: u32,
+}
 pub fn start(
     mut commands: Commands,
     mut music: ResMut<Music>,
     drive: Res<crate::driving::Drive>,
     mut assets: ResMut<Assets<AudioSource>>,
 ) {
-    if let Some(source) = music.0.take() {
+    if let Some(source) = music.opening.take() {
+        let opening = assets.add(source);
         commands.spawn((
             crate::campaign::StageEntity,
-            ArenaMusic,
-            AudioPlayer::new(assets.add(source)),
+            ArenaMusic {
+                opening: opening.clone(),
+                battle: music.battle.take().map(|s| assets.add(s)),
+                restart: drive.restart_count,
+            },
+            AudioPlayer::new(opening),
             PlaybackSettings::LOOP.with_volume(Volume::Linear(0.35 * drive.settings.music_gain())),
         ));
     }
 }
 pub fn control(
-    mut sink: Query<&mut AudioSink, With<ArenaMusic>>,
+    mut commands: Commands,
+    mut music: Query<(
+        Entity,
+        &mut ArenaMusic,
+        &AudioPlayer,
+        Option<&mut AudioSink>,
+    )>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
-    mut last_restart: Local<u32>,
 ) {
-    let Ok(mut sink) = sink.single_mut() else {
+    let Ok((entity, mut tracks, player, sink)) = music.single_mut() else {
         return;
     };
-    if *last_restart != drive.restart_count {
-        if let Err(err) = sink.try_seek(Duration::ZERO) {
-            warn!("Music restart failed: {err}");
-        }
-        *last_restart = drive.restart_count;
-    }
-    sink.set_volume(Volume::Linear(0.35 * drive.settings.music_gain()));
+    let volume = Volume::Linear(0.35 * drive.settings.music_gain());
     let pause = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
         || drive.lives == 0
         || !window.focused;
+    let restart = tracks.restart != drive.restart_count;
+    tracks.restart = drive.restart_count;
+    let desired = if drive.contacts.battle_music_playing() {
+        tracks.battle.as_ref().unwrap_or(&tracks.opening)
+    } else {
+        &tracks.opening
+    };
+    if player.0 != *desired {
+        let settings = PlaybackSettings::LOOP.with_volume(volume);
+        commands.entity(entity).remove::<AudioSink>().insert((
+            AudioPlayer::new(desired.clone()),
+            if pause { settings.paused() } else { settings },
+        ));
+        return;
+    }
+    let Some(mut sink) = sink else { return };
+    if restart && let Err(err) = sink.try_seek(Duration::ZERO) {
+        warn!("Music restart failed: {err}");
+    }
+    sink.set_volume(volume);
     if pause != sink.is_paused() {
         if pause {
             sink.pause();

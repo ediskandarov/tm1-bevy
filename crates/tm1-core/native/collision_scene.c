@@ -25,7 +25,13 @@ typedef struct StaticCop {
     int phase, delay;
 } StaticCop;
 
+typedef struct BattleMusic {
+    int hunt_delay, battle_delay;
+    bool requested, playing;
+} BattleMusic;
+
 typedef struct CollisionScene {
+    BattleMusic music, initial_music;
     ArenaMerc mercs[2];
     ArenaPed peds[6], initial_peds[6];
     int ped_count, peds_ready;
@@ -673,6 +679,7 @@ void tm1_regenerate_stands(void)
 
 void tm1_new_life(CollisionScene* s)
 {
+    s->music.playing = false;
     memset(s->drops, 0, sizeof s->drops);
     memset(s->flames, 0, sizeof s->flames);
     memset(s->tasers, 0, sizeof s->tasers);
@@ -687,6 +694,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(&s->temporary_hole, 0, sizeof(PotHole));
     memset(s->fragments, 0, sizeof s->fragments);
     tm1_new_life(s);
+    s->music = s->initial_music;
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
     for (int i = 0; i < s->num_targets; i++)
@@ -1261,9 +1269,45 @@ static void static_cop_fire(StaticCop* cop, const VECTOR3* target)
     }
 }
 
-void tm1_continue_static_cop_cycle(CollisionScene* scene, const CollisionScene* previous)
+void arena_request_battle_music(void)
+{
+    if (current)
+        current->music.requested = true;
+}
+
+// UA.c PlayGame only calls the battle routine when an opponent requested it.
+// UA_SOUND.c counts calls to each routine, independently of the field interval.
+void tm1_update_battle_music(CollisionScene* scene, int level, int engaged)
+{
+    if (level != LEVEL2_WAREHOUSE && level != LEVEL4_CITY_PARK && level != LEVEL5_CYBURBIA)
+        return;
+    BattleMusic* music = &scene->music;
+    if (engaged && !music->requested)
+        return;
+    if (engaged)
+        music->requested = false;
+    int* delay = engaged ? &music->battle_delay : &music->hunt_delay;
+    int* other = engaged ? &music->hunt_delay : &music->battle_delay;
+    if (*other > 0) {
+        (*other)--;
+    } else {
+        if (--*delay <= 0)
+            *delay = 30;
+        music->playing = engaged != 0;
+    }
+}
+
+int tm1_battle_music_playing(const CollisionScene* scene)
+{
+    return scene->music.playing;
+}
+
+void tm1_continue_stage_state(CollisionScene* scene, const CollisionScene* previous)
 {
     scene->cop_cycle = previous->cop_cycle;
+    scene->music = previous->music;
+    scene->music.playing = false;
+    scene->initial_music = scene->music;
 }
 
 void tm1_move_static_cops(const VECTOR3* player)

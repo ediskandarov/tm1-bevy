@@ -188,9 +188,7 @@ impl Stage {
     }
     pub fn install(mut self, world: &mut World) {
         if let Some(prev) = world.get_resource::<driving::Drive>() {
-            self.drive
-                .contacts
-                .continue_static_cop_cycle(&prev.contacts);
+            self.drive.contacts.continue_stage_state(&prev.contacts);
             self.drive.settings = prev.settings;
             self.drive.player.set_pad_layout(prev.settings.layout);
         }

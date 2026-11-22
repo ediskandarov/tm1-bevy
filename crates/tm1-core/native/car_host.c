@@ -1076,6 +1076,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     UpdateNumAICarsInBattle();
     arena_regenerate_pickups();
     tm1_regenerate_stands();
+    tm1_update_battle_music(scene, current_level, GetNumAICarsInBattle());
     if (current_level == LEVEL6_ROOFTOPS)
         tm1_move_rooftop_targets();
     if (current_level >= LEVEL2_WAREHOUSE) {
