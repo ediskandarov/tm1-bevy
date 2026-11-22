@@ -11,7 +11,7 @@ pub enum ExclusiveVoice {
     Recharge,
     Hover,
     HoverGuns,
-    FireMissileLaunch,
+    MissileLaunch(u8),
     CarExplosion,
     Signature(Vehicle),
     Pickup(i32),
@@ -37,17 +37,18 @@ pub(crate) fn effect_volume(kind: i32) -> i32 {
     match kind {
         1 => 84,
         37 => 86,
+        29 => 95,
         54 => 25,
         _ => 99,
     }
 }
 pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
     match kind {
-        12 => Some(ExclusiveVoice::FireMissileLaunch),
+        12..=17 => Some(ExclusiveVoice::MissileLaunch((kind - 12) as u8)),
         1 | 28 => Some(ExclusiveVoice::ScaledEffect(103)),
         54 => Some(ExclusiveVoice::ScaledEffect(4)),
-        55 => Some(ExclusiveVoice::ScaledEffect(104)),
-        37 => Some(ExclusiveVoice::ScaledEffect(105)),
+        55 | 56 => Some(ExclusiveVoice::ScaledEffect(104)),
+        29 | 30 | 33 | 37 => Some(ExclusiveVoice::ScaledEffect(105)),
         26 => Some(ExclusiveVoice::Recharge),
         401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
         _ => None,
@@ -60,7 +61,7 @@ pub(crate) fn hover_sample(
     use tm1_core::drive::HoverSound;
     match sound {
         HoverSound::Guns(firing) => (ExclusiveVoice::HoverGuns, firing.then_some(1)),
-        HoverSound::Launch => (ExclusiveVoice::FireMissileLaunch, Some(4)),
+        HoverSound::Launch => (ExclusiveVoice::MissileLaunch(0), Some(4)),
         HoverSound::Motor => (ExclusiveVoice::Hover, Some(motor)),
     }
 }
@@ -92,23 +93,133 @@ pub(crate) fn car_sample(
     }
 }
 
-pub(crate) fn effect_sample(kind: i32, life: i32, recharge: usize) -> Option<usize> {
-    Some(match (kind, life) {
-        (26, 2) => recharge,
-        (36, 2) => recharge + 1,
-        (401..=406 | 410..=414 | 430, 2) => recharge + 4,
-        (11, 2) => 6,
-        (10, 2) => 5,
-        (kind @ 18..=25, 2) => (kind - 6) as usize,
-        (54, 2) => 2,
-        (1, 4) => recharge + 2,
-        (55, 32) => recharge + 9,
-        (28, 32) => recharge + 2,
-        (33, 2) | (2, 7) | (37, 32) | (29 | 30, 16) => 3,
-        (12, 2) => 4,
-        (kind @ 13..=17, 2) => (kind - 6) as usize,
+fn effect_sample(kind: i32, recharge: usize) -> Option<usize> {
+    Some(match kind {
+        26 => recharge,
+        36 => recharge + 1,
+        401..=406 | 410..=414 | 430 => recharge + 4,
+        11 => 6,
+        10 => 5,
+        18..=25 | 13..=17 => (kind - 6) as usize,
+        54 => 2,
+        1 | 28 => recharge + 2,
+        55 | 56 => recharge + 9,
+        33 | 2 | 37 | 29 | 30 => 3,
+        12 => 4,
         _ => return None,
     })
+}
+
+// Deliver requests as they were emitted by the simulation. A rendering frame can
+// contain several steps, so each call finishes the pending hover motor request.
+pub(crate) fn battle_audio(
+    scene: &CollisionScene,
+    listener: &tm1_core::drive::SoundListener,
+    volume: u8,
+    recharge: usize,
+    player_position: [i32; 3],
+    split: bool,
+    car: impl Fn(usize) -> Vehicle,
+    mut emit: impl FnMut(BattleRequest, [i32; 3]),
+) {
+    use tm1_core::drive::{BattleEvent, CarSound};
+    let play = |id, exclusive, volume_percent, position, full_range| {
+        BattleRequest::Play(BattleSound {
+            id,
+            exclusive,
+            volume_percent,
+            channels: listener.channels(position, volume, full_range),
+            range: if full_range {
+                0
+            } else {
+                listener.sound_range(position)
+            },
+        })
+    };
+    for event in scene.battle_events(listener) {
+        match event {
+            BattleEvent::Turbo(on) => emit(
+                if on {
+                    BattleRequest::Turbo
+                } else {
+                    BattleRequest::Stop(ExclusiveVoice::Turbo)
+                },
+                player_position,
+            ),
+            BattleEvent::Guns {
+                slot,
+                firing,
+                position,
+            } => {
+                let key = ExclusiveVoice::MachineGuns(car(slot));
+                emit(
+                    if firing {
+                        play(1, Some(key), 99, position, false)
+                    } else {
+                        BattleRequest::Stop(key)
+                    },
+                    position,
+                );
+            }
+            BattleEvent::Actor(slot) => {
+                for (sound, position) in scene.car_sound_requests(slot) {
+                    let (id, key, level) = car_sample(sound, car(slot), slot, recharge);
+                    let position = if split { player_position } else { position };
+                    emit(
+                        play(id, Some(key), level, position, sound == CarSound::Explosion),
+                        position,
+                    );
+                }
+            }
+            BattleEvent::Effect { kind, position } => {
+                if let Some(id) = effect_sample(kind, recharge) {
+                    let position = if !split && kind == 36 {
+                        player_position
+                    } else {
+                        position
+                    };
+                    emit(
+                        play(
+                            id,
+                            effect_voice(kind),
+                            effect_volume(kind),
+                            position,
+                            matches!(kind, 29 | 30 | 33 | 37),
+                        ),
+                        position,
+                    );
+                }
+            }
+            BattleEvent::MissileImpact { weapon, position } => {
+                // Fire and rear missiles share impact ID 0x19 in UA_SOUND.c.
+                let id = [0x19, 0x1c, 0x25, 0x1f, 0x22, 0x19][usize::from(weapon)];
+                emit(
+                    BattleRequest::Stop(ExclusiveVoice::MissileLaunch(weapon)),
+                    position,
+                );
+                emit(
+                    play(
+                        3,
+                        Some(ExclusiveVoice::ScaledEffect(id)),
+                        99,
+                        position,
+                        false,
+                    ),
+                    position,
+                );
+            }
+            BattleEvent::Hover { sound, position } => {
+                let (key, id) = hover_sample(sound, recharge + 3);
+                emit(
+                    match id {
+                        Some(id) => play(id, Some(key), 99, position, false),
+                        None => BattleRequest::Stop(key),
+                    },
+                    position,
+                );
+            }
+        }
+    }
 }
 #[derive(Resource)]
 pub struct Drive {
@@ -614,55 +725,22 @@ pub fn advance(
         state
             .contacts
             .step_bout_with_pads(&mut state.player, &mut state.opponents, pads, 3);
-        if let Some(boosting) = state.contacts.turbo_sound_requests()[0] {
-            state.sounds.push(if boosting {
-                BattleRequest::Turbo
-            } else {
-                BattleRequest::Stop(ExclusiveVoice::Turbo)
-            });
-        }
-        let volume = state.settings.effects_volume();
-        let shooters = std::iter::once((state.player.vehicle(), state.player.position())).chain(
-            state
-                .opponents
-                .iter()
-                .map(|ai| (ai.vehicle(), ai.position())),
-        );
-        let recharge = state.recharge_sound();
-        for (slot, ((car, position), request)) in shooters
-            .zip(state.contacts.gun_sound_requests())
-            .enumerate()
-        {
-            if let Some(firing) = request {
-                let key = ExclusiveVoice::MachineGuns(car);
-                state.sounds.push(if firing {
-                    BattleRequest::Play(BattleSound {
-                        id: 1,
-                        exclusive: Some(key),
-                        volume_percent: 99,
-                        channels: state.listener.channels(position, volume, false),
-                        range: state.listener.sound_range(position),
-                    })
+        battle_audio(
+            &state.contacts,
+            &state.listener,
+            state.settings.effects_volume(),
+            state.recharge_sound(),
+            state.player.position(),
+            false,
+            |slot| {
+                if slot == 0 {
+                    state.player.vehicle()
                 } else {
-                    BattleRequest::Stop(key)
-                });
-            }
-            for (sound, position) in state.contacts.car_sound_requests(slot) {
-                let (id, key, volume_percent) = car_sample(sound, car, slot, recharge);
-                let full_range = sound == tm1_core::drive::CarSound::Explosion;
-                state.sounds.push(BattleRequest::Play(BattleSound {
-                    volume_percent,
-                    id,
-                    exclusive: Some(key),
-                    range: if full_range {
-                        0
-                    } else {
-                        state.listener.sound_range(position)
-                    },
-                    channels: state.listener.channels(position, volume, full_range),
-                }));
-            }
-        }
+                    state.opponents[slot - 1].vehicle()
+                }
+            },
+            |request, _| state.sounds.push(request),
+        );
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter
         {
@@ -672,44 +750,6 @@ pub fn advance(
         }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
-        }
-        let mut effects = [[0; 5]; 122];
-        let count = state.contacts.effects(&mut effects);
-        for &[x, y, z, kind, life] in &effects[..count] {
-            let Some(id) = effect_sample(kind, life, state.recharge_sound()) else {
-                continue;
-            };
-            let position = if kind == 36 {
-                state.player.position()
-            } else {
-                [x, y, z]
-            };
-            let full_range = matches!(kind, 29 | 30 | 33 | 37);
-            state.sounds.push(BattleRequest::Play(BattleSound {
-                volume_percent: effect_volume(kind),
-                exclusive: effect_voice(kind),
-                id,
-                range: if full_range {
-                    0
-                } else {
-                    state.listener.sound_range(position)
-                },
-                channels: state.listener.channels(position, volume, full_range),
-            }));
-        }
-        let hover_motor = state.recharge_sound() + 3;
-        for (sound, position) in state.contacts.hover_sounds(&state.listener) {
-            let request = match hover_sample(sound, hover_motor) {
-                (key, Some(id)) => BattleRequest::Play(BattleSound {
-                    id,
-                    exclusive: Some(key),
-                    volume_percent: 99,
-                    range: state.listener.sound_range(position),
-                    channels: state.listener.channels(position, volume, false),
-                }),
-                (key, None) => BattleRequest::Stop(key),
-            };
-            state.sounds.push(request);
         }
         if state.contacts.level_won() {
             state.advance_victory_delay(3);

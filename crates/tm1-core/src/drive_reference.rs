@@ -2243,10 +2243,54 @@ fn regular_missile_impacts_original() {
             if r.cpu.word(m + 0x34) as i32 <= 0 {
                 break;
             }
-            r.cpu.call(0x80110210, &[m]);
+            let mut expected = Vec::new();
+            let mut source = [0; 3];
+            r.cpu.call_observed(0x80110210, &[m], 0x80000080, |cpu| {
+                let position = |p| [0, 4, 8].map(|d| cpu.word(p + d) as i32);
+                let kind = match cpu.pc() {
+                    0x80136a28 => 28,
+                    0x80136aa0 => 55,
+                    0x80136c00 => 56,
+                    0x80137140 => 8,
+                    0x80137190 => 31,
+                    0x8010461c => {
+                        source = position(cpu.r[4]);
+                        return;
+                    }
+                    0x80107dbc => {
+                        expected.push(BattleEvent::MissileImpact {
+                            weapon: cpu.r[4] as u8,
+                            position: source,
+                        });
+                        return;
+                    }
+                    _ => return,
+                };
+                expected.push(BattleEvent::Effect {
+                    kind,
+                    position: position(cpu.r[4]),
+                });
+            });
             r.cpu.call(0x80137d2c, &[]);
             r.scene.phase(&mut r.player, &mut r.police, 2, 3);
             r.compare();
+            let events: Vec<_> = r
+                .scene
+                .audio
+                .iter()
+                .copied()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        BattleEvent::MissileImpact { .. }
+                            | BattleEvent::Effect {
+                                kind: 28 | 55 | 56 | 8 | 31,
+                                ..
+                            }
+                    )
+                })
+                .collect();
+            assert_eq!(events, expected, "slot {slot} tick {hits}");
             let mut fx = [[0; 5]; 122];
             let count = r.scene.effects(&mut fx);
             let missile = fx[..count].iter().find(|v| v[3] == 3);
@@ -3885,10 +3929,15 @@ fn rooftop_pyramid_bullet_matches_retail_clouds() {
     {
         let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe extern "C" {
+            fn arena_effect(pos: *const i32, kind: i32);
             fn create_bullet(owner: i32, dir: *const i32, pos: *const i32, damage: i32);
         }
         unsafe {
             tm1_use_scene(r.scene.native.as_ptr());
+            // Put the next impact across the end of the 80-entry visual pool.
+            for _ in 0..79 {
+                arena_effect(pos.as_ptr(), 0);
+            }
             create_bullet(1, dir.as_ptr(), pos.as_ptr(), 100);
             tm1_use_scene(std::ptr::null_mut());
         }
@@ -3921,7 +3970,23 @@ fn rooftop_pyramid_bullet_matches_retail_clouds() {
         .filter(|e| matches!(e[3], 30 | 34))
         .map(|e| [e[0], e[1], e[2], e[3]])
         .collect();
-    assert_eq!(native, clouds);
+    let emitted: Vec<_> = r
+        .scene
+        .audio
+        .iter()
+        .filter_map(|event| match *event {
+            BattleEvent::Effect {
+                kind: kind @ (30 | 34),
+                position: [x, y, z],
+            } => Some([x, y, z, kind]),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(emitted, clouds);
+    let mut visible = native;
+    visible.sort();
+    clouds.sort();
+    assert_eq!(visible, clouds);
     assert_eq!(r.player.seed, r.cpu.random_state);
 }
 

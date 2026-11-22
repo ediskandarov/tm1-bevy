@@ -1464,6 +1464,7 @@ void arena_effect(VECTOR3* pos, s32 kind)
 {
     if (!current)
         return;
+    arena_record_effect(pos, kind);
     s32* e = current->effects[current->next_effect++ % 80];
     e[0] = pos->vx;
     e[1] = pos->vy;
@@ -1471,7 +1472,7 @@ void arena_effect(VECTOR3* pos, s32 kind)
     e[3] = kind;
     switch (kind) {
     case 1: e[4] = 4; break;
-    case 55: e[4] = 32; break;
+    case 55: case 56: e[4] = 32; break;
     case 2: e[4] = 7; break;
     case 8:
     case 34: e[4] = 88; break;

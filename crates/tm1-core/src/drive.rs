@@ -1166,6 +1166,7 @@ unsafe extern "C" {
         turbo: *mut u8,
         guns: *mut u8,
         sounds: *mut [i32; 5],
+        audio: *mut std::ffi::c_void,
     );
     #[cfg(test)]
     fn tm1_contacts(
@@ -1177,8 +1178,92 @@ unsafe extern "C" {
         seed: *mut u32,
         fields: i16,
         frame: u32,
+        audio: *mut std::ffi::c_void,
     );
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BattleEvent {
+    MissileImpact {
+        weapon: u8,
+        position: [i32; 3],
+    },
+    Effect {
+        kind: i32,
+        position: [i32; 3],
+    },
+    Guns {
+        slot: usize,
+        firing: bool,
+        position: [i32; 3],
+    },
+    Turbo(bool),
+    Actor(usize),
+    Hover {
+        sound: HoverSound,
+        position: [i32; 3],
+    },
+}
+
+// These functions only run while step_duel or step_bout lends its vector to C.
+// C treats the pointer as opaque and releases it before returning.
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_effect(log: &mut Vec<BattleEvent>, kind: i32, x: i32, y: i32, z: i32) {
+    log.push(BattleEvent::Effect {
+        kind,
+        position: [x, y, z],
+    });
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_missile_impact(
+    log: &mut Vec<BattleEvent>,
+    weapon: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) {
+    log.push(BattleEvent::MissileImpact {
+        weapon: weapon as u8,
+        position: [x, y, z],
+    });
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_guns(
+    log: &mut Vec<BattleEvent>,
+    slot: i32,
+    firing: i32,
+    x: i32,
+    y: i32,
+    z: i32,
+) {
+    log.push(BattleEvent::Guns {
+        slot: slot as usize,
+        firing: firing != 0,
+        position: [x, y, z],
+    });
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_turbo(log: &mut Vec<BattleEvent>, on: i32) {
+    log.push(BattleEvent::Turbo(on != 0));
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_actor(log: &mut Vec<BattleEvent>, slot: i32) {
+    log.push(BattleEvent::Actor(slot as usize));
+}
+#[unsafe(no_mangle)]
+extern "C" fn tm1_record_hover(log: &mut Vec<BattleEvent>, flags: i32, x: i32, y: i32, z: i32) {
+    let position = [x, y, z];
+    log.push(BattleEvent::Hover {
+        sound: HoverSound::Guns(flags & 2 != 0),
+        position,
+    });
+    if flags & 4 != 0 {
+        log.push(BattleEvent::Hover {
+            sound: HoverSound::Launch,
+            position,
+        });
+    }
+}
+
 pub struct CollisionScene {
     native: std::ptr::NonNull<std::ffi::c_void>,
     opponent_count: usize,
@@ -1188,6 +1273,7 @@ pub struct CollisionScene {
     turbo_requests: [u8; 2],
     gun_requests: [u8; 9],
     car_sounds: [[i32; 5]; 9],
+    audio: Vec<BattleEvent>,
 }
 // The graph owns its allocations. Mutation requires exclusive access, and all
 // calls that bind a scene to the original C globals hold the core mutex.
@@ -1231,6 +1317,7 @@ impl CollisionScene {
             duel_winner: None,
             gun_requests: [0; 9],
             car_sounds: [[0; 5]; 9],
+            audio: Vec::new(),
             turbo_requests: [0; 2],
         })
     }
@@ -1355,6 +1442,7 @@ impl CollisionScene {
             tm1_new_life(self.native.as_ptr());
         }
         self.battle = [0; 3];
+        self.audio.clear();
     }
     pub fn wheel_steps(&self) -> [i64; 14] {
         unsafe extern "C" {
@@ -1391,6 +1479,7 @@ impl CollisionScene {
     }
     pub fn reset_projectiles(&mut self) {
         self.battle = [0; 3];
+        self.audio.clear();
         unsafe {
             tm1_reset_projectiles(self.native.as_ptr());
         }
@@ -1414,6 +1503,14 @@ impl CollisionScene {
             2 => Some(false),
             _ => None,
         })
+    }
+
+    pub fn battle_events(&self, listener: &SoundListener) -> impl Iterator<Item = BattleEvent> {
+        let motor = self
+            .hover_sounds(listener)
+            .find(|(sound, _)| *sound == HoverSound::Motor)
+            .map(|(sound, position)| BattleEvent::Hover { sound, position });
+        self.audio.iter().copied().chain(motor)
     }
 
     pub fn car_sound_requests(&self, slot: usize) -> impl Iterator<Item = (CarSound, [i32; 3])> {
@@ -1463,10 +1560,12 @@ impl CollisionScene {
                 requests: *mut u8,
                 turbo: *mut u8,
                 sounds: *mut [i32; 5],
+                audio: *mut std::ffi::c_void,
             );
         }
         assert_eq!(self.opponent_count, 0);
         assert!((1..=5).contains(&fields));
+        self.audio.clear();
         if self.duel_winner.is_some() {
             return self.duel_winner;
         }
@@ -1494,6 +1593,7 @@ impl CollisionScene {
                 self.gun_requests.as_mut_ptr(),
                 self.turbo_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
+                (&raw mut self.audio).cast(),
             );
         }
         second.frame = first.frame;
@@ -1524,6 +1624,7 @@ impl CollisionScene {
     ) {
         assert!((1..=5).contains(&fields));
         assert!(!opponents.is_empty() && opponents.len() <= self.opponent_count);
+        self.audio.clear();
         let mut records = [std::ptr::null_mut(); 8];
         for (slot, car) in opponents.iter_mut().enumerate() {
             assert_eq!(
@@ -1553,6 +1654,7 @@ impl CollisionScene {
                 self.turbo_requests.as_mut_ptr(),
                 self.gun_requests.as_mut_ptr(),
                 self.car_sounds.as_mut_ptr(),
+                (&raw mut self.audio).cast(),
             );
         }
         player.cap_turbo_reserve();
@@ -1560,6 +1662,7 @@ impl CollisionScene {
     #[cfg(test)]
     fn phase(&mut self, player: &mut Taxi, opponent: &mut PoliceCar, phase: u8, fields: u8) {
         assert!((1..=5).contains(&fields));
+        self.audio.clear();
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
             tm1_bind_difficulty(player.difficulty as i32);
@@ -1573,6 +1676,7 @@ impl CollisionScene {
                 &mut player.seed,
                 fields.into(),
                 player.frame,
+                (&raw mut self.audio).cast(),
             );
         }
     }

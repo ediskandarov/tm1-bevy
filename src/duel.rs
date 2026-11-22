@@ -404,71 +404,30 @@ pub fn advance(
             );
         }
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
-        for (slot, (car, request)) in duel
-            .cars
-            .iter()
-            .zip(duel.scene.duel_gun_requests())
-            .enumerate()
-        {
-            if let Some(boosting) = duel.scene.turbo_sound_requests()[slot] {
-                duel.sounds.push(if boosting {
-                    crate::sfx::duel::Request::Turbo
-                } else {
-                    crate::sfx::duel::Request::Stop(crate::driving::ExclusiveVoice::Turbo)
-                });
-            }
-            let key = crate::driving::ExclusiveVoice::MachineGuns(car.vehicle());
-            if let Some(firing) = request {
-                duel.sounds.push(if firing {
-                    crate::sfx::duel::Request::Play {
-                        id: 1,
-                        key: Some(key),
-                        volume: 1.,
-                        position: car.position(),
-                    }
-                } else {
-                    crate::sfx::duel::Request::Stop(key)
-                });
-            }
-            for (sound, _) in duel.scene.car_sound_requests(slot) {
-                let (id, key, volume) = crate::driving::car_sample(sound, car.vehicle(), slot, 13);
-                duel.sounds.push(crate::sfx::duel::Request::Play {
-                    id,
-                    key: Some(key),
-                    volume: volume as f32 / 99.,
-                    position: duel.cars[0].position(),
-                });
-            }
-        }
-        let mut effects = [[0; 5]; 122];
-        let count = duel.scene.effects(&mut effects);
-        for &[x, y, z, kind, life] in &effects[..count] {
-            // Gun sounds come from UpdateGuns. The muzzle flash remains a visual effect.
-            if kind == 0 {
-                continue;
-            }
-            if let Some(id) = crate::driving::effect_sample(kind, life, 13) {
-                duel.sounds.push(crate::sfx::duel::Request::Play {
-                    id,
-                    key: crate::driving::effect_voice(kind),
-                    volume: crate::driving::effect_volume(kind) as f32 / 99.,
-                    position: [x, y, z],
-                });
-            }
-        }
         let listener = tm1_core::drive::SoundListener::new(&duel.cars[0], &duel.cameras[0], None);
-        for (sound, position) in duel.scene.hover_sounds(&listener) {
-            duel.sounds
-                .push(match crate::driving::hover_sample(sound, 16) {
-                    (key, Some(id)) => crate::sfx::duel::Request::Play {
-                        id,
-                        key: Some(key),
-                        volume: 1.,
+        crate::driving::battle_audio(
+            &duel.scene,
+            &listener,
+            duel.settings.effects_volume(),
+            13,
+            duel.cars[0].position(),
+            true,
+            |slot| duel.cars[slot].vehicle(),
+            |request, position| {
+                use crate::driving::BattleRequest;
+                use crate::sfx::duel::Request;
+                duel.sounds.push(match request {
+                    BattleRequest::Turbo => Request::Turbo,
+                    BattleRequest::Stop(key) => Request::Stop(key),
+                    BattleRequest::Play(sound) => Request::Play {
+                        id: sound.id,
+                        key: sound.exclusive,
+                        volume: sound.volume_percent as f32 / 99.,
                         position,
                     },
-                    (key, None) => crate::sfx::duel::Request::Stop(key),
                 });
-        }
+            },
+        );
         for (camera, car) in duel.cameras.iter_mut().zip(&duel.cars) {
             camera.update(car, false);
         }

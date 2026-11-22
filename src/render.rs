@@ -1318,6 +1318,7 @@ fn draw_view(
                 38..=43 => (&arena.burn_frames[(kind - 38 + 3 - ttl) as usize], 8),
                 35 => (&arena.flame_frames[((104 - ttl) % 8) as usize], 12),
                 27 => (&arena.flame_frames[(8 - ttl) as usize], 12),
+                56 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 4),
                 28 | 37 | 55 => (&arena.explosion_frames[((32 - ttl) / 2) as usize], 16),
                 29 => (&arena.explosion_frames[(16 - ttl) as usize], 72),
                 30 => (&arena.explosion_frames[(16 - ttl) as usize], 96),
@@ -1415,7 +1416,7 @@ fn draw_view(
             7 => (3., [0.7, 0.5, 0.3, 1.]),
             5 => (3., [0.35, 0.65, 1., 1.]),
             6 => (16., [0.2, 0.16, 0.14, 1.]),
-            1 | 3 | 8 | 26..=55 | 401..=406 | 410..=414 | 430 => continue,
+            1 | 3 | 8 | 26..=56 | 401..=406 | 410..=414 | 430 => continue,
             _ => (7., [1., 0.78, 0.21, 0.96]),
         };
         let radius = (size * focal / depth).clamp(1., 80.);

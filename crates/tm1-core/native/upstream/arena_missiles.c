@@ -340,6 +340,7 @@ void move_missile(Missile* m)
 
     VECTOR3 pt;
 
+    int exploded = 0;
     HdCsHit empty = { 0 };
     hit = &empty;
 
@@ -396,7 +397,14 @@ void move_missile(Missile* m)
             }
             if (m->unk44 > 0) {
                 pt.vz += 24;
-                arena_effect(&pt, 2);
+                arena_effect(&pt, m->damage < 0 ? 55 : m->unk44 == 8 ? 56 : 28);
+                if (m->unk44 != 8) {
+                    if (m->unk48 == WEAPON_SPECIAL)
+                        arena_effect(&pt, 31);
+                    else
+                        do_smoke(&pt);
+                }
+                exploded = 1;
                 m->life = -1;
                 i = -1;
                 bulDispatchDamage(m->unk44, hit->tag0, hit->tag1, m->damage, &d, m->unk50);
@@ -416,12 +424,15 @@ void move_missile(Missile* m)
                 m->cs->pos.vz = 0;
             }
 
-            arena_effect(&m->cs->pos, 2);
+            exploded = 0;
+            arena_effect(&m->cs->pos, 56);
             m->life = -1;
         }
     }
     if (m->trail.visible)
         update_trail(m);
+    if (exploded)
+        arena_missile_impact_sound(&m->cs->pos, m->unk48);
 }
 void arena_move_missiles(void)
 {

@@ -9,12 +9,39 @@ _Static_assert(offsetof(PlayerCar, motion) == 0x380, "JP motion offset");
 extern s16 gFieldsLastFrame, gUpdateRate;
 extern u32 gFrameCount;
 
+// The Rust owner borrows the event vector for this serialized simulation step.
+static void* step_audio;
+extern void tm1_record_effect(void*, int, int, int, int);
+extern void tm1_record_guns(void*, int, int, int, int, int);
+extern void tm1_record_turbo(void*, int);
+extern void tm1_record_actor(void*, int);
+extern void tm1_record_missile_impact(void*, int, int, int, int);
+extern void tm1_record_hover(void*, int, int, int, int);
+
+void arena_record_effect(const VECTOR3* p, int kind)
+{
+    if (step_audio)
+        tm1_record_effect(step_audio, kind, p->vx, p->vy, p->vz);
+}
+void arena_missile_impact_sound(const VECTOR3* p, int weapon)
+{
+    if (step_audio && (unsigned)weapon <= WEAPON_REAR_MISSILE)
+        tm1_record_missile_impact(step_audio, weapon, p->vx, p->vy, p->vz);
+}
+void arena_record_hover(const VECTOR3* p, int flags)
+{
+    if (step_audio)
+        tm1_record_hover(step_audio, flags, p->vx, p->vy, p->vz);
+}
+
 // Bound only during a serialized human driving update. Recharge can skip the call.
 static u8* turbo_request;
 void uasoundStopTurboBoost(void)
 {
     if (turbo_request)
         *turbo_request = 2;
+    if (step_audio)
+        tm1_record_turbo(step_audio, 0);
 }
 void uasoundPlayTurboBoost(s32 a, s32 b)
 {
@@ -22,6 +49,8 @@ void uasoundPlayTurboBoost(s32 a, s32 b)
     (void)b;
     if (turbo_request)
         *turbo_request = 1;
+    if (step_audio)
+        tm1_record_turbo(step_audio, 1);
 }
 
 static const s16* trig;
@@ -998,8 +1027,9 @@ static void contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fields
 }
 
 void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, u8 is_player,
-    const s16* tables, u32* seed, s16 fields, u32 frame)
+    const s16* tables, u32* seed, s16 fields, u32 frame, void* audio)
 {
+    step_audio = audio;
     PlayerCar player;
     AICar ai;
     memcpy(&player, player_state, sizeof(player));
@@ -1037,6 +1067,7 @@ void tm1_contacts(struct CollisionScene* scene, u8* player_state, u8* ai_state, 
     memcpy(player_state, &player, sizeof(player));
     memcpy(ai_state, &ai, sizeof(ai));
     *seed = random_state;
+    step_audio = NULL;
     tm1_use_scene(NULL);
     arena_player = NULL;
     arena_opponent = NULL;
@@ -1057,14 +1088,16 @@ static void move_arena_targets(VECTOR3* position)
 
 // One result per actor in update order. A gun cooldown tick leaves the slot empty.
 static u8* gun_requests;
-void arena_gun_sound(s32 slot, int firing)
+void arena_gun_sound(s32 slot, int firing, const VECTOR3* pos)
 {
     if (gun_requests && (unsigned)slot < 9)
         gun_requests[slot] = firing ? 1 : 2;
+    if (step_audio && (unsigned)slot < 9)
+        tm1_record_guns(step_audio, slot, firing, pos->vx, pos->vy, pos->vz);
 }
 
 // UASetSoundFlags runs after each actor update and before its death model.
-static void capture_car_sounds(int out[5], u8* flags, CarMotion* motion, CarCollision* collision)
+static void capture_car_sounds(int slot, int out[5], u8* flags, CarMotion* motion, CarCollision* collision)
 {
     out[0] = motion->pos.vx;
     out[1] = motion->pos.vy;
@@ -1072,13 +1105,15 @@ static void capture_car_sounds(int out[5], u8* flags, CarMotion* motion, CarColl
     out[3] = (flags[2] != 0) | ((flags[26] != 0) << 1) | ((flags[24] != 0) << 2);
     out[4] = (s16)collision->unk12;
     flags[26] = flags[24] = 0;
+    tm1_record_actor(step_audio, slot);
 }
 
 // Run one complete PlayGame actor sequence under the caller's core lock.
 // The original routines can change other cars during collision and weapon updates.
 void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponents,
-    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5])
+    s16 count, s16* battle, u32 buttons, u8 cheat_controls, s16 fields, u32 frame, const s16* tables, u32* seed, u8* turbo, u8 requests[9], int sounds[9][5], void* audio)
 {
+    step_audio = audio;
     memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     gun_requests = requests;
@@ -1119,14 +1154,14 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
                 cars[i].driving = driving;
         }
     }
-    capture_car_sounds(sounds[0], player.flags, &player.motion, &player.collision);
+    capture_car_sounds(0, sounds[0], player.flags, &player.motion, &player.collision);
     tm1_start_death(&player, 1);
     arena_schedule_battle(cars, count, GetNumAICarsInBattle(), fields);
     for (int i = 0; i < count; i++) {
         AICarUpdate(&cars[i]);
         contact_phase(&player, &cars[i], 0, fields);
         if (cars[i].unk40)
-            capture_car_sounds(sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision);
+            capture_car_sounds(i + 1, sounds[i + 1], cars[i].flags, &cars[i].motion, &cars[i].collision);
         tm1_start_death(&cars[i], 0);
     }
     tm1_check_victory(&player, cars, count);
@@ -1137,6 +1172,7 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
     move_arena_targets(&player.motion.pos);
     UpdateNumPotHoles();
     tm1_store_battle(battle);
+    step_audio = NULL;
     gun_requests = NULL;
     *seed = random_state;
     memcpy(player_state, &player, sizeof(player));
@@ -1152,8 +1188,9 @@ void tm1_bout_step(struct CollisionScene* scene, u8* player_state, u8** opponent
 // Both human actors update in slot order against the same collision graph.
 // The projectile and arena passes run once per frame.
 void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
-    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5])
+    u32 buttons, s16 fields, u32 frame, const s16* table, u32* seed, u8 requests[9], u8 turbo[2], int sounds[9][5], void* audio)
 {
+    step_audio = audio;
     memset(sounds, 0, 9 * sizeof(*sounds));
     memset(requests, 0, 9);
     memset(turbo, 0, 2);
@@ -1182,7 +1219,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
             tm1_contact_setup(GetPlayerCs3D(i), &car->motion, &car->stats);
             contact_phase(car, NULL, 1, fields);
         }
-        capture_car_sounds(sounds[i], car->flags, &car->motion, &car->collision);
+        capture_car_sounds(i, sounds[i], car->flags, &car->motion, &car->collision);
         tm1_start_death(car, 1);
     }
     arena_regenerate_pickups();
@@ -1192,6 +1229,7 @@ void tm1_duel_step(struct CollisionScene* scene, u8* first, u8* second,
     *seed = random_state;
     memcpy(first, &cars[0], sizeof(PlayerCar));
     memcpy(second, &cars[1], sizeof(PlayerCar));
+    step_audio = NULL;
     gun_requests = NULL;
     tm1_use_scene(NULL);
     arena_player = NULL;
