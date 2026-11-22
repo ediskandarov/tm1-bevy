@@ -2399,6 +2399,75 @@ fn bullet_draw_packets_original() {
     }
 }
 
+fn observe_flame_audio(
+    cpu: &Cpu,
+    origin: &mut [i32; 3],
+    special: i32,
+    requests: &mut Vec<BattleEvent>,
+) {
+    let kind = match cpu.pc() {
+        0x8010461c => {
+            *origin = [0, 4, 8].map(|off| cpu.word(cpu.r[4] + off) as i32);
+            return;
+        }
+        0x80107c6c if cpu.r[4] == 7 => 11,
+        0x80107f84 => special,
+        _ => return,
+    };
+    requests.push(BattleEvent::Effect {
+        kind,
+        position: *origin,
+    });
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn flame_launch_positions_and_full_emitters_match_retail() {
+    let mut r = Reference::with_vehicle(Vehicle::Thumper);
+    for at in [0x80107c6c, 0x80107f84, 0x80108034] {
+        r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+    }
+    let initial = r.player.state.clone();
+    for (shot, rear) in [false, true, false, false, false, true, false]
+        .into_iter()
+        .enumerate()
+    {
+        r.player.state.clone_from(&initial);
+        r.player.state[0xd2] = 1;
+        vec3(&mut r.player.state, 0x388, [2700, 2200, 1000]);
+        vec3(
+            &mut r.player.state,
+            0x3a0,
+            [127, 0, 234 + 713 * shot as i32],
+        );
+        if rear {
+            r.player.state[0x460..0x464].copy_from_slice(&7i32.to_le_bytes());
+            r.player.state[0x472..0x474].copy_from_slice(&2i16.to_le_bytes());
+        }
+        r.sync();
+        r.cpu.call(0x80113858, &[PLAYER, 1]);
+        let mut origin = [0; 3];
+        let mut expected = Vec::new();
+        r.cpu
+            .call_observed(0x8013148c, &[PLAYER, 1], 0x80000080, |cpu| {
+                observe_flame_audio(cpu, &mut origin, 10, &mut expected)
+            });
+        r.scene.phase(&mut r.player, &mut r.police, 1, 3);
+        r.compare();
+        assert_eq!(expected.len(), if rear || shot >= 5 { 1 } else { 2 });
+        assert_eq!(
+            expected,
+            r.scene
+                .audio
+                .iter()
+                .filter(|v| matches!(v, BattleEvent::Effect { kind: 10 | 11, .. }))
+                .cloned()
+                .collect::<Vec<_>>(),
+            "shot {shot}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn flamethrowers_original() {
@@ -3585,19 +3654,24 @@ fn compare_battle_controls(
         }
         r.cpu.call(0x801417d0, &[kind as u32, u32::from(on)]);
     }
-    let observe_guns = |cpu: &mut Cpu, entry, args: &[u32], car: Vehicle| {
-        let mut request = None;
-        cpu.call_observed(entry, args, 0x80000080, |cpu| {
-            let firing = match cpu.pc() {
-                0x801073cc => true,
-                0x80107524 | 0x80107a1c => false,
-                _ => return,
-            };
-            assert_eq!(cpu.r[4], car as u32);
-            request = Some(firing);
-        });
-        request
-    };
+    let observe_guns =
+        |cpu: &mut Cpu, entry, args: &[u32], car: Vehicle, flame_audio: &mut Vec<BattleEvent>| {
+            let mut request = None;
+            let mut origin = [0; 3];
+            cpu.call_observed(entry, args, 0x80000080, |cpu| {
+                if boss && car == Vehicle::Minion {
+                    observe_flame_audio(cpu, &mut origin, 21, flame_audio);
+                }
+                let firing = match cpu.pc() {
+                    0x801073cc => true,
+                    0x80107524 | 0x80107a1c => false,
+                    _ => return,
+                };
+                assert_eq!(cpu.r[4], car as u32);
+                request = Some(firing);
+            });
+            request
+        };
     let observe_actor_sounds = |cpu: &mut Cpu, address: u32, player: bool| {
         let mut sounds = Vec::new();
         if !player && cpu.ram[((address + 0x40) & 0x1fffff) as usize] == 0 {
@@ -3691,8 +3765,15 @@ fn compare_battle_controls(
         r.cpu.call(0x801360bc, &[]);
         let primary_fragments = read_fragments(&r.cpu);
         let mut gun_requests = [None; 9];
+        let mut flame_audio = Vec::new();
         if r.cpu.call(0x8014e20c, &[0]) == 0 {
-            gun_requests[0] = observe_guns(&mut r.cpu, 0x8014ecd4, &[TAXI_CS, PLAYER], vehicle);
+            gun_requests[0] = observe_guns(
+                &mut r.cpu,
+                0x8014ecd4,
+                &[TAXI_CS, PLAYER],
+                vehicle,
+                &mut flame_audio,
+            );
         }
         if r.cpu.word(PLAYER + 0x178) as i32 <= 0
             && r.cpu.ram[((PLAYER + 0xa0) & 0x1fffff) as usize] == 0
@@ -3706,7 +3787,13 @@ fn compare_battle_controls(
         for (i, &cs) in slots.iter().enumerate() {
             let address = POLICE + 0x560 * i as u32;
             let car = lineup.get(i).unwrap_or(&r.police).vehicle();
-            gun_requests[1 + i] = observe_guns(&mut r.cpu, 0x8014ee14, &[cs, address], car);
+            gun_requests[1 + i] = observe_guns(
+                &mut r.cpu,
+                0x8014ee14,
+                &[cs, address],
+                car,
+                &mut flame_audio,
+            );
             actor_sounds.push(observe_actor_sounds(&mut r.cpu, address, false));
             start_retail_death(&mut r.cpu, address, false);
         }
@@ -3827,6 +3914,14 @@ fn compare_battle_controls(
             "{level:?} tick {tick} music"
         );
         if boss {
+            let native: Vec<_> = r
+                .scene
+                .audio
+                .iter()
+                .filter(|v| matches!(v, BattleEvent::Effect { kind: 11 | 21, .. }))
+                .cloned()
+                .collect();
+            assert_eq!(native, flame_audio, "Minion tick {tick}");
             compare_projectiles(&r, vehicle, tick);
             if tick == 360 {
                 let charge = i16::from_le_bytes(lineup[3].state[0x536..0x538].try_into().unwrap());

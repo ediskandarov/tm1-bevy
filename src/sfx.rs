@@ -672,6 +672,14 @@ mod tests {
                 (1, [Vehicle::YellowJacket, car]),
             ] {
                 let bank = battle_programs(pair[0], &pair[1..]).collect::<Vec<_>>();
+                let launch_ids = [
+                    0x2a, 0x3c, 0x42, 0x36, 0x3f, 0x39, 0x33, 0x48, 0x27, 0x45, 0x30, 0x2d, 0x4b,
+                ];
+                assert_eq!(
+                    bank[if slot == 0 { 5 } else { 12 }],
+                    program_for(launch_ids[i])
+                );
+                assert_eq!(bank[6], program_for(0x0f));
                 for (sound, id) in [(CarSound::Signature, 0x74 + i), (CarSound::Explosion, 0x73)] {
                     let (index, _, level) = crate::driving::car_sample(sound, car, slot, 13);
                     assert_eq!(bank[index], program_for(id), "{car:?} {sound:?}");

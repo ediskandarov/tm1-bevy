@@ -1821,8 +1821,6 @@ int arena_launch_flame(Cs* cs, int forward)
         current->flames[i].forward = forward;
         current->flames[i].life = forward ? 25 : 12;
         current->flames[i].age = 0;
-        if (forward)
-            arena_record_effect(&cs->pos, 11);
         return 1;
     }
     return 0;

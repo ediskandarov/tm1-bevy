@@ -344,9 +344,24 @@ mod tests {
                         .iter()
                         .any(|r| matches!(r, Request::Play{id,..} if *id == other))
                 );
-                fired |= events
+                let car = if expected == 5 {
+                    Vehicle::Darkside
+                } else {
+                    Vehicle::YellowJacket
+                };
+                if let Some(index) = events
                     .iter()
-                    .any(|r| matches!(r, Request::Play{id,..} if *id == expected));
+                    .position(|r| matches!(r, Request::Play{id,..} if *id == expected))
+                {
+                    assert!(index > 0);
+                    assert!(
+                        matches!(events[index-1], Request::Stop(ExclusiveVoice::SpecialLaunch(v)) if v==car)
+                    );
+                    assert!(
+                        matches!(events[index], Request::Play{key:Some(ExclusiveVoice::SpecialLaunch(v)),..} if v==car)
+                    );
+                    fired = true;
+                }
             }
             assert!(fired, "{key:?} should use sample {expected}");
         }

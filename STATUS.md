@@ -9,6 +9,10 @@ load their own driving profile, collision geometry, three damage models,
 special weapon and audio programs. Each selection was launched on the
 Apple M3 Pro Metal backend and its chase-view frame inspected. Arena draws its opponent from the original card order with the BIOS random sequence starting at seed 1. Restart restores the same draw and simulation seed. All six arenas support their opening encounters. Rooftops continues into the Minion encounter. Winning advances the single-player campaign. Defeating Minion opens the JP reward screen and scrolling credits. The title screen leads into a keyboard contest selector. The title offers the single-player contest, local two-player battle and main options.
 
+## Flamethrower launch audio
+
+A successful forward launch by Thumper or Minion plays the flamethrower and vehicle special from the collision model position plus the weapon direction. With all five emitters active, only the special plays, from the car position. A rear shot plays its launch sound even when the emitters are full and only consumes ammo if an emitter starts. A seven-shot JP replay checks both positions, request order and car state at several headings. The Rooftops boss replays check Minion’s sound positions during AI combat. Both game modes restart the shared flamethrower sound on each launch and replace each vehicle’s previous special voice. The disc program table supplies program 21 for the flamethrower, 49 for Thumper’s special and 56 for Minion’s special.
+
 ## Bullet rendering
 
 The main view draws bullets before their movement step. The rear-view mirror and the second duel camera use the updated positions and lifetimes, following RT.c. Machine guns draw two-color tracers. Darkside and Crimson Fury draw tapered triangles. Sweet Tooth, Yellow Jacket, Pit Viper, Mr. Grimm and Minion use the weapon sprites stored in the current stage database. The two-frame Pit Viper sequence repeats across four animation slots.

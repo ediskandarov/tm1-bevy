@@ -12,6 +12,7 @@ pub enum ExclusiveVoice {
     Hover,
     HoverGuns,
     WeaponLaunch(u8),
+    SpecialLaunch(Vehicle),
     CarExplosion,
     Signature(Vehicle),
     Pickup(i32),
@@ -178,10 +179,19 @@ pub(crate) fn battle_audio(
                     } else {
                         position
                     };
+                    let restart = match kind {
+                        10 => Some(ExclusiveVoice::SpecialLaunch(car(0))),
+                        18..=25 => Some(ExclusiveVoice::SpecialLaunch(car((kind - 17) as usize))),
+                        11 => Some(ExclusiveVoice::WeaponLaunch(7)),
+                        _ => None,
+                    };
+                    if let Some(key) = restart {
+                        emit(BattleRequest::Stop(key), position);
+                    }
                     emit(
                         play(
                             id,
-                            effect_voice(kind),
+                            restart.or_else(|| effect_voice(kind)),
                             effect_volume(kind),
                             position,
                             matches!(kind, 29 | 30 | 33 | 37),
