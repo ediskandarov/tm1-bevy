@@ -284,7 +284,8 @@ impl Stage {
         world.insert_resource(self.drive);
         world.init_resource::<Assets<music::CdTrack>>();
         world.insert_resource(self.music);
-        self.sounds.install_vehicle_sounds(world);
+        world.init_resource::<Assets<AudioSource>>();
+        world.init_resource::<Assets<sfx::pcm::StereoPcm>>();
         world.insert_resource(self.sounds);
         world.insert_resource(self.clear);
     }

@@ -136,15 +136,6 @@ impl Sample {
 // Program 26 is the four-tone sound at ID 0x82 in the JP sound table.
 const TURBO_PROGRAM: usize = 26;
 
-struct Layer {
-    source: Handle<pcm::StereoPcm>,
-    priority: u8,
-}
-#[derive(Resource)]
-pub struct VehicleSounds {
-    turbo: Vec<Layer>,
-}
-
 fn battle_programs(
     vehicle: tm1_core::drive::Vehicle,
     opponents: &[tm1_core::drive::Vehicle],
@@ -170,22 +161,6 @@ fn battle_programs(
 }
 
 impl Sounds {
-    pub fn install_vehicle_sounds(&mut self, world: &mut World) {
-        world.init_resource::<Assets<AudioSource>>();
-        world.init_resource::<Assets<pcm::StereoPcm>>();
-        let turbo = self
-            .turbo
-            .drain(..)
-            .map(|tone| Layer {
-                source: world
-                    .resource_mut::<Assets<pcm::StereoPcm>>()
-                    .add(tone.clip),
-                priority: tone.priority,
-            })
-            .collect();
-        world.insert_resource(VehicleSounds { turbo });
-    }
-
     fn register(&mut self, assets: &mut Assets<AudioSource>) {
         self.voices = std::mem::take(&mut self.sources)
             .into_iter()
@@ -274,7 +249,7 @@ impl EngineTone {
 #[derive(Component)]
 pub struct OneShot {
     key: Option<crate::driving::ExclusiveVoice>,
-    levels: Option<pcm::Levels>,
+    levels: pcm::Levels,
     order: u64,
     priority: u8,
 }
@@ -359,7 +334,6 @@ pub fn start(
 pub fn update(
     mut commands: Commands,
     sounds: Res<Sounds>,
-    vehicle_sounds: Res<VehicleSounds>,
     mut clips: ResMut<Assets<pcm::StereoPcm>>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
@@ -506,8 +480,21 @@ pub fn update(
         .collect();
     use crate::driving::{BattleRequest, ExclusiveVoice};
     for request in &drive.sounds {
-        let sound = match request {
-            BattleRequest::Play(sound) => sound,
+        let (tones, key, channels, percent, range) = match request {
+            BattleRequest::Play(sound) => (
+                &sounds.effects[sound.id],
+                sound.exclusive,
+                sound.channels,
+                sound.volume_percent,
+                sound.range,
+            ),
+            BattleRequest::Turbo => (
+                &sounds.turbo,
+                Some(ExclusiveVoice::Turbo),
+                [i32::from(volume); 2],
+                99,
+                0,
+            ),
             BattleRequest::Stop(key) => {
                 active.retain(|(group, entity, _)| {
                     if group == key {
@@ -518,54 +505,24 @@ pub fn update(
                 });
                 continue;
             }
-            BattleRequest::Turbo => {
-                let key = ExclusiveVoice::Turbo;
-                if active.iter().any(|(group, _, _)| *group == key) {
-                    refresh_requested(&mut ranked, &active, key, 0);
-                    continue;
-                }
-                for tone in &vehicle_sounds.turbo {
-                    let voice = commands.spawn((
-                        AudioPlayer(tone.source.clone()),
-                        crate::campaign::StageEntity,
-                        OneShot {
-                            key: Some(key),
-                            levels: None,
-                            order: sequence.next(),
-                            priority: tone.priority,
-                        },
-                        PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
-                    ));
-                    active.push((key, voice.id(), None));
-                    ranked.push(Candidate {
-                        entity: voice.id(),
-                        order: sequence.serial,
-                        priority: tone.priority,
-                        range: 0,
-                        finishing: false,
-                        engine: false,
-                    });
-                }
-                continue;
-            }
         };
-        if let Some(key) = sound.exclusive
-            && let Some((_, _, Some(control))) = active.iter().find(|(group, _, _)| *group == key)
+        if let Some(key) = key
+            && let Some((_, _, control)) = active.iter().find(|(group, _, _)| *group == key)
         {
-            refresh_requested(&mut ranked, &active, key, sound.range);
-            control.set(sound.channels, sound.volume_percent);
+            refresh_requested(&mut ranked, &active, key, range);
+            control.set(channels, percent);
             continue;
         }
-        let control = pcm::Levels::new(sound.channels, sound.volume_percent);
-        for tone in &sounds.effects[sound.id] {
+        let control = pcm::Levels::new(channels, percent);
+        for tone in tones {
             let clip = tone.clip.with_levels(control.clone());
             let order = sequence.next();
             let entity = commands
                 .spawn((
                     crate::campaign::StageEntity,
                     OneShot {
-                        key: sound.exclusive,
-                        levels: Some(control.clone()),
+                        key,
+                        levels: control.clone(),
                         order,
                         priority: tone.priority,
                     },
@@ -577,12 +534,12 @@ pub fn update(
                 entity,
                 order,
                 priority: tone.priority,
-                range: sound.range,
+                range,
                 finishing: false,
                 engine: false,
             });
-            if let Some(key) = sound.exclusive {
-                active.push((key, entity, Some(control.clone())));
+            if let Some(key) = key {
+                active.push((key, entity, control.clone()));
             }
         }
     }
@@ -609,7 +566,7 @@ fn rank_voices(ranked: &mut [Candidate]) {
 
 fn refresh_requested(
     ranked: &mut [Candidate],
-    active: &[(crate::driving::ExclusiveVoice, Entity, Option<pcm::Levels>)],
+    active: &[(crate::driving::ExclusiveVoice, Entity, pcm::Levels)],
     key: crate::driving::ExclusiveVoice,
     range: u32,
 ) {
@@ -1297,6 +1254,51 @@ mod tests {
         let voices = solo(&mut world, true);
         assert_eq!(voices.len(), 4);
         assert_eq!(voices.iter().filter(|v| v.1).count(), 3);
+        // Keep the four live decoders across mix changes to catch both a
+        // restarted attack and scaling after the original integer reductions.
+        use bevy::audio::Decodable;
+        let mut query =
+            world.query::<(&OneShot, &AudioPlayer<pcm::StereoPcm>, &PlaybackSettings)>();
+        let mut playing: Vec<_> = query
+            .iter(&world)
+            .filter(|(voice, _, _)| voice.key == Some(Turbo))
+            .map(|(voice, player, settings)| {
+                assert_eq!(settings.volume, Volume::Linear(0.44));
+                (
+                    voice.order,
+                    world
+                        .resource::<Assets<pcm::StereoPcm>>()
+                        .get(&player.0)
+                        .unwrap()
+                        .decoder(),
+                )
+            })
+            .collect();
+        playing.sort_by_key(|(order, _)| *order);
+        let mut reference: Vec<_> = world
+            .resource::<Sounds>()
+            .turbo
+            .iter()
+            .map(|tone| (tone.clip.volume, tone.clip.unscaled_decoder()))
+            .collect();
+        for (direction, steps) in [
+            (crate::pause::Action::Right, 7),
+            (crate::pause::Action::Left, 14),
+            (crate::pause::Action::Right, 4),
+        ] {
+            let settings = &mut world.resource_mut::<crate::driving::Drive>().settings;
+            for _ in 0..steps {
+                crate::pause::navigate(crate::pause::Page::Audio(1), direction, settings);
+            }
+            let volume = settings.effects_volume();
+            assert_eq!(solo(&mut world, true), voices);
+            for ((_, actual), (attr, dry)) in playing.iter_mut().zip(&mut reference) {
+                let gain = attr.gain(volume, 99);
+                for _ in 0..512 {
+                    assert_eq!(actual.next(), dry.next().map(|v| v * gain));
+                }
+            }
+        }
         assert_eq!(solo(&mut world, true), voices);
         assert!(solo(&mut world, false).is_empty());
         assert_eq!(solo(&mut world, true).len(), 4);
