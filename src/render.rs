@@ -17,22 +17,9 @@ use tm1_assets::{
 
 use bevy::camera::visibility::RenderLayers;
 
-#[derive(Component)]
-pub struct VehicleMesh(usize);
-#[derive(Component)]
-pub struct BodyStage(usize);
 struct BodyGeometry {
     polygons: std::ops::Range<usize>,
     lods: Vec<tm1_assets::scene::LevelOfDetail>,
-}
-
-fn cached_body_face(p: &tm1_assets::scene::Polygon) -> bool {
-    !p.lod_dependent
-        && !p.car_shadow
-        && p.wheel.is_none()
-        && p.animation.is_empty()
-        && p.billboard.is_none()
-        && !p.semi_transparent
 }
 
 struct CarPose {
@@ -96,7 +83,6 @@ pub struct Arena {
     pixels: Vec<u8>,
     atlas_size: [usize; 2],
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
-    body_materials: [Handle<ColorMaterial>; 3],
     mesh: Handle<Mesh>,
     windshield_mesh: Handle<Mesh>,
     main_view: ViewMeshes,
@@ -243,7 +229,6 @@ impl Arena {
             pixels,
             atlas_size: [width, height],
             tiles,
-            body_materials: default(),
             mesh: Handle::default(),
             windshield_mesh: Handle::default(),
             main_view: default(),
@@ -265,6 +250,7 @@ pub fn setup(
     mut commands: Commands,
     mut arena: ResMut<Arena>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut masks: ResMut<Assets<crate::texture_blend::ArenaMask>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut texture_materials: ResMut<Assets<crate::texture_blend::TextureBlend>>,
@@ -361,22 +347,13 @@ pub fn setup(
         alpha_mode: AlphaMode2d::Mask(0.75),
         ..default()
     });
+    let arena_mask = masks.add(crate::texture_blend::ArenaMask {
+        atlas: texture.clone(),
+    });
     let masked = materials.add(ColorMaterial {
         texture: Some(texture.clone()),
         alpha_mode: AlphaMode2d::Mask(0.5),
         ..default()
-    });
-    arena.body_materials = std::array::from_fn(|index| {
-        if index == 0 {
-            return masked.clone();
-        }
-        let [r, g, b] = body_light_color(index as u8);
-        materials.add(ColorMaterial {
-            color: Color::linear_rgb(r, g, b),
-            texture: Some(texture.clone()),
-            alpha_mode: AlphaMode2d::Mask(0.5),
-            ..default()
-        })
     });
     let blend = materials.add(ColorMaterial {
         texture: Some(texture),
@@ -419,38 +396,6 @@ pub fn setup(
             RenderLayers::layer(2),
         ));
     }
-    for (car, ranges) in arena.body_ranges.iter().enumerate() {
-        if duel.is_some() {
-            break;
-        }
-        for (stage, range) in ranges.iter().enumerate() {
-            let mut batch = Batch::default();
-            for polygon in &arena.scene.polygons[range.polygons.clone()] {
-                if !cached_body_face(polygon) {
-                    continue;
-                }
-                let slot = arena.tiles[&(polygon.texture, false)];
-                for &i in indices(polygon.vertices.len()) {
-                    let v = &polygon.vertices[i];
-                    batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
-                }
-            }
-            commands.spawn((
-                crate::campaign::StageEntity,
-                VehicleMesh(car),
-                BodyStage(stage),
-                if stage == 0 {
-                    Visibility::Inherited
-                } else {
-                    Visibility::Hidden
-                },
-                Mesh2d(meshes.add(batch.mesh())),
-                MeshMaterial2d(masked.clone()),
-                RenderLayers::from_layers(&[1, 3]),
-                NoFrustumCulling,
-            ));
-        }
-    }
     let arena_views = &mut *arena;
     for (layer, view) in [
         (1, &mut arena_views.main_view),
@@ -476,19 +421,22 @@ pub fn setup(
             RenderLayers::layer(layer),
             NoFrustumCulling,
         ));
-        for (handle, material) in [
-            (&mut view.solids, masked.clone()),
-            (&mut view.transparent, blend.clone()),
-        ] {
-            *handle = meshes.add(Batch::default().mesh());
-            commands.spawn((
-                crate::campaign::StageEntity,
-                Mesh2d(handle.clone()),
-                MeshMaterial2d(material),
-                RenderLayers::layer(layer),
-                NoFrustumCulling,
-            ));
-        }
+        view.solids = meshes.add(Batch::default().mesh());
+        commands.spawn((
+            crate::campaign::StageEntity,
+            Mesh2d(view.solids.clone()),
+            MeshMaterial2d(arena_mask.clone()),
+            RenderLayers::layer(layer),
+            NoFrustumCulling,
+        ));
+        view.transparent = meshes.add(Batch::default().mesh());
+        commands.spawn((
+            crate::campaign::StageEntity,
+            Mesh2d(view.transparent.clone()),
+            MeshMaterial2d(blend.clone()),
+            RenderLayers::layer(layer),
+            NoFrustumCulling,
+        ));
     }
     let mut mirror_image = Image::new_target_texture(
         MIRROR_WIDTH,
@@ -883,16 +831,6 @@ pub fn update(
     drive: Res<crate::driving::Drive>,
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
-    mut vehicles: Query<
-        (
-            &VehicleMesh,
-            &BodyStage,
-            &mut Visibility,
-            &mut Transform,
-            &mut MeshMaterial2d<ColorMaterial>,
-        ),
-        Without<WorldCamera>,
-    >,
     mut cameras: Query<
         (
             &mut Transform,
@@ -1000,35 +938,6 @@ pub fn update(
         }
     }
     let lights = drive.contacts.car_lights();
-    for (vehicle, stage, mut visibility, mut entity, mut material) in &mut vehicles {
-        let Some(pose) = poses.get(vehicle.0) else {
-            *visibility = Visibility::Hidden;
-            continue;
-        };
-        if stage.0 != pose.body_stage || (vehicle.0 == 0 && hide_player) {
-            *visibility = Visibility::Hidden;
-            continue;
-        }
-        *visibility = Visibility::Inherited;
-        let handle = &arena.body_materials[usize::from(lights[vehicle.0])];
-        if &material.0 != handle {
-            material.0 = handle.clone();
-        }
-        let basis = |p: [f32; 3]| {
-            world(std::array::from_fn(|i| {
-                (0..3)
-                    .map(|j| pose.matrix[j][i] as f32 * p[j] / 4096.)
-                    .sum()
-            }))
-        };
-        entity.translation = pose.origin;
-        entity.rotation = Quat::from_mat3(&Mat3::from_cols(
-            basis([1., 0., 0.]),
-            basis([0., 0., 1.]),
-            basis([0., -1., 0.]),
-        ))
-        .normalize();
-    }
     let mut screen_batch = Batch::default();
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
@@ -1116,7 +1025,7 @@ fn draw_view(
     poses: &[CarPose],
     lights: &[u8; 9],
     hidden_car: Option<usize>,
-    batch_bodies: bool,
+    split_screen: bool,
     eye: Vec3,
     forward: Vec3,
     camera_up: Vec3,
@@ -1239,9 +1148,6 @@ fn draw_view(
         {
             continue;
         }
-        if !batch_bodies && i >= arena.vehicle_start && cached_body_face(p) {
-            continue;
-        }
         if p.arena_switches
             .iter()
             .any(|&(slot, branch)| switches[usize::from(slot)] != branch)
@@ -1295,6 +1201,8 @@ fn draw_view(
         }
         if p.semi_transparent {
             batch.order_geometry(indices.len(), eye, forward, p.fixed_ot);
+        } else {
+            batch.mask_geometry(indices.len(), eye, forward, p.fixed_ot);
         }
     }
     let mut faces = [[0; 14]; 180];
@@ -1402,6 +1310,8 @@ fn draw_view(
             }
             if p.semi_transparent {
                 batch.order_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
+            } else {
+                batch.mask_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
             }
         }
     }
@@ -1409,7 +1319,7 @@ fn draw_view(
         let d = world(p.map(|n| n as f32)) - eye;
         Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
     };
-    let (lens, center) = if batch_bodies {
+    let (lens, center) = if split_screen {
         (228, [160, 60])
     } else if view.secondary {
         (
@@ -1420,7 +1330,7 @@ fn draw_view(
         (204, [160, 120])
     };
     let pixel_scale = focal / lens as f32;
-    let bucket_depth = |bucket: u32, units: u32| ((bucket * units) as f32).max(near + 0.01);
+    let bucket_depth = |bucket: u32| ((bucket * 8) as f32).max(near + 0.01);
     let drop_camera = |p: Vec3| {
         let d = p - eye;
         [
@@ -1434,9 +1344,9 @@ fn draw_view(
     for &[x, y, z, weapon] in &drops[..drop_count] {
         let center = world([x as f32, y as f32, z as f32]);
         let camera = drop_camera(center);
-        if !tm1_core::drive::drop_visible(camera) {
+        let Some(bucket) = tm1_core::drive::drop_bucket(camera, weapon) else {
             continue;
-        }
+        };
         let index = match weapon {
             6 => 0,
             8 => 1,
@@ -1447,24 +1357,16 @@ fn draw_view(
         let sprite = &arena.drop_sprites[index];
         let tile = arena.tiles[&(Some(sprite.texture), false)];
         let billboard = tm1_core::drive::drop_billboard(camera, [lens; 2]);
+        let depth = bucket_depth(bucket);
         for &i in indices(4) {
-            let (xy, depth) = if weapon == 9 {
+            let xy = if weapon == 9 {
                 let dx = if i & 1 == 0 { -48. } else { 48. };
                 let dy = if i < 2 { -48. } else { 48. };
                 let corner = center + world([dx, dy, 0.]);
-                let coords = drop_camera(corner);
-                let xy = tm1_core::drive::drop_screen_point(coords, [lens; 2]);
-                // Warehouse road geometry is eight units above its collision floor.
-                let skin = if eye.y > corner.y {
-                    8. / (eye.y - corner.y).max(16.)
-                } else {
-                    0.
-                };
-                (xy, (coords[2].max(16) as f32 * (1. - skin) - 8.).max(16.))
+                tm1_core::drive::drop_screen_point(drop_camera(corner), [lens; 2])
             } else {
-                (billboard[i], camera[2] as f32)
+                billboard[i]
             };
-            let depth = depth.max(near + 0.01);
             let point = eye
                 + forward * depth
                 + (right * xy[0] as f32 - up * xy[1] as f32) * (depth / lens as f32);
@@ -1474,6 +1376,7 @@ fn draw_view(
                 [1.; 4],
             );
         }
+        solids.mask_packet(6, bucket, DrawPass::Bullets);
     }
     let white = arena.uv(0, Vec2::ZERO);
     let quad = |batch: &mut Batch, points: [Vec2; 4], depth: f32, colors: [[f32; 4]; 2]| {
@@ -1523,7 +1426,7 @@ fn draw_view(
         };
         let sprite = &frames[particle.frame];
         let tile = arena.tiles[&(Some(sprite.texture), true)];
-        let depth = bucket_depth(particle.ordering_bucket(base[2]), 8);
+        let depth = bucket_depth(particle.ordering_bucket(base[2]));
         let tint = if kind == 55 {
             [0.5, 0.5, 255. / 128., 1.]
         } else {
@@ -1556,7 +1459,7 @@ fn draw_view(
         };
         let sprite = &arena.fragment_frames[variant as usize][phase as usize];
         let tile = arena.tiles[&(Some(sprite.texture), false)];
-        let draw_depth = bucket_depth(bucket, 8);
+        let draw_depth = bucket_depth(bucket);
         for &i in indices(4) {
             let [u, v] = corners[i];
             let offset = right * u as f32 - up * v as f32;
@@ -1566,19 +1469,17 @@ fn draw_view(
                 [1.; 4],
             );
         }
+        solids.mask_packet(6, bucket, DrawPass::Explosions);
     }
     for arc in &arcs[..arc_count] {
         let points = arc.map(|p| {
             let camera = camera_point(p);
             let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
             let (bucket, [x, y]) = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
-            Some((
-                Vec2::new(x as f32, -y as f32) * pixel_scale,
-                bucket_depth(bucket, 4),
-            ))
+            Some((Vec2::new(x as f32, -y as f32) * pixel_scale, bucket))
         });
         for (j, segment) in points.windows(2).enumerate() {
-            let (Some((a, _)), Some((b, depth))) = (segment[0], segment[1]) else {
+            let (Some((a, _)), Some((b, bucket))) = (segment[0], segment[1]) else {
                 continue;
             };
             let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
@@ -1589,9 +1490,10 @@ fn draw_view(
             quad(
                 &mut solids,
                 [a - normal, a + normal, b - normal, b + normal],
-                depth,
+                bucket_depth(bucket),
                 colors,
             );
+            solids.mask_packet(6, bucket, DrawPass::Bullets);
         }
     }
     for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
@@ -1605,7 +1507,7 @@ fn draw_view(
             continue;
         };
         let screen = |[x, y]: [i32; 2]| Vec2::new(x as f32, -y as f32) * pixel_scale;
-        let depth = bucket_depth(bucket, 8);
+        let depth = bucket_depth(bucket);
         let vertex = |point: Vec2| {
             eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
         };
@@ -1621,11 +1523,13 @@ fn draw_view(
                     depth,
                     colors.map(rgb),
                 );
+                solids.mask_packet(6, bucket, DrawPass::Bullets);
             }
             Primitive::Triangle { points, colors } => {
                 for (point, color) in points.into_iter().zip(colors) {
                     solids.push(vertex(screen(point)), white, rgb(color));
                 }
+                solids.mask_packet(3, bucket, DrawPass::Bullets);
             }
             Primitive::Sprite {
                 center,
@@ -1942,7 +1846,13 @@ impl Batch {
         });
     }
 
-    fn order_geometry(&mut self, vertex_count: usize, eye: Vec3, forward: Vec3, fixed_ot: u32) {
+    fn geometry_bucket(
+        &mut self,
+        vertex_count: usize,
+        eye: Vec3,
+        forward: Vec3,
+        fixed_ot: u32,
+    ) -> Option<u32> {
         let start = self.positions.len() - vertex_count;
         let vertices = &self.positions[start..];
         let depth = |i: usize| (Vec3::from_array(vertices[i]) - eye).dot(forward) as u32;
@@ -1957,13 +1867,31 @@ impl Batch {
             self.positions.truncate(start);
             self.uvs.truncate(start);
             self.colors.truncate(start);
-            return;
+            return None;
         }
-        self.order_packet(
-            vertex_count,
-            if fixed_ot == 0 { bucket } else { fixed_ot },
-            DrawPass::Hierarchy,
-        );
+        Some(if fixed_ot == 0 { bucket } else { fixed_ot })
+    }
+
+    fn order_geometry(&mut self, count: usize, eye: Vec3, forward: Vec3, fixed: u32) {
+        if let Some(bucket) = self.geometry_bucket(count, eye, forward, fixed) {
+            self.order_packet(count, bucket, DrawPass::Hierarchy);
+        }
+    }
+
+    fn mask_geometry(&mut self, count: usize, eye: Vec3, forward: Vec3, fixed: u32) {
+        if let Some(bucket) = self.geometry_bucket(count, eye, forward, fixed) {
+            self.mask_packet(count, bucket, DrawPass::Hierarchy);
+        }
+    }
+
+    fn mask_packet(&mut self, count: usize, bucket: u32, pass: DrawPass) {
+        // Masked faces use texture alpha for cutout. Pass the packet bucket
+        // through the spare vertex alpha without changing projected UVs.
+        let start = self.colors.len() - count;
+        for color in &mut self.colors[start..] {
+            color[3] = bucket as f32;
+        }
+        self.order_packet(count, bucket, pass);
     }
 
     fn draw_indices(&mut self) -> Vec<u32> {
@@ -2258,7 +2186,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
-    fn blended_geometry_matches_jp_depth_selection() {
+    fn battle_geometry_matches_jp_depth_selection() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
         let jump = |address: u32| 0x08000000 | ((address >> 2) & 0x03ffffff);
@@ -2304,6 +2232,14 @@ mod tests {
                     for &i in indices(n) {
                         batch.push(Vec3::Z * depths[i] as f32, [0.; 2], [1.; 4]);
                     }
+                    let mut masked = Batch::default();
+                    for &i in indices(n) {
+                        masked.push(Vec3::Z * depths[i] as f32, [0.; 2], [1.; 4]);
+                    }
+                    masked.mask_geometry(indices(n).len(), Vec3::ZERO, Vec3::Z, fixed);
+                    assert_eq!(masked.positions.is_empty(), expected == 0);
+                    assert!(masked.colors.iter().all(|c| c[3] == expected as f32));
+                    assert_eq!(masked.draw_indices().len(), masked.positions.len());
                     batch.order_geometry(indices(n).len(), Vec3::ZERO, Vec3::Z, fixed);
                     assert_eq!(
                         batch.packets.first().map_or(0, |p| p.bucket),

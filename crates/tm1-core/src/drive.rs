@@ -1649,6 +1649,11 @@ pub fn drop_visible([x, y, z]: [i32; 3]) -> bool {
     (-640..=640).contains(&x) && (-640..=640).contains(&y) && (16..=30000).contains(&z)
 }
 
+/// displayDropWeapons links the whole quad by center depth. Oil moves one bucket closer.
+pub fn drop_bucket(camera: [i32; 3], weapon: i32) -> Option<u32> {
+    drop_visible(camera).then(|| (camera[2] as u32 >> 3) - u32::from(weapon == 9))
+}
+
 pub fn drop_screen_point([x, y, z]: [i32; 3], focal: [i32; 2]) -> [i32; 2] {
     [
         x.wrapping_mul(focal[0]) / z.max(16),

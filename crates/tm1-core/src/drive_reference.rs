@@ -2500,6 +2500,8 @@ fn drop_draw_packets_original() {
         put(cpu, d, kind);
         for pos in [
             [-26i32, 17, 241],
+            [7, -13, 239],
+            [7, -13, 240],
             [0, 0, 15],
             [0, 0, 16],
             [-640, 640, 30000],
@@ -2514,15 +2516,21 @@ fn drop_draw_packets_original() {
             put(cpu, d + 20, pos[2] as u32);
             cpu.put(d + 4, &40i16.to_le_bytes());
             put(cpu, RENDER_SCRATCH + 8, packet);
+            cpu.put(0x80010000, &[0xff; 4096 * 4]);
             cpu.call(0x801344e0, &[RENDER_SCRATCH, 0]);
             assert_eq!(
                 cpu.word(RENDER_SCRATCH + 8) != packet,
                 drop_visible(pos),
                 "{pos:?}"
             );
-            if !drop_visible(pos) {
+            let Some(bucket) = drop_bucket(pos, kind as i32) else {
                 continue;
-            }
+            };
+            assert_eq!(
+                cpu.word(0x80010000 + 4 * bucket) & 0xffffff,
+                packet & 0xffffff,
+                "kind {kind} at {pos:?} bucket {bucket}"
+            );
             let corners = if kind == 9 {
                 [[-48, -48], [48, -48], [-48, 48], [48, 48]]
                     .map(|[dx, dy]| drop_screen_point([pos[0] + dx, pos[1] + dy, pos[2]], focal))

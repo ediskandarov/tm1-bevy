@@ -14,7 +14,28 @@ pub struct TextureBlendPlugin;
 impl Plugin for TextureBlendPlugin {
     fn build(&self, app: &mut App) {
         embedded_asset!(app, "texture_blend.wesl");
-        app.add_plugins(Material2dPlugin::<TextureBlend>::default());
+        embedded_asset!(app, "arena_mask.wesl");
+        app.add_plugins((
+            Material2dPlugin::<TextureBlend>::default(),
+            Material2dPlugin::<ArenaMask>::default(),
+        ));
+    }
+}
+
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct ArenaMask {
+    #[texture(0)]
+    #[sampler(1)]
+    pub atlas: Handle<Image>,
+}
+
+impl Material2d for ArenaMask {
+    fn alpha_mode(&self) -> AlphaMode2d {
+        AlphaMode2d::Mask(0.5)
+    }
+
+    fn fragment_shader() -> ShaderRef {
+        "embedded://tm1_bevy/arena_mask.wesl".into()
     }
 }
 
