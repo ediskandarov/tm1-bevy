@@ -35,8 +35,13 @@ const GAUSSIAN: [i16; 512] = [
     22842, 22857, 22872, 22885, 22897, 22908, 22918, 22927, 22935, 22942, 22948, 22953, 22957, 22960, 22962, 22963,
 ];
 
+// The SPU fetches the first block for four output frames, then starts with a full filter window.
+pub(super) const KEY_ON_DELAY: usize = 4;
+pub(super) const INITIAL_PHASE: usize = 3 << 12;
+pub(super) const MAX_STEP: u16 = 0x3fff;
+
 /// The pitch accumulator has twelve fractional bits. Its high eight select
-/// the interpolation phase. A newly keyed voice has three zero history samples.
+/// the interpolation phase.
 pub(super) fn interpolate(pcm: &[i16], phase: usize) -> i32 {
     let current = phase >> 12;
     let index = (phase >> 4) & 255;

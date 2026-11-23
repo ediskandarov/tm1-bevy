@@ -59,7 +59,8 @@ impl Levels {
 pub(super) struct PitchRegister(Arc<AtomicU16>);
 impl PitchRegister {
     pub fn set(&self, value: u16) {
-        self.0.store(value.min(0x4000), Ordering::Relaxed);
+        self.0
+            .store(value.min(super::interpolation::MAX_STEP), Ordering::Relaxed);
     }
     pub fn get(&self) -> u16 {
         self.0.load(Ordering::Relaxed)
@@ -88,7 +89,9 @@ impl LoopingTone {
         })
     }
     pub fn voice(&self, pitch: u16) -> (StereoPcm, PitchRegister) {
-        let register = PitchRegister(Arc::new(AtomicU16::new(pitch.min(0x4000))));
+        let register = PitchRegister(Arc::new(AtomicU16::new(
+            pitch.min(super::interpolation::MAX_STEP),
+        )));
         (
             StereoPcm {
                 data: PcmData::Looping(self.clone(), register.clone()),
@@ -167,7 +170,7 @@ impl Decodable for StereoPcm {
         Playback {
             clip: self.clone(),
             cursor: 0,
-            phase: 0,
+            phase: super::interpolation::INITIAL_PHASE,
             mono: 0.,
             frame_gain: [0.; 2],
             last_levels: u32::MAX,
@@ -184,7 +187,7 @@ impl Iterator for Playback {
         let mut sample = match &self.clip.data {
             PcmData::Stereo { samples } => *samples.get(self.cursor)?,
             PcmData::Looping(motor, register) => {
-                if self.cursor & 1 == 0 {
+                if self.cursor & 1 == 0 && self.cursor / 2 >= super::interpolation::KEY_ON_DELAY {
                     let mono = super::interpolation::interpolate(&motor.pcm, self.phase);
                     let v = self.envelope.as_mut().unwrap().apply(mono) as f32;
                     self.mono = v.clamp(-32768., 32767.) / 32768.;
@@ -237,6 +240,33 @@ impl Source for Playback {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn key_on_holds_sample_position_and_envelope_for_four_stereo_frames() {
+        let tone = LoopingTone {
+            pcm: vec![16384; 56].into(),
+            loop_at: 28,
+            adsr: [0x80ff, 0x1fc0],
+            volume: VabVolume {
+                program: 99,
+                tone: 99,
+            },
+        };
+        let (clip, pitch) = tone.voice(0xffff);
+        let mut playback = clip.decoder();
+        for _ in 0..4 {
+            assert_eq!([playback.next(), playback.next()], [Some(0.); 2]);
+            assert_eq!(playback.phase, 3 * 4096);
+        }
+        assert_eq!([playback.next(), playback.next()], [Some(0.); 2]);
+        assert_eq!(playback.phase, 3 * 4096 + 0x3fff);
+        pitch.set(0);
+        assert!(playback.next().unwrap() > 0.);
+        assert_eq!(playback.phase, 3 * 4096 + 0x3fff);
+        let mut restarted = clip.decoder();
+        assert!(restarted.by_ref().take(8).all(|v| v == 0.));
+        assert_eq!(restarted.phase, 3 * 4096);
+    }
+
     #[test]
     fn independent_voices_latch_channel_updates_at_frame_boundaries() {
         let clip = StereoPcm::new(
