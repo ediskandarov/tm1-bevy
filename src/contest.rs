@@ -117,6 +117,7 @@ pub struct Contest {
     slots: [u8; 5],
     cursor: usize,
     released: bool,
+    garage_wait_release: bool,
 }
 #[derive(Default, Resource)]
 struct AttractCycle(u8);
@@ -752,13 +753,13 @@ impl Contest {
                 let [up, down, left, right, select] = duel_garage_keys(slot);
                 let vertical = [up, down];
                 let horizontal = [left, right];
-                if !bio && keys.any_just_pressed(vertical) {
+                if !bio && keys.any_pressed(vertical) {
                     0
                 } else if !bio && horizontal.into_iter().all(|key| keys.pressed(key)) {
                     return None;
-                } else if keys.just_pressed(select) {
+                } else if keys.pressed(select) {
                     1
-                } else if !bio && self.garage.row != 2 && keys.any_just_pressed(horizontal) {
+                } else if !bio && self.garage.row != 2 && keys.any_pressed(horizontal) {
                     0
                 } else {
                     return None;
@@ -773,12 +774,13 @@ impl Contest {
             Page::StaffRoll | Page::History | Page::Showcase(_) => return None,
             Page::Title | Page::MainOptions(_) if vertical => 0,
             Page::Audio(n) if vertical || (horizontal && n < 3) => 0,
-            Page::Contest if vertical => 0,
+            Page::Contest if keys.any_pressed([ArrowUp, ArrowDown]) => 0,
             Page::Contest if keys.pressed(ArrowLeft) && keys.pressed(ArrowRight) => return None,
+            Page::Contest | Page::Bio if keys.pressed(Enter) => 1,
             _ if enter => 1,
             Page::Battle(_) | Page::Wrong(_) if vertical => 0,
             Page::Options(n) if vertical || (n < 2 && horizontal) => 0,
-            Page::Contest if self.garage.row != 2 && horizontal => 0,
+            Page::Contest if self.garage.row != 2 && keys.any_pressed([ArrowLeft, ArrowRight]) => 0,
             _ => return None,
         };
         Some(index)
@@ -806,6 +808,7 @@ impl Contest {
                         _ => Page::Contest,
                     };
                     self.garage.reset();
+                    self.garage_wait_release = self.page == Page::Contest;
                 }
             }
             Page::DuelJoin(pending) => {
@@ -823,6 +826,7 @@ impl Contest {
                         };
                         self.idle = Duration::ZERO;
                         self.garage.reset();
+                        self.garage_wait_release = false;
                     }
                 } else {
                     self.page = Page::DuelJoin(pressed);
@@ -831,6 +835,14 @@ impl Contest {
             Page::DuelGarage { slot, second, bio } => {
                 use KeyCode::*;
                 let [up, down, left, right, select] = duel_garage_keys(slot);
+                let key = |k| keys.pressed(k);
+                let vertical = key(up) || key(down);
+                let chord = keys.pressed(left) && keys.pressed(right);
+                self.garage_wait_release = if bio {
+                    key(select) || key(Escape)
+                } else {
+                    vertical || (!chord && (key(select) || key(left) || key(right)))
+                };
                 if bio {
                     if key(select) || key(Escape) {
                         self.page = Page::DuelGarage {
@@ -839,9 +851,9 @@ impl Contest {
                             bio: false,
                         };
                     }
-                } else if !key(Escape) && (key(up) || key(down)) {
+                } else if !key(Escape) && vertical {
                     self.garage.row = (self.garage.row + if key(up) { 2 } else { 1 }) % 3;
-                } else if !key(Escape) && keys.pressed(left) && keys.pressed(right) {
+                } else if !key(Escape) && chord {
                     if !second {
                         self.hidden_pick = Some(slot);
                         self.duel_cars[1 - slot] = self.duel_cars[slot];
@@ -1003,25 +1015,30 @@ impl Contest {
             Page::Bio => {
                 if key(KeyCode::Enter) || key(KeyCode::Escape) {
                     self.page = Page::Contest;
+                    self.garage_wait_release = true;
                 }
             }
             Page::Contest => {
-                if key(KeyCode::ArrowUp) {
+                use KeyCode::*;
+                let chord = keys.pressed(ArrowLeft) && keys.pressed(ArrowRight);
+                self.garage_wait_release = keys.any_pressed([ArrowUp, ArrowDown])
+                    || (!chord && keys.any_pressed([ArrowLeft, ArrowRight, Enter]));
+                if keys.pressed(ArrowUp) {
                     self.garage.row = (self.garage.row + 2) % 3;
-                } else if key(KeyCode::ArrowDown) {
+                } else if keys.pressed(ArrowDown) {
                     self.garage.row = (self.garage.row + 1) % 3;
                 } else if !key(KeyCode::Escape)
                     && keys.pressed(KeyCode::ArrowLeft)
                     && keys.pressed(KeyCode::ArrowRight)
                 {
                     return false;
-                } else if key(KeyCode::Enter) && self.garage.row == 0 {
+                } else if keys.pressed(Enter) && self.garage.row == 0 {
                     self.player_cars.0[0] = Some(self.vehicle);
                     self.page = Page::Battle(0);
                     self.idle = Duration::ZERO;
-                } else if key(KeyCode::Enter) && self.garage.row == 1 {
+                } else if keys.pressed(Enter) && self.garage.row == 1 {
                     self.page = Page::Bio;
-                } else if key(KeyCode::Escape) || key(KeyCode::Enter) {
+                } else if key(KeyCode::Escape) || keys.pressed(Enter) {
                     self.page = Page::Title;
                     self.modes = Default::default();
                     self.level = Level::Arena;
@@ -1029,11 +1046,11 @@ impl Contest {
                     self.difficulty = self.difficulty.next();
                 } else if key(KeyCode::KeyP) {
                     self.open_password(false);
-                } else if key(KeyCode::ArrowRight) && self.garage.row != 2 {
+                } else if keys.pressed(ArrowRight) && self.garage.row != 2 {
                     self.garage.slide = 0;
                     self.garage.left = false;
                     self.vehicle = (self.vehicle + 1) % Vehicle::CARD_ORDER.len();
-                } else if key(KeyCode::ArrowLeft) && self.garage.row != 2 {
+                } else if keys.pressed(ArrowLeft) && self.garage.row != 2 {
                     self.garage.slide = 0;
                     self.garage.left = true;
                     self.vehicle =
@@ -1180,6 +1197,7 @@ pub fn show(
         slots: [b' '; 5],
         cursor: 0,
         released: false,
+        garage_wait_release: false,
     };
     let bank = disc.read("SND/UACORE.VAB")?;
     for program in [57, 58, 36, 41] {
@@ -1326,14 +1344,33 @@ pub fn update(world: &mut World) {
         let joining = matches!(menu.page, Page::DuelJoin(_));
         let join_held = joining && (crate::pause::duel_pad_held(keys, 0) || crate::pause::duel_pad_held(keys, 1));
         let join_wait = join_held || matches!(menu.page, Page::DuelJoin(Some(_)));
+        let showroom = match menu.page {
+            Page::Contest | Page::Bio => Some([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft, KeyCode::ArrowRight, KeyCode::Enter]),
+            Page::DuelGarage {slot, ..} => Some(duel_garage_keys(slot)),
+            _ => None,
+        };
+        let waiting = showroom.is_some() && menu.garage_wait_release;
+        if waiting {
+            menu.garage_wait_release = match menu.page {
+                Page::DuelGarage {slot, ..} => crate::pause::duel_pad_held(keys, slot),
+                _ => crate::pause::campaign_pad_held(keys, None),
+            } || keys.pressed(KeyCode::Escape);
+        }
+        let chord = !waiting && showroom.is_some_and(|[up, down, left, right, _]|
+            keys.pressed(left) && keys.pressed(right) && !keys.any_pressed([up, down, KeyCode::Escape]));
+        let showroom_pressed = showroom.is_some_and(|buttons| keys.any_pressed(buttons));
         let reset_idle = match menu.page {
             Page::DuelJoin(_) => join_held,
-            Page::DuelGarage { slot, bio: false, .. } => keys.any_pressed(duel_garage_keys(slot)) || keys.pressed(KeyCode::Escape),
-            Page::Contest => keys.any_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft,
-                KeyCode::ArrowRight, KeyCode::Enter, KeyCode::KeyD, KeyCode::KeyP, KeyCode::Escape]),
+            Page::DuelGarage { bio: false, .. } => showroom_pressed || keys.pressed(KeyCode::Escape),
+            Page::Contest => showroom_pressed || keys.any_pressed([KeyCode::KeyD, KeyCode::KeyP, KeyCode::Escape]),
             _ => controls.map_or(held, |input| input.reset_idle),
         };
-        let timed_out = menu.tick_setup_timeout(reset_idle, menu_delta(world));
+        let timed_out = if chord && matches!(menu.page, Page::Contest | Page::DuelGarage {bio: false, ..}) {
+            menu.idle += menu_delta(world);
+            false
+        } else {
+            menu.tick_setup_timeout(waiting || reset_idle, menu_delta(world))
+        };
         let preview_finished = if let Page::BossPreview(remaining) = menu.page {
             let left = remaining.saturating_sub(menu_delta(world));
             if !preview_confirmed && !left.is_zero() {
@@ -1366,7 +1403,7 @@ pub fn update(world: &mut World) {
         } else {
             false
         };
-        if !join_wait && !timed_out && !animate && !preview_finished && keys.get_just_pressed().next().is_none() {
+        if !showroom_pressed && !join_wait && !timed_out && !animate && !preview_finished && keys.get_just_pressed().next().is_none() {
             if menu.page == Page::Password && menu.password_wait_release {
                 menu.password_wait_release = crate::pause::campaign_pad_held(keys, None);
             }
@@ -1389,6 +1426,8 @@ pub fn update(world: &mut World) {
                 crate::pause::navigation_sound(crate::pause::Page::Controls, action, old != settings.layout)
             });
             (false, sound.map(usize::from))
+        } else if waiting {
+            (false, None)
         } else if timed_out {
             (false, joining.then_some(1))
         } else if preview_finished {
@@ -1399,6 +1438,9 @@ pub fn update(world: &mut World) {
             (false, sound)
         } else {
             let start = menu.input(keys);
+            if !matches!(menu.page, Page::Contest | Page::Bio | Page::DuelGarage {..}) {
+                menu.garage_wait_release = false;
+            }
             (start, menu.input_sound(previous, keys))
         };
         if preview_confirmed {
@@ -1525,10 +1567,14 @@ mod tests {
         update(world);
         world.insert_resource(ButtonInput::<KeyCode>::default());
         if world.get_resource::<Contest>().is_some_and(|menu| {
-            matches!(
-                menu.page,
-                Page::DuelJoin(Some(_)) | Page::Controls | Page::Password | Page::BossPreview(_)
-            )
+            menu.garage_wait_release
+                || matches!(
+                    menu.page,
+                    Page::DuelJoin(Some(_))
+                        | Page::Controls
+                        | Page::Password
+                        | Page::BossPreview(_)
+                )
         }) {
             update(world);
         }
@@ -2557,6 +2603,8 @@ mod tests {
             .press(ArrowDown);
         update(&mut world);
         assert_eq!(world.resource::<Contest>().garage.row, 1);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        update(&mut world);
         let mut keys = ButtonInput::default();
         keys.press(KeyQ);
         world.insert_resource(keys);
@@ -2571,6 +2619,73 @@ mod tests {
         update(&mut world);
         assert_eq!(world.resource::<Contest>().page, Page::Title);
         assert_eq!(world.resource::<Contest>().garage.voices().count(), 0);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn showroom_requires_full_release_and_keeps_spinning() {
+        use KeyCode::*;
+        for (duel, direction, confirm) in [
+            (false, ArrowRight, Enter),
+            (true, KeyD, Space),
+            (true, ArrowRight, Comma),
+        ] {
+            let mut world = menu_world();
+            if duel {
+                press(&mut world, ArrowDown);
+            }
+            press(&mut world, Enter);
+            if duel {
+                press(&mut world, confirm);
+            }
+            let page = world.resource::<Contest>().page;
+            world
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(direction);
+            update(&mut world);
+            let field = world.resource::<Contest>().garage.field;
+            world
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(100));
+            let mut keys = world.resource_mut::<ButtonInput<KeyCode>>();
+            keys.clear();
+            keys.press(confirm);
+            update(&mut world);
+            let menu = world.resource::<Contest>();
+            assert_eq!(menu.page, page);
+            assert_eq!(menu.garage.field, field + 6);
+            world
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .release(direction);
+            update(&mut world);
+            assert_eq!(world.resource::<Contest>().page, page);
+            world.insert_resource(ButtonInput::<KeyCode>::default());
+            update(&mut world);
+            press(&mut world, confirm);
+            assert_ne!(world.resource::<Contest>().page, page);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn showroom_opposite_directions_defer_an_expired_timer_until_release() {
+        use KeyCode::*;
+        let mut world = menu_world();
+        press(&mut world, Enter);
+        for key in [ArrowLeft, ArrowRight] {
+            world.resource_mut::<ButtonInput<KeyCode>>().press(key);
+        }
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_secs(301));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Contest);
+        world.insert_resource(ButtonInput::<KeyCode>::default());
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(17));
+        update(&mut world);
+        assert_eq!(world.resource::<Contest>().page, Page::Title);
     }
 
     #[test]
