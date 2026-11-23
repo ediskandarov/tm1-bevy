@@ -27,6 +27,8 @@ The campaign ending follows the two controller-port checks in screenPlayCarEndin
 
 ## Battle radar
 
+Radar arrows and instrument sprites sample one source texel per logical screen pixel. Their dimensions include the final texel as in the JP sprite parser at 0x8013872c. A rectangle crossing a texture-page edge wraps inside that page.
+
 The single-player radar collects opponents during their individual updates and active repair stands before regeneration. It displays the previous simulation pass, retaining up to twelve marks and four directional flags while hidden. Repair stands blink with the original radar buffer. A disc-backed test compares the buffered marks, colors, coordinates and edge flags with the JP executable across hide and show transitions, including a full buffer. The Cyburbia Metal capture at `local/cyburbia-radar.png` shows Road Kill at update 40. Framebuffer blending has not been compared pixel by pixel.
 
 ## Rival names and font sprites

@@ -1521,6 +1521,25 @@ fn draw_view(
 }
 
 impl Arena {
+    fn sprite_rects(
+        &self,
+        frame: SpriteFrame,
+        shift: u8,
+        semi: bool,
+        mut draw: impl FnMut([i32; 4], [[f32; 2]; 4]),
+    ) {
+        let slot = self.tiles[&(Some(frame.texture), semi)];
+        let [u, v] = frame.uv[0];
+        let width = i32::from(frame.width.wrapping_add(1));
+        let height = i32::from(frame.uv[2][1].wrapping_sub(v).wrapping_add(1));
+        for (dy, v, h) in sprite_axis(v, height) {
+            for (dx, u, w) in sprite_axis(u.wrapping_add(shift), width) {
+                let uv = [[u, v], [u + w, v], [u, v + h], [u + w, v + h]]
+                    .map(|[u, v]| self.uv(slot, Vec2::new(u as f32 - 0.5, v as f32 - 0.5)));
+                draw([dx, dy, w, h], uv);
+            }
+        }
+    }
     fn uv(&self, slot: usize, uv: Vec2) -> [f32; 2] {
         [
             ((slot % (self.atlas_size[0] / TILE) * TILE) as f32 + uv.x + 0.5)
@@ -1529,6 +1548,13 @@ impl Arena {
                 / self.atlas_size[1] as f32,
         ]
     }
+}
+// A PS1 SPRT advances one texel per pixel and wraps inside its own texture page.
+fn sprite_axis(start: u8, length: i32) -> impl Iterator<Item = (i32, i32, i32)> {
+    let first = length.min(256 - i32::from(start));
+    [(0, i32::from(start), first), (first, 0, length - first)]
+        .into_iter()
+        .filter(|&(_, _, len)| len > 0)
 }
 // UA_DASH.c places instruments on a 320 by 240 framebuffer.
 struct Instruments<'a> {
@@ -1550,13 +1576,14 @@ impl Instruments<'_> {
         self.quad(rect, [self.arena.uv(0, Vec2::ZERO); 4], colors);
     }
     fn sprite(&mut self, x: i32, y: i32, f: SpriteFrame, tint: [u8; 3], semi: bool) {
-        let slot = self.arena.tiles[&(Some(f.texture), semi)];
-        let uv =
-            f.uv.map(|[u, v]| self.arena.uv(slot, Vec2::new(u.into(), v.into())));
-        let w = 1 + i32::from(f.width);
-        let h = 1 + i32::from(f.uv[2][1].wrapping_sub(f.uv[0][1]));
         let tint = tint.map(|v| v as f32 / 128.);
-        self.quad([x, y, w, h], uv, [[tint[0], tint[1], tint[2], 1.]; 2]);
+        self.arena.sprite_rects(f, 0, semi, |[dx, dy, w, h], uv| {
+            self.quad(
+                [x + dx, y + dy, w, h],
+                uv,
+                [[tint[0], tint[1], tint[2], 1.]; 2],
+            );
+        });
     }
     fn number(&mut self, mut x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
         if n >= 10 {
@@ -1695,20 +1722,17 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, radar: &tm1_core::drive::RadarFr
     for (i, x, y) in [(0, 47, 26), (1, 47, 77), (3, 10, 49), (2, 89, 49)] {
         if radar.edges[i] {
             let f = arena.arrows[i];
-            let [u, v] = f.uv[0];
-            let w = i32::from(f.width) + 1;
-            let h = i32::from(f.uv[2][1].wrapping_sub(v)) + 1;
-            let u = i32::from(u) + i32::from(i != 3);
-            let v = i32::from(v);
-            let slot = arena.tiles[&(Some(f.texture), true)];
-            let uv = [
-                [u, v],
-                [u + w - 1, v],
-                [u, v + h - 1],
-                [u + w - 1, v + h - 1],
-            ]
-            .map(|[u, v]| arena.uv(slot, Vec2::new((u as u8) as f32, (v as u8) as f32)));
-            rect(x, y, w, h, uv, [1.; 4], PacketMode::texture(f.texture));
+            arena.sprite_rects(f, u8::from(i != 3), true, |[dx, dy, w, h], uv| {
+                rect(
+                    x + dx,
+                    y + dy,
+                    w,
+                    h,
+                    uv,
+                    [1.; 4],
+                    PacketMode::texture(f.texture),
+                );
+            });
         }
     }
     // Radar signals are prepended to the PS1 ordering table.
@@ -2139,6 +2163,24 @@ pub fn duel_view(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sprite_axis_preserves_every_texel_across_page_wrap() {
+        for origin in 0..=255u8 {
+            for width in [0, 1, 8, 31, 128, 255] {
+                let mut count = 0;
+                for (offset, texel, length) in super::sprite_axis(origin, width) {
+                    assert_eq!(offset, count);
+                    assert!(texel + length <= 256);
+                    for i in 0..length {
+                        assert_eq!(texel + i, (i32::from(origin) + offset + i) % 256);
+                    }
+                    count += length;
+                }
+                assert_eq!(count, width);
+            }
+        }
+    }
+
     use super::*;
     use tm1_core::drive::Vehicle;
 
