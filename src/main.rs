@@ -21,16 +21,59 @@ mod sfx;
 mod smoke;
 mod transition;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use bevy::prelude::*;
+use std::path::{Path, PathBuf};
 use tm1_assets::disc::Disc;
 
+fn cue_in(directory: &Path) -> Result<Option<PathBuf>> {
+    let mut candidates = Vec::new();
+    let entries = Context::with_context(directory.read_dir(), || {
+        format!("search for a CUE in {}", directory.display())
+    })?;
+    for entry in entries {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cue"))
+            && path.is_file()
+        {
+            candidates.push(path);
+        }
+    }
+    if candidates.len() > 1 {
+        candidates.sort();
+        anyhow::bail!(
+            "Multiple CUE files in {}. Pass one explicitly, for example: tm1-bevy \"{}\"",
+            directory.display(),
+            candidates[0].display()
+        );
+    }
+    Ok(candidates.pop())
+}
+
+fn discover_cue() -> Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    let beside_exe = Context::context(exe.parent(), "missing executable directory")?;
+    if let Some(path) = cue_in(beside_exe)? {
+        return Ok(path);
+    }
+    let cwd = std::env::current_dir()?;
+    if cwd != beside_exe
+        && let Some(path) = cue_in(&cwd)?
+    {
+        return Ok(path);
+    }
+    anyhow::bail!(
+        "No CUE found. Place a disc CUE beside the executable or run tm1-bevy from the disc directory. You can also pass the CUE path explicitly."
+    );
+}
+
 fn main() -> Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let cue = anyhow::Context::context(
-        args.next(),
-        "usage: tm1-bevy <path-to-disc.cue> [--level arena|warehouse|freeway|city-park|cyburbia|rooftops|arena-5] [--difficulty easy|medium|hard] [--car <vehicle>] [--duel <second-vehicle>] [--screenshot <path.png>]",
-    )?;
+    let mut args = std::env::args_os().skip(1).peekable();
+    let cue = args
+        .next_if(|arg| !arg.as_encoded_bytes().starts_with(b"--"))
+        .map(PathBuf::from);
     let mut flag = args.next();
     let mut menu = flag.is_none();
     let mut garage = false;
@@ -180,7 +223,11 @@ fn main() -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("expected a positive demo frame number"))?;
     }
     ensure!(args.next().is_none(), "unexpected extra argument");
-    let disc = Disc::open(cue)?;
+    let cue = match cue {
+        Some(path) => path,
+        None => discover_cue()?,
+    };
+    let disc = Context::with_context(Disc::open(&cue), || format!("open disc {}", cue.display()))?;
     if duel_car.is_some() {
         eprintln!(
             "P1: WASD, Space guns, F weapon, E/Q next/previous. P2: arrows, Comma guns, Period weapon, L/K next/previous. P or keypad Enter pauses. Enter skips the score, Esc returns to title."
