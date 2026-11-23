@@ -57,11 +57,11 @@ pub struct AnimationFrame {
     timer: u16,
 }
 impl AnimationFrame {
-    pub fn selected(self, visits: u32) -> u8 {
+    pub fn selected(self, visits: u64) -> u8 {
         if self.rate == u16::MAX {
             return self.initial;
         }
-        let changes = (u64::from(visits) + u64::from(self.timer)) / (u64::from(self.rate) + 1);
+        let changes = (visits + u64::from(self.timer)) / (u64::from(self.rate) + 1);
         if let Some(direction) = self.direction {
             let span = u64::from(self.hi - self.lo);
             if changes == 0 || (direction == 0 && self.initial > self.lo && self.initial < self.hi)

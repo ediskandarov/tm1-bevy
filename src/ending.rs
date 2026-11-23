@@ -218,7 +218,12 @@ pub(crate) fn draw_model(
         lod.hide_other_branches(local_eye.map(|n| n as f32), lod_scale, &mut hidden);
     }
     for (poly, hidden) in scene.polygons.iter().zip(hidden) {
-        if hidden || poly.animation.iter().any(|a| a.selected(frame) != a.child) {
+        if hidden
+            || poly
+                .animation
+                .iter()
+                .any(|a| a.selected(u64::from(frame)) != a.child)
+        {
             continue;
         }
         let mut screen = [Vec2::ZERO; 4];

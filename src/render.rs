@@ -141,6 +141,9 @@ pub struct Arena {
     smoke_frames: [[SpriteFrame; 16]; 2],
     registered_models: Vec<RegisteredModel>,
     body_ranges: Vec<[BodyGeometry; 3]>,
+    pub(crate) has_animations: bool,
+    animation_visits: hierarchy::Visits,
+    view_start_visits: [hierarchy::Visits; 2],
     overview: bool,
     icons: tm1_assets::scene::DashboardIcons,
     arrows: [SpriteFrame; 4],
@@ -215,6 +218,17 @@ impl Arena {
             registered_models.len() == registered.len(),
             "incomplete battle CS registration"
         );
+        let has_animations = std::iter::once(&scene)
+            .chain(&sky)
+            .chain(&vehicle)
+            .chain(opponents.iter().flatten())
+            .chain(missile_models.iter().flatten())
+            .chain(merc_models.iter().chain(&pedestrians).flatten())
+            .any(|s| {
+                s.hierarchy
+                    .iter()
+                    .any(|node| matches!(node.kind, tm1_assets::scene::HierarchyKind::Animation(_)))
+            });
         let world_end = scene.polygons.len();
         let append = |scene: &mut Scene, mut model: Scene| {
             let start = scene.polygons.len();
@@ -325,6 +339,9 @@ impl Arena {
             fragment_frames,
             drop_sprites,
             contrail_frames,
+            has_animations,
+            animation_visits: Default::default(),
+            view_start_visits: Default::default(),
             overview: false,
             icons,
             arrows,
@@ -934,6 +951,245 @@ fn packet_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
     ]
 }
 
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    Scene { car: Option<usize>, sky: bool },
+    Trail(&'a tm1_core::drive::ContrailModel),
+    Actor(&'a Scene, [i32; 13]),
+}
+
+fn battle_hierarchy<'a>(
+    arena: &'a Arena,
+    player: &tm1_core::drive::PlayerVehicle,
+    contacts: &tm1_core::drive::CollisionScene,
+    secondary: bool,
+    poses: &[CarPose],
+    hidden_car: Option<usize>,
+    split_screen: bool,
+    root: Option<tm1_core::drive::HierarchyTransform>,
+    eye: Vec3,
+    trails: &'a [tm1_core::drive::ContrailModel],
+    visits: hierarchy::Visits,
+) -> hierarchy::Pass<Source<'a>> {
+    let mirror = secondary && !split_screen;
+    let actor_depth = if mirror { 1000 } else { 1200 };
+    let sky_origin = poses[usize::from(split_screen && secondary)].origin;
+    let wheel_steps = contacts.wheel_steps(secondary);
+    let wheel_rotation = player.wheel_sin_cos(wheel_steps[4]);
+    let hidden = contacts.hidden_pickups(secondary);
+    let switches = contacts.arena_switch_branches(secondary);
+    let (_, stand_branches) = contacts.health_stands(secondary);
+    enum HierarchyItem<'a> {
+        World,
+        Backdrop,
+        Car(usize),
+        Trail(&'a tm1_core::drive::ContrailModel),
+        Actor((&'a Scene, [i32; 13])),
+    }
+    let mut missiles_buf = [[0; 13]; 10];
+    let count = contacts.missile_poses(secondary, &mut missiles_buf);
+    let missiles = missiles_buf[..count].iter().rev().filter_map(|pose| {
+        Some((
+            arena.missile_models[usize::from(pose[0] == 312)].as_ref()?,
+            *pose,
+        ))
+    });
+    let registered = arena
+        .registered_models
+        .iter()
+        .filter_map(|model| match *model {
+            RegisteredModel::Backdrop => Some(HierarchyItem::Backdrop),
+            RegisteredModel::Car(slot) => {
+                (Some(slot) != hidden_car && slot < poses.len()).then_some(HierarchyItem::Car(slot))
+            }
+            RegisteredModel::Merc(slot) => {
+                let [branch, x, y, z, _] = contacts.merc_pose(slot, secondary)?;
+                Some(HierarchyItem::Actor((
+                    arena.merc_models[slot].get(branch as usize)?,
+                    [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
+                )))
+            }
+            RegisteredModel::Pedestrian(slot) => {
+                let pose = contacts.pedestrian_pose(slot, secondary)?;
+                if pose[13] == 0 {
+                    return None;
+                }
+                Some(HierarchyItem::Actor((
+                    arena.pedestrians[slot].get(pose[0] as usize)?,
+                    pose[..13].try_into().unwrap(),
+                )))
+            }
+        });
+    // shellInitNewDatabase creates missile CSs, then contrail CSs after dbInit.
+    // Each is prepended, so both pools run in descending slot order.
+    let items = std::iter::once(HierarchyItem::World)
+        .chain(
+            trails
+                .iter()
+                .rev()
+                .filter(|m| m.active())
+                .map(HierarchyItem::Trail),
+        )
+        .chain(missiles.map(HierarchyItem::Actor))
+        .chain(registered);
+    let world_frame = root.unwrap_or(tm1_core::drive::HierarchyTransform {
+        rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+        normals: [[0; 3]; 6],
+        position: [-eye.x as i32, eye.z as i32, -eye.y as i32],
+    });
+    let state = hierarchy::BranchState {
+        wheels: wheel_steps,
+        rotation: wheel_rotation,
+        switches,
+        stands: stand_branches,
+        pickups: hidden,
+        damage: &|address| contacts.damage_branch(address, secondary),
+    };
+    let mut pass = hierarchy::Pass::new(world_frame, root.is_some());
+    pass.visits = visits;
+    for item in items {
+        match item {
+            HierarchyItem::Car(car) => {
+                let pose = &poses[car];
+                let body = &arena.body_ranges[car][pose.body_stage];
+                let position = [
+                    pose.origin.x as i32,
+                    -pose.origin.z as i32,
+                    pose.origin.y as i32,
+                ];
+                let slot = pass.coordinate_system(world_frame.child(position, Some(pose.matrix)));
+                pass.traverse(
+                    Source::Scene {
+                        car: Some(car),
+                        sky: false,
+                    },
+                    &body.model,
+                    0,
+                    body.polygons.start,
+                    slot,
+                    actor_depth,
+                    pose.shadow_visible,
+                    &state,
+                );
+            }
+            HierarchyItem::World => {
+                let depth = if mirror { 100 } else { 1200 };
+                pass.traverse(
+                    Source::Scene {
+                        car: None,
+                        sky: false,
+                    },
+                    &arena.scene,
+                    0,
+                    0,
+                    0,
+                    depth,
+                    true,
+                    &state,
+                );
+                if !mirror && let Some(sky) = &arena.sky {
+                    let slot = pass.coordinate_system(
+                        world_frame.child([sky_origin.x as i32, -sky_origin.z as i32, 0], None),
+                    );
+                    pass.traverse(
+                        Source::Scene {
+                            car: None,
+                            sky: true,
+                        },
+                        &sky.model,
+                        0,
+                        sky.polygons.start,
+                        slot,
+                        depth,
+                        true,
+                        &state,
+                    );
+                }
+            }
+            HierarchyItem::Backdrop => {
+                let slot = pass.coordinate_system(world_frame);
+                pass.traverse(
+                    Source::Scene {
+                        car: None,
+                        sky: false,
+                    },
+                    &arena.scene,
+                    arena.scene.hierarchy[0].end,
+                    0,
+                    slot,
+                    actor_depth,
+                    true,
+                    &state,
+                );
+            }
+            HierarchyItem::Trail(trail) => {
+                let frame = world_frame.child(trail.origin, None);
+                let slot = pass.coordinate_system(frame);
+                pass.object(
+                    Source::Trail(trail),
+                    0..trail.faces().len(),
+                    slot,
+                    frame.position,
+                );
+            }
+            HierarchyItem::Actor((model, pose)) => {
+                let rotation =
+                    std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
+                let slot = pass.coordinate_system(
+                    world_frame.child([pose[1], pose[2], pose[3]], Some(rotation)),
+                );
+                pass.traverse(
+                    Source::Actor(model, pose),
+                    model,
+                    0,
+                    0,
+                    slot,
+                    actor_depth,
+                    true,
+                    &state,
+                );
+            }
+        }
+    }
+    pass
+}
+
+impl Arena {
+    pub(crate) fn reset_animation(&mut self) {
+        self.animation_visits.clear();
+        self.view_start_visits = Default::default();
+    }
+
+    pub(crate) fn advance_view_animation(
+        &mut self,
+        player: &tm1_core::drive::PlayerVehicle,
+        contacts: &tm1_core::drive::CollisionScene,
+        secondary: bool,
+        poses: &[CarPose],
+        hidden_car: Option<usize>,
+        split_screen: bool,
+        view: tm1_core::drive::SoundListener,
+    ) {
+        self.view_start_visits[usize::from(secondary)].clone_from(&self.animation_visits);
+        let visits = std::mem::take(&mut self.animation_visits);
+        let trails = contacts.contrails(secondary);
+        let mut pass = battle_hierarchy(
+            self,
+            player,
+            contacts,
+            secondary,
+            poses,
+            hidden_car,
+            split_screen,
+            Some(view.hierarchy_transform(split_screen || secondary)),
+            Vec3::ZERO,
+            &trails,
+            visits,
+        );
+        self.animation_visits = std::mem::take(&mut pass.visits);
+    }
+}
+
 fn draw_view(
     arena: &Arena,
     player: &tm1_core::drive::PlayerVehicle,
@@ -950,7 +1206,6 @@ fn draw_view(
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let root = view.map(|v| v.hierarchy_transform(split_screen || secondary));
     let mirror = secondary && !split_screen;
-    let actor_depth = if mirror { 1000 } else { 1200 };
     let depth = if let Some(root) = root {
         GeometryDepth::from_world_matrix(root.rows[2], root.translation()[2])
     } else {
@@ -978,9 +1233,6 @@ fn draw_view(
     let right = forward.cross(camera_up).normalize();
     let up = right.cross(forward);
     let near = arena.radius * 0.005;
-    let hidden = contacts.hidden_pickups(secondary);
-    let switches = contacts.arena_switch_branches(secondary);
-    let (_, stand_branches) = contacts.health_stands(secondary);
     let mut batch = Batch::default();
     if !secondary {
         let [r, g, b, a] = contacts.hit_sheet();
@@ -1132,185 +1384,20 @@ fn draw_view(
             emit(corners, DrawPass::Hierarchy, false);
         }
     };
-    enum HierarchyItem<'a> {
-        World,
-        Backdrop,
-        Car(usize),
-        Trail(&'a tm1_core::drive::ContrailModel),
-        Actor((&'a Scene, [i32; 13])),
-    }
-    let mut missiles_buf = [[0; 13]; 10];
-    let count = contacts.missile_poses(secondary, &mut missiles_buf);
-    let missiles = missiles_buf[..count].iter().rev().filter_map(|pose| {
-        Some((
-            arena.missile_models[usize::from(pose[0] == 312)].as_ref()?,
-            *pose,
-        ))
-    });
-    let registered = arena
-        .registered_models
-        .iter()
-        .filter_map(|model| match *model {
-            RegisteredModel::Backdrop => Some(HierarchyItem::Backdrop),
-            RegisteredModel::Car(slot) => {
-                (Some(slot) != hidden_car && slot < poses.len()).then_some(HierarchyItem::Car(slot))
-            }
-            RegisteredModel::Merc(slot) => {
-                let [branch, x, y, z, _] = contacts.merc_pose(slot, secondary)?;
-                Some(HierarchyItem::Actor((
-                    arena.merc_models[slot].get(branch as usize)?,
-                    [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
-                )))
-            }
-            RegisteredModel::Pedestrian(slot) => {
-                let pose = contacts.pedestrian_pose(slot, secondary)?;
-                if pose[13] == 0 {
-                    return None;
-                }
-                Some(HierarchyItem::Actor((
-                    arena.pedestrians[slot].get(pose[0] as usize)?,
-                    pose[..13].try_into().unwrap(),
-                )))
-            }
-        });
-    // shellInitNewDatabase creates missile CSs, then contrail CSs after dbInit.
-    // Each is prepended, so both pools run in descending slot order.
     let trails = contacts.contrails(secondary);
-    let items = std::iter::once(HierarchyItem::World)
-        .chain(
-            trails
-                .iter()
-                .rev()
-                .filter(|m| m.active())
-                .map(HierarchyItem::Trail),
-        )
-        .chain(missiles.map(HierarchyItem::Actor))
-        .chain(registered);
-    let world_frame = root.unwrap_or(tm1_core::drive::HierarchyTransform {
-        rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
-        normals: [[0; 3]; 6],
-        position: [-eye.x as i32, eye.z as i32, -eye.y as i32],
-    });
-    #[derive(Clone, Copy)]
-    enum Source<'a> {
-        Scene { car: Option<usize>, sky: bool },
-        Trail(&'a tm1_core::drive::ContrailModel),
-        Actor(&'a Scene, [i32; 13]),
-    }
-    let state = hierarchy::BranchState {
-        wheels: wheel_steps,
-        rotation: wheel_rotation,
-        switches,
-        stands: stand_branches,
-        pickups: hidden,
-        visits: player.frame(),
-        damage: &|address| contacts.damage_branch(address, secondary),
-    };
-    let mut pass = hierarchy::Pass::new(world_frame, view.is_some());
-    for item in items {
-        match item {
-            HierarchyItem::Car(car) => {
-                let pose = &poses[car];
-                let body = &arena.body_ranges[car][pose.body_stage];
-                let position = [
-                    pose.origin.x as i32,
-                    -pose.origin.z as i32,
-                    pose.origin.y as i32,
-                ];
-                let slot = pass.coordinate_system(world_frame.child(position, Some(pose.matrix)));
-                pass.traverse(
-                    Source::Scene {
-                        car: Some(car),
-                        sky: false,
-                    },
-                    &body.model,
-                    0,
-                    body.polygons.start,
-                    slot,
-                    actor_depth,
-                    pose.shadow_visible,
-                    &state,
-                );
-            }
-            HierarchyItem::World => {
-                let depth = if mirror { 100 } else { 1200 };
-                pass.traverse(
-                    Source::Scene {
-                        car: None,
-                        sky: false,
-                    },
-                    &arena.scene,
-                    0,
-                    0,
-                    0,
-                    depth,
-                    true,
-                    &state,
-                );
-                if !mirror && let Some(sky) = &arena.sky {
-                    let slot = pass.coordinate_system(
-                        world_frame.child([sky_origin.x as i32, -sky_origin.z as i32, 0], None),
-                    );
-                    pass.traverse(
-                        Source::Scene {
-                            car: None,
-                            sky: true,
-                        },
-                        &sky.model,
-                        0,
-                        sky.polygons.start,
-                        slot,
-                        depth,
-                        true,
-                        &state,
-                    );
-                }
-            }
-            HierarchyItem::Backdrop => {
-                let slot = pass.coordinate_system(world_frame);
-                pass.traverse(
-                    Source::Scene {
-                        car: None,
-                        sky: false,
-                    },
-                    &arena.scene,
-                    arena.scene.hierarchy[0].end,
-                    0,
-                    slot,
-                    actor_depth,
-                    true,
-                    &state,
-                );
-            }
-            HierarchyItem::Trail(trail) => {
-                let frame = world_frame.child(trail.origin, None);
-                let slot = pass.coordinate_system(frame);
-                pass.object(
-                    Source::Trail(trail),
-                    0..trail.faces().len(),
-                    slot,
-                    frame.position,
-                );
-            }
-            HierarchyItem::Actor((model, pose)) => {
-                let rotation =
-                    std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
-                let slot = pass.coordinate_system(
-                    world_frame.child([pose[1], pose[2], pose[3]], Some(rotation)),
-                );
-                pass.traverse(
-                    Source::Actor(model, pose),
-                    model,
-                    0,
-                    0,
-                    slot,
-                    actor_depth,
-                    true,
-                    &state,
-                );
-            }
-        }
-    }
+    let pass = battle_hierarchy(
+        arena,
+        player,
+        contacts,
+        secondary,
+        poses,
+        hidden_car,
+        split_screen,
+        root,
+        eye,
+        &trails,
+        arena.view_start_visits[usize::from(secondary)].clone(),
+    );
     for object in &pass.objects {
         let node_depth = root.map(|_| pass.frame(object.slot, object.position));
         match object.source {
@@ -2511,6 +2598,75 @@ pub fn duel_view(
 mod tests {
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn campaign_animation_clocks_follow_simulation_steps_and_restart() {
+        use crate::campaign::{Entry, Stage};
+        use std::time::Duration;
+        use tm1_core::drive::{Level, Vehicle};
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut app = App::new();
+        app.init_resource::<Time<Real>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .insert_resource(crate::smoke::Capture::new(None, false, false))
+            .add_systems(Update, crate::driving::advance);
+        app.world_mut().spawn(Window {
+            focused: true,
+            ..default()
+        });
+        Stage::load(
+            &disc,
+            Level::Arena,
+            Vehicle::Outlaw,
+            Entry::New(Default::default()),
+        )
+        .unwrap()
+        .install(app.world_mut());
+        let tick = |app: &mut App, ms| {
+            app.world_mut()
+                .resource_mut::<Time<Real>>()
+                .advance_by(Duration::from_millis(ms));
+            app.update();
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .clear();
+        };
+        tick(&mut app, 1);
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyB);
+        tick(&mut app, 200);
+        assert!(app.world().resource::<crate::driving::Drive>().mirror);
+        let snapshot = |app: &App| {
+            let arena = app.world().resource::<Arena>();
+            (
+                arena.animation_visits.clone(),
+                arena.view_start_visits.clone(),
+            )
+        };
+        let after_four = snapshot(&app);
+        assert!(!after_four.0.is_empty());
+        tick(&mut app, 0);
+        assert_eq!(after_four, snapshot(&app));
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .press(KeyCode::KeyR);
+        tick(&mut app, 50);
+        assert!(snapshot(&app).0.is_empty());
+        app.world_mut()
+            .resource_mut::<ButtonInput<KeyCode>>()
+            .reset_all();
+        if !app.world().resource::<crate::driving::Drive>().mirror {
+            app.world_mut()
+                .resource_mut::<ButtonInput<KeyCode>>()
+                .press(KeyCode::KeyB);
+        }
+        for _ in 0..4 {
+            tick(&mut app, 50);
+        }
+        assert_eq!(after_four, snapshot(&app));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn battle_projection_matches_jp_view_table() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
@@ -3445,7 +3601,6 @@ mod tests {
             switches: [0; 8],
             stands: 0,
             pickups: 0,
-            visits: 0,
             damage: &|_| 0,
         }
     }

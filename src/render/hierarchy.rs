@@ -9,7 +9,6 @@ pub(super) struct BranchState<'a> {
     pub switches: [u8; 8],
     pub stands: u16,
     pub pickups: u64,
-    pub visits: u32,
     pub damage: &'a dyn Fn(u32) -> u8,
 }
 
@@ -20,7 +19,10 @@ pub(super) struct Object<S> {
     pub position: [i32; 3],
 }
 
+pub(super) type Visits = std::collections::BTreeMap<u32, u64>;
+
 pub(super) struct Pass<S> {
+    pub visits: Visits,
     matrices: Vec<HierarchyTransform>,
     pub objects: Vec<Object<S>>,
     battle: bool,
@@ -30,6 +32,7 @@ pub(super) struct Pass<S> {
 impl<S: Copy> Pass<S> {
     pub fn new(world: HierarchyTransform, battle: bool) -> Self {
         Self {
+            visits: Visits::new(),
             matrices: vec![world],
             objects: Vec::with_capacity(220),
             battle,
@@ -137,7 +140,11 @@ impl<S: Copy> Pass<S> {
                         scene.visibility[*id].inside_at_position(position),
                     ))
                 }
-                HierarchyKind::Animation(f) => branch = Some(usize::from(f.selected(state.visits))),
+                HierarchyKind::Animation(f) => {
+                    let visits = self.visits.entry(f.node).or_default();
+                    *visits += 1;
+                    branch = Some(usize::from(f.selected(*visits)));
+                }
                 HierarchyKind::Tire {
                     slot,
                     initial,
@@ -178,6 +185,80 @@ mod tests {
     use super::*;
     use crate::reference_cpu::Cpu;
     use tm1_assets::{disc::Disc, scene::Dmd};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn shared_animation_advances_only_on_visible_hierarchy_visits() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut data = disc.read("UADMD/XARENA1.DMD").unwrap();
+        let db = Dmd::parse(&data).unwrap();
+        let scene = db.battle_world().unwrap();
+        let frame = scene
+            .hierarchy
+            .iter()
+            .find_map(|n| match n.kind {
+                HierarchyKind::Animation(f) => Some(f),
+                _ => None,
+            })
+            .unwrap();
+        // A bounded group references the real crowd animation twice.
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        let root = base + data.len() as u32;
+        let mut group = [0; 32];
+        group[0] = 1;
+        group[20] = 2;
+        group[24..28].copy_from_slice(&frame.node.to_le_bytes());
+        group[28..32].copy_from_slice(&frame.node.to_le_bytes());
+        data.extend(group);
+        let mut db = Dmd::parse(&data).unwrap();
+        db.roots = vec![(root, 1)];
+        let scene = db.battle_world().unwrap();
+        let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(base, &data);
+        const CS: u32 = 0x80008000;
+        let mut visits = Visits::new();
+        let mut expected = 0;
+        for i in 0..64 {
+            let visible = i % 5 < 3;
+            let position = [if visible { 10i32 } else { -10 }, 0, 0];
+            let mut normals = [[0; 3]; 6];
+            normals[0][0] = 4096;
+            let mut pass = Pass::new(
+                HierarchyTransform {
+                    position,
+                    normals,
+                    rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+                },
+                true,
+            );
+            pass.visits = visits;
+            pass.traverse(
+                (),
+                &scene,
+                0,
+                0,
+                0,
+                1200,
+                true,
+                &super::super::tests::test_branches(),
+            );
+            visits = pass.visits;
+            expected += if visible { 2 } else { 0 };
+            assert_eq!(visits.get(&frame.node).copied().unwrap_or(0), expected);
+            cpu.put(CS + 0x68, &position.map(i32::to_le_bytes).concat());
+            cpu.put(CS + 0xc4, &4096i16.to_le_bytes());
+            cpu.put(0x8018c484, &0u32.to_le_bytes());
+            cpu.call(0x800fd914, &[CS, root]);
+            assert_eq!(cpu.word(frame.node + 12) as u8, frame.selected(expected));
+            assert_eq!(cpu.word(0x8018c484) as usize, pass.objects.len());
+            for (j, object) in pass.objects.iter().enumerate() {
+                assert_eq!(
+                    scene.polygons[object.polygons.start].object_id,
+                    cpu.word(0x801acfe8 + 32 * j as u32)
+                );
+            }
+        }
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]

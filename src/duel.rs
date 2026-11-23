@@ -485,7 +485,7 @@ pub fn advance(
     time: Res<Time<Real>>,
     capture: Res<Capture>,
     window: Single<&Window>,
-    arena: Res<render::Arena>,
+    mut arena: ResMut<render::Arena>,
     mut images: ResMut<Assets<Image>>,
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
 ) {
@@ -571,6 +571,28 @@ pub fn advance(
             .zip(duel.scene.duel_updated_players())
         {
             camera.after_step(car, updated);
+        }
+        if arena.has_animations {
+            arena.advance_view_animation(
+                &duel.cars[0],
+                &duel.scene,
+                false,
+                &duel.primary_cars,
+                duel.primary_hidden.then_some(0),
+                true,
+                duel.primary_view,
+            );
+            let poses = duel.cars.each_ref().map(render::CarPose::player);
+            let view = tm1_core::drive::SoundListener::new(&duel.cars[1], &duel.cameras[1], None);
+            arena.advance_view_animation(
+                &duel.cars[1],
+                &duel.scene,
+                true,
+                &poses,
+                (!duel.cameras[1].show_body).then_some(1),
+                true,
+                view,
+            );
         }
         if let Some(slot) = duel.winner {
             duel.score[slot] = duel.score[slot].wrapping_add(1);

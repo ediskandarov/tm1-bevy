@@ -1,3 +1,4 @@
+use crate::render::CarPose;
 use bevy::prelude::*;
 use std::time::Duration;
 use tm1_core::drive::{
@@ -618,7 +619,6 @@ impl Drive {
         }
     }
     fn capture_primary_view(&mut self) {
-        use crate::render::CarPose;
         self.primary_cars.clear();
         self.primary_cars.push(CarPose::player(&self.player));
         self.primary_cars
@@ -709,6 +709,7 @@ pub(crate) fn notice_selected(keys: &ButtonInput<KeyCode>, pad: Option<&Gamepad>
 }
 
 pub fn advance(
+    mut arena: Option<ResMut<crate::render::Arena>>,
     mut drive: ResMut<Drive>,
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time<Real>>,
@@ -774,6 +775,9 @@ pub fn advance(
         state.camera.update(&state.player, true);
         let seed = drive.battle_seed;
         drive.begin_battle(seed);
+        if let Some(arena) = arena.as_deref_mut() {
+            arena.reset_animation();
+        }
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
         drive.remainder = Duration::ZERO;
         return;
@@ -1050,6 +1054,31 @@ pub fn advance(
         } else {
             state.listener
         });
+        if let Some(arena) = arena.as_deref_mut().filter(|arena| arena.has_animations) {
+            arena.advance_view_animation(
+                &state.player,
+                &state.contacts,
+                false,
+                &state.primary_cars,
+                state.primary_hidden.then_some(0),
+                false,
+                state.listener,
+            );
+            if state.mirror {
+                let poses: Vec<_> = std::iter::once(CarPose::player(&state.player))
+                    .chain(state.opponents.iter().map(CarPose::rival))
+                    .collect();
+                arena.advance_view_animation(
+                    &state.player,
+                    &state.contacts,
+                    true,
+                    &poses,
+                    (!state.camera.show_body).then_some(0),
+                    false,
+                    state.last_listener.unwrap(),
+                );
+            }
+        }
         if let Some(start) = started {
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
