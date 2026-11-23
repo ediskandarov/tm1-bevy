@@ -902,6 +902,7 @@ pub fn advance(
     }
     let input = Input {
         cycle_weapon: keys.pressed(KeyCode::KeyE),
+        previous_weapon: keys.pressed(KeyCode::KeyQ),
         missile: keys.pressed(KeyCode::KeyF),
         fire_guns: keys.pressed(KeyCode::Space),
         accelerate: keys.pressed(KeyCode::KeyW),

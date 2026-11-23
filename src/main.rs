@@ -182,11 +182,11 @@ fn main() -> Result<()> {
     let disc = Disc::open(cue)?;
     if duel_car.is_some() {
         eprintln!(
-            "P1: WASD, Space guns, F weapon, E cycle. P2: arrows, Comma guns, Period weapon, L cycle. P or keypad Enter pauses. Enter skips the score, Esc returns to title."
+            "P1: WASD, Space guns, F weapon, E/Q next/previous. P2: arrows, Comma guns, Period weapon, L/K next/previous. P or keypad Enter pauses. Enter skips the score, Esc returns to title."
         );
     } else {
         eprintln!(
-            "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E cycle, F selected weapon, P pause, R restart, C camera, B mirror, Tab overview, V radar, L rivals."
+            "W/S drive/reverse, A/D steer, Shift hard turn, T turbo, Space machine gun, E/Q next/previous weapon, F selected weapon, P pause, R restart, C camera, B mirror, Tab overview, V radar, L rivals."
         );
     }
     let mut app = App::new();

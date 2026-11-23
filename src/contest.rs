@@ -1614,7 +1614,7 @@ mod tests {
                 .eq(voices.iter().copied())
         );
         let mut keys = ButtonInput::default();
-        keys.press(KeyQ);
+        keys.press(KeyU);
         world.insert_resource(keys);
         update(&mut world);
         assert!(
@@ -1639,7 +1639,7 @@ mod tests {
         let mut world = menu_world();
         press(&mut world, ArrowDown);
         press(&mut world, Enter);
-        world.resource_mut::<ButtonInput<KeyCode>>().press(KeyQ);
+        world.resource_mut::<ButtonInput<KeyCode>>().press(KeyU);
         world
             .resource_mut::<Time<Real>>()
             .advance_by(Duration::from_millis(19999));

@@ -227,7 +227,7 @@ pub fn duel_pad_held(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
     use KeyCode::*;
     if slot == 0 {
         keys.any_pressed([
-            KeyA, KeyD, KeyW, KeyS, Space, KeyE, KeyF, KeyT, ShiftLeft, KeyC, KeyP,
+            KeyA, KeyD, KeyW, KeyS, Space, KeyE, KeyQ, KeyF, KeyT, ShiftLeft, KeyC, KeyP,
         ])
     } else {
         keys.any_pressed([
@@ -240,6 +240,7 @@ pub fn duel_pad_held(keys: &ButtonInput<KeyCode>, slot: usize) -> bool {
             Slash,
             ShiftRight,
             KeyL,
+            KeyK,
             KeyO,
             NumpadEnter,
         ])

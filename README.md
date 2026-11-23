@@ -32,7 +32,7 @@ After both picks, choose **START** to play or **OPTIONS** to change the battlegr
 | Steer | A / D | Left / Right |
 | Hard turn / turbo | Left Shift / T | Right Shift / Slash |
 | Machine guns / selected weapon | Space / F | Comma / Period |
-| Cycle weapon | E | L |
+| Next / previous weapon | E / Q | L / K |
 
 Each split-screen view follows its car using that vehicle’s two-player chase camera.
 
@@ -75,7 +75,7 @@ The pause HUD shows the keyboard digits for the current stage. Explicit car and 
 Available choices are `sweet-tooth`, `yellow-jacket`, `darkside`, `hammerhead`,
 `outlaw`, `crimson-fury`, `warthog`, `mr-grimm`, `pit-viper`, `thumper`,
 `spectre` and `road-kill`. Yellow Jacket is the default.
-Press F to fire the selected weapon and E to cycle through the inventory. Hammerhead uses its special automatically when driving into an opponent with at least six special charges.
+Press F to fire the selected weapon and E or Q to cycle forward or backward through the inventory. Hammerhead uses its special automatically when driving into an opponent with at least six special charges.
 
 To capture the selected vehicle firing its initial special, append
 `--demo-special-screenshot local/special.png 19` after the car choice.
@@ -147,7 +147,7 @@ cargo run -- /absolute/path/to/disc.cue
 
 Drive with W/S, steer with A/D, hold Shift for a hard turn and press T for turbo.
 C cycles forward through chase, far chase and cockpit views. Z cycles backward. Press 8 during a single-player fight to enter the original helicopter unlock chord. On Arena, Rooftops and Arena 5 the helicopter view then appears between far chase and cockpit. Once the cockpit transition settles, the view shows the selected vehicle’s disc artwork, steering wheel or handlebars, and digital speedometer. B toggles the live 101 by 30 pixel rear-view mirror. Entering helicopter view switches the mirror off. The combat HUD reads its weapon icons, digits and life markers from the level database. Windshield damage appears below 50%, 30% and 10% health. P opens the pause menu over the frozen battle. Use the arrow keys and Enter to resume, quit to the title, balance music and effects, or select one of the four original controller layouts. Keyboard driving keeps the same bindings in every layout. P also resumes directly. R restarts the encounter, V toggles the opponent radar, L lists surviving opponents, Tab toggles the overview, and Escape exits.
-Space fires the machine gun, E cycles inventory and F fires the selected weapon.
+Space fires the machine gun, E and Q cycle inventory in either direction and F fires the selected weapon.
 Each camera draws arena geometry, cars and effects in a shared PlayStation ordering-table sequence.
 On a gamepad the face buttons west/east control acceleration/reverse, north
 activates turbo and south modifies the D-pad turns. During battle, Start pauses and Select restarts. In the single-player pause menu, Start, Select and the south button confirm the highlighted choice. On the keyboard, Enter or Space confirms. Release the controls between choices and before returning to battle.

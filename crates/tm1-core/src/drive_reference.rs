@@ -1995,6 +1995,15 @@ fn control_options_match_original() {
         );
         for input in [
             Input {
+                previous_weapon: true,
+                ..Default::default()
+            },
+            Input {
+                previous_weapon: true,
+                cycle_weapon: true,
+                ..Default::default()
+            },
+            Input {
                 accelerate: true,
                 ..Default::default()
             },
@@ -2022,6 +2031,8 @@ fn control_options_match_original() {
             for (binding, active) in [
                 (29, input.accelerate),
                 (34, input.fire_guns),
+                (36, input.cycle_weapon),
+                (37, input.previous_weapon),
                 (35, input.missile),
                 (25, input.reverse),
                 (27, input.left),

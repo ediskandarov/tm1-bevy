@@ -429,6 +429,7 @@ pub struct Input {
     pub fire_guns: bool,
     pub missile: bool,
     pub cycle_weapon: bool,
+    pub previous_weapon: bool,
 }
 impl Input {
     pub fn ps1_buttons(self) -> u16 {
@@ -441,6 +442,7 @@ impl Input {
             | ((self.fire_guns as u16) << 1)
             | self.missile as u16
             | ((self.cycle_weapon as u16) << 2)
+            | ((self.previous_weapon as u16) << 3)
     }
 }
 impl PlayerVehicle {
@@ -663,6 +665,7 @@ impl PlayerVehicle {
             (input.fire_guns, 34),
             (input.missile, 35),
             (input.cycle_weapon, 36),
+            (input.previous_weapon, 37),
         ]
         .into_iter()
         .filter(|(pressed, _)| *pressed)
@@ -848,7 +851,10 @@ impl PlayerVehicle {
     }
     pub fn step(&mut self, input: Input, fields: u8) {
         let slot = u16::from_le_bytes(self.state[2..4].try_into().unwrap());
-        self.step_with_pads(u32::from(input.ps1_buttons()) << (16 * slot), fields)
+        self.step_with_pads(
+            u32::from(self.keyboard_buttons(input)) << (16 * slot),
+            fields,
+        )
     }
     /// Advance driving dynamics with the original packed two-controller input.
     pub fn step_with_pads(&mut self, buttons: u32, fields: u8) {
@@ -1955,7 +1961,12 @@ impl CollisionScene {
         input: Input,
         fields: u8,
     ) {
-        self.step_bout_with_pads(player, opponents, u32::from(input.ps1_buttons()), fields)
+        self.step_bout_with_pads(
+            player,
+            opponents,
+            u32::from(player.keyboard_buttons(input)),
+            fields,
+        )
     }
 
     pub fn turbo_sound_requests(&self) -> [Option<bool>; 2] {

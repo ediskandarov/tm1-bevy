@@ -70,6 +70,7 @@ fn drive_trace() {
                 right,
                 hard_turn,
                 cycle_weapon: false,
+                previous_weapon: false,
                 missile: step % 41 == 3,
                 fire_guns: step % 13 < 6,
                 turbo: (180..199).contains(&step),

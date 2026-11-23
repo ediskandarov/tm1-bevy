@@ -501,9 +501,11 @@ pub fn advance(
     }
     let duel = &mut *duel;
     let input = [
-        [KeyW, KeyS, KeyA, KeyD, ShiftLeft, KeyT, Space, KeyF, KeyE],
         [
-            ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ShiftRight, Slash, Comma, Period, KeyL,
+            KeyW, KeyS, KeyA, KeyD, ShiftLeft, KeyT, Space, KeyF, KeyE, KeyQ,
+        ],
+        [
+            ArrowUp, ArrowDown, ArrowLeft, ArrowRight, ShiftRight, Slash, Comma, Period, KeyL, KeyK,
         ],
     ]
     .map(|bindings| {
@@ -517,6 +519,7 @@ pub fn advance(
             fire_guns,
             missile,
             cycle_weapon,
+            previous_weapon,
         ] = bindings.map(|k| keys.pressed(k));
         Input {
             accelerate,
@@ -528,6 +531,7 @@ pub fn advance(
             fire_guns,
             missile,
             cycle_weapon,
+            previous_weapon,
         }
     });
     duel.remainder += time.delta().min(Duration::from_millis(250));
@@ -650,6 +654,75 @@ pub fn round_menu(world: &mut World) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn keyboard_weapon_selection_matches_both_retail_directions() {
+        use super::*;
+        use KeyCode::*;
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = crate::contest::menu_world();
+        let exe = world
+            .resource::<crate::campaign::Campaign>()
+            .0
+            .read("SIPS_600.07")
+            .unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        start(
+            &mut world,
+            Level::Arena,
+            [Vehicle::Outlaw, Vehicle::Darkside],
+            Difficulty::Medium,
+            [0; 2],
+        )
+        .unwrap();
+        world.insert_resource(crate::smoke::Capture::new(None, false, false));
+        world
+            .resource_mut::<Time<Real>>()
+            .advance_by(Duration::from_millis(50));
+        for layout in 0..4 {
+            for (slot, car) in world.resource_mut::<Duel>().cars.iter_mut().enumerate() {
+                car.set_pad_layout((layout + slot as u8) % 4);
+            }
+            let mut changed = [false; 2];
+            for mask in [0, 1, 1, 0, 1, 0, 3, 2, 0, 2, 0, 2, 0, 2, 0, 1] {
+                let mut keys = ButtonInput::default();
+                let mut expected = [0; 2];
+                for (slot, car) in world.resource::<Duel>().cars.iter().enumerate() {
+                    let bits = if slot == 0 {
+                        mask
+                    } else {
+                        (mask & 1) << 1 | (mask & 2) >> 1
+                    };
+                    let [forward, backward] = [bits & 1 != 0, bits & 2 != 0];
+                    let bindings = [[KeyE, KeyQ], [KeyL, KeyK]][slot];
+                    if forward {
+                        keys.press(bindings[0]);
+                    }
+                    if backward {
+                        keys.press(bindings[1]);
+                    }
+                    let at = 0x8019ee40 + 0x4a4 * slot as u32;
+                    cpu.put(at, car.state());
+                    cpu.put(at + 0xc8 + 11, &[u8::from(forward), u8::from(backward)]);
+                    cpu.call(0x801315e8, &[at]);
+                    expected[slot] = cpu.word(at + 0x460);
+                    changed[slot] |=
+                        backward && !forward && expected[slot] != car.dashboard_weapon().0 as u32;
+                }
+                world.insert_resource(keys);
+                world.run_system_once(advance).unwrap();
+                for (slot, car) in world.resource::<Duel>().cars.iter().enumerate() {
+                    assert_eq!(
+                        car.dashboard_weapon().0 as u32,
+                        expected[slot],
+                        "layout {layout} slot {slot} mask {mask}"
+                    );
+                }
+            }
+            assert_eq!(changed, [true; 2], "backward selection on layout {layout}");
+        }
+    }
+
     #[test]
     fn round_clock_wraps_and_capture_is_repeatable() {
         use super::*;
