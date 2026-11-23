@@ -8,7 +8,7 @@ the original hypotheses remain here for later evaluation.
 
 Keeping the C dynamics and using Rust for the host preserved the sampled retail updates. The differential fixtures caught concrete integration errors in ammo pickup, per-step shadow state, and RNG consumption by flash effects. Full layout comparison covers bytes whose source names are still unknown. It also requires the same initial state and the same caller sequence.
 
-The taxi and police entities reuse source vertices, topology, colors, atlas UVs and vehicle poses. Each view computes opaque vehicle face depths from the current pose. An initial experiment drawing the taxi with a separate camera lost occlusion against walls, police and particles. The gameplay renderer now draws these elements with one perspective camera and depth buffer. The renderer sorts translucent packets within each material by ordering-table bucket, pass and insertion order. The experiment has not tested a browser backend.
+The taxi and police entities reuse source vertices, topology, colors, atlas UVs and vehicle poses. Each view computes opaque vehicle face depths from the current pose. An initial experiment drawing the taxi with a separate camera lost occlusion against walls, police and particles. Each gameplay camera sorts vehicle, arena and effect packets together by ordering-table bucket, pass and insertion order. The GPU receives consecutive packets in that sequence. The experiment has not tested a browser backend.
 
 See [acceptance runs and validation limits](STATUS.md) for the original reference, observed Metal timings and audio differences.
 

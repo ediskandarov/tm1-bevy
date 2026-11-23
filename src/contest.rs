@@ -1495,7 +1495,6 @@ pub(crate) fn menu_world() -> World {
     world.init_resource::<Assets<Mesh>>();
     world.init_resource::<Assets<ColorMaterial>>();
     world.init_resource::<Assets<crate::texture_blend::TextureBlend>>();
-    world.init_resource::<Assets<crate::texture_blend::ArenaMask>>();
     world.init_resource::<Assets<AudioSource>>();
     world.init_resource::<Assets<crate::music::CdTrack>>();
     world.insert_resource(Campaign(disc));

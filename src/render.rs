@@ -1,10 +1,10 @@
-//! Arena presentation with a shared perspective depth buffer.
+//! Arena presentation in PlayStation ordering-table traversal order.
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
     camera::visibility::NoFrustumCulling,
+    ecs::system::SystemParam,
     image::ImageSampler,
-    mesh::Indices,
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
     sprite_render::AlphaMode2d,
@@ -41,18 +41,38 @@ const MIRROR_WIDTH: u32 = 101;
 const MIRROR_HEIGHT: u32 = 30;
 const MIRROR_FOCAL: f32 = 91.;
 
-// Mode zero uses the regular alpha batch. Modes 1..=3 each have a GPU material.
-fn texture_blend_index(texture: TextureKey) -> Option<usize> {
-    usize::from((texture.page >> 5) & 3).checked_sub(1)
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum PacketMode {
+    Average,
+    Add,
+    Subtract,
+    QuarterAdd,
+    Opaque,
+    SubtractOpaque,
 }
 
-#[derive(Default)]
-struct ViewMeshes {
-    secondary: bool,
-    texture_blends: [Handle<Mesh>; 3],
-    solids: Handle<Mesh>,
-    transparent: Handle<Mesh>,
+impl PacketMode {
+    fn texture(texture: TextureKey) -> Self {
+        [Self::Average, Self::Add, Self::Subtract, Self::QuarterAdd]
+            [usize::from((texture.page >> 5) & 3)]
+    }
+
+    fn polygon(p: &tm1_assets::scene::Polygon) -> Self {
+        if p.semi_transparent {
+            p.texture.map_or(Self::Average, Self::texture)
+        } else {
+            Self::Opaque
+        }
+    }
 }
+
+struct PacketMesh {
+    entity: Entity,
+    mesh: Handle<Mesh>,
+    material: Handle<crate::texture_blend::TextureBlend>,
+}
+
 const TILE: usize = 256;
 const MAX_ATLAS_SIDE: usize = 8192;
 
@@ -85,8 +105,9 @@ pub struct Arena {
     tiles: BTreeMap<(Option<TextureKey>, bool), usize>,
     mesh: Handle<Mesh>,
     windshield_mesh: Handle<Mesh>,
-    main_view: ViewMeshes,
-    rear_view: ViewMeshes,
+    packet_meshes: [Vec<PacketMesh>; 2],
+    active_runs: [usize; 2],
+    atlas: Handle<Image>,
     center: Vec3,
     radius: f32,
     yaw: f32,
@@ -231,8 +252,9 @@ impl Arena {
             tiles,
             mesh: Handle::default(),
             windshield_mesh: Handle::default(),
-            main_view: default(),
-            rear_view: default(),
+            packet_meshes: default(),
+            active_runs: [0; 2],
+            atlas: default(),
             center,
             radius,
             yaw: 0.5,
@@ -250,10 +272,8 @@ pub fn setup(
     mut commands: Commands,
     mut arena: ResMut<Arena>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut masks: ResMut<Assets<crate::texture_blend::ArenaMask>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    mut texture_materials: ResMut<Assets<crate::texture_blend::TextureBlend>>,
 ) {
     let mut image = Image::new(
         Extent3d {
@@ -336,20 +356,7 @@ pub fn setup(
         Transform::from_xyz(0., 0., -2.),
     ));
     let texture = images.add(image);
-    let blend_handles = [1, 2, 3].map(|mode| {
-        texture_materials.add(crate::texture_blend::TextureBlend {
-            atlas: texture.clone(),
-            mode,
-        })
-    });
-    let subtractive_opaque = materials.add(ColorMaterial {
-        texture: Some(texture.clone()),
-        alpha_mode: AlphaMode2d::Mask(0.75),
-        ..default()
-    });
-    let arena_mask = masks.add(crate::texture_blend::ArenaMask {
-        atlas: texture.clone(),
-    });
+    arena.atlas = texture.clone();
     let masked = materials.add(ColorMaterial {
         texture: Some(texture.clone()),
         alpha_mode: AlphaMode2d::Mask(0.5),
@@ -394,48 +401,6 @@ pub fn setup(
                 ..default()
             }),
             RenderLayers::layer(2),
-        ));
-    }
-    let arena_views = &mut *arena;
-    for (layer, view) in [
-        (1, &mut arena_views.main_view),
-        (3, &mut arena_views.rear_view),
-    ] {
-        view.secondary = layer == 3;
-        for (handle, material) in view.texture_blends.iter_mut().zip(&blend_handles) {
-            *handle = meshes.add(Batch::default().mesh());
-            commands.spawn((
-                crate::campaign::StageEntity,
-                Mesh2d(handle.clone()),
-                MeshMaterial2d(material.clone()),
-                RenderLayers::layer(layer),
-                NoFrustumCulling,
-            ));
-        }
-        // Reverse subtraction operates only on STP texels. Draw ordinary
-        // texels from the same geometry with the opaque cutout pipeline.
-        commands.spawn((
-            crate::campaign::StageEntity,
-            Mesh2d(view.texture_blends[1].clone()),
-            MeshMaterial2d(subtractive_opaque.clone()),
-            RenderLayers::layer(layer),
-            NoFrustumCulling,
-        ));
-        view.solids = meshes.add(Batch::default().mesh());
-        commands.spawn((
-            crate::campaign::StageEntity,
-            Mesh2d(view.solids.clone()),
-            MeshMaterial2d(arena_mask.clone()),
-            RenderLayers::layer(layer),
-            NoFrustumCulling,
-        ));
-        view.transparent = meshes.add(Batch::default().mesh());
-        commands.spawn((
-            crate::campaign::StageEntity,
-            Mesh2d(view.transparent.clone()),
-            MeshMaterial2d(blend.clone()),
-            RenderLayers::layer(layer),
-            NoFrustumCulling,
         ));
     }
     let mut mirror_image = Image::new_target_texture(
@@ -827,7 +792,7 @@ pub fn controls(
 }
 
 pub fn update(
-    arena: Res<Arena>,
+    mut arena: ResMut<Arena>,
     drive: Res<crate::driving::Drive>,
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
@@ -841,7 +806,7 @@ pub fn update(
         With<WorldCamera>,
     >,
     window: Single<&Window>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut renderer: PacketRenderer,
 ) {
     let started = capture.demo.then(std::time::Instant::now);
     let direction = Vec3::new(
@@ -941,17 +906,16 @@ pub fn update(
     let mut screen_batch = Batch::default();
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
-    windshield.write(&mut meshes, &arena.windshield_mesh);
+    windshield.write(&mut renderer.meshes, &arena.windshield_mesh);
     if let Some(radar) = drive.contacts.radar.frame() {
         draw_radar(&mut screen_batch, &arena, radar, &window);
     }
-    screen_batch.write(&mut meshes, &arena.mesh);
-    draw_view(
+    screen_batch.write(&mut renderer.meshes, &arena.mesh);
+    let packets = draw_view(
         &arena,
         &drive.player,
         &drive.contacts,
-        &mut meshes,
-        &arena.main_view,
+        false,
         &poses,
         &lights,
         hide_player.then_some(0),
@@ -961,13 +925,13 @@ pub fn update(
         camera_up,
         window.height() * 0.85,
     );
+    renderer.submit(&mut arena, false, packets);
     if mirror {
-        draw_view(
+        let packets = draw_view(
             &arena,
             &drive.player,
             &drive.contacts,
-            &mut meshes,
-            &arena.rear_view,
+            true,
             &poses,
             &lights,
             hide_player.then_some(0),
@@ -977,6 +941,7 @@ pub fn update(
             rear_up,
             MIRROR_FOCAL,
         );
+        renderer.submit(&mut arena, true, packets);
     }
     if let Some(start) = started {
         crate::smoke::sample("CPU geometry preparation", &mut timings, start);
@@ -1020,8 +985,7 @@ fn draw_view(
     arena: &Arena,
     player: &tm1_core::drive::PlayerVehicle,
     contacts: &tm1_core::drive::CollisionScene,
-    meshes: &mut Assets<Mesh>,
-    view: &ViewMeshes,
+    secondary: bool,
     poses: &[CarPose],
     lights: &[u8; 9],
     hidden_car: Option<usize>,
@@ -1030,7 +994,7 @@ fn draw_view(
     forward: Vec3,
     camera_up: Vec3,
     focal: f32,
-) {
+) -> Batch {
     let wheel_steps = contacts.wheel_steps();
     let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
@@ -1071,9 +1035,7 @@ fn draw_view(
     let hidden = contacts.hidden_pickups();
     let switches = contacts.arena_switch_branches();
     let (_, stand_branches) = contacts.health_stands();
-    let mut solids = Batch::default();
-    let mut transparent = Batch::default();
-    let mut texture_blends: [Batch; 3] = std::array::from_fn(|_| Batch::default());
+    let mut batch = Batch::default();
     let visible = (0..arena.vehicle_start).chain(
         arena
             .body_ranges
@@ -1170,17 +1132,6 @@ fn draw_view(
             continue;
         }
         let indices = indices(p.vertices.len());
-        let batch = if let Some(i) = p
-            .texture
-            .filter(|_| p.semi_transparent)
-            .and_then(texture_blend_index)
-        {
-            &mut texture_blends[i]
-        } else if p.semi_transparent {
-            &mut transparent
-        } else {
-            &mut solids
-        };
         let tint = if i >= arena.vehicle_start {
             let car = arena
                 .body_ranges
@@ -1199,11 +1150,13 @@ fn draw_view(
                 [r * tint[0], g * tint[1], b * tint[2], a],
             );
         }
-        if p.semi_transparent {
-            batch.order_geometry(indices.len(), eye, forward, p.fixed_ot);
-        } else {
-            batch.mask_geometry(indices.len(), eye, forward, p.fixed_ot);
-        }
+        batch.order_geometry(
+            indices.len(),
+            eye,
+            forward,
+            p.fixed_ot,
+            PacketMode::polygon(p),
+        );
     }
     let mut faces = [[0; 14]; 180];
     let count = contacts.contrail_faces(&mut faces);
@@ -1227,13 +1180,13 @@ fn draw_view(
         let tint = [16, 8, 0].map(|shift| ((face[1] >> shift) & 255) as f32 / 128.);
         for &i in indices(4) {
             let [u, v] = frame.uv[i ^ 1];
-            texture_blends[0].push(
+            batch.push(
                 points[i],
                 arena.uv(slot, Vec2::new(u.into(), v.into())),
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
-        texture_blends[0].order_geometry(6, eye, forward, 0);
+        batch.order_geometry(6, eye, forward, 0, PacketMode::Add);
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(&mut poses);
@@ -1292,27 +1245,18 @@ fn draw_view(
             {
                 continue;
             }
-            let batch = if let Some(i) = p
-                .texture
-                .filter(|_| p.semi_transparent)
-                .and_then(texture_blend_index)
-            {
-                &mut texture_blends[i]
-            } else if p.semi_transparent {
-                &mut transparent
-            } else {
-                &mut solids
-            };
             let slot = arena.tiles[&(p.texture, p.semi_transparent)];
             for &i in indices(p.vertices.len()) {
                 let v = &p.vertices[i];
                 batch.push(points[i], arena.uv(slot, v.uv.into()), v.color);
             }
-            if p.semi_transparent {
-                batch.order_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
-            } else {
-                batch.mask_geometry(indices(p.vertices.len()).len(), eye, forward, p.fixed_ot);
-            }
+            batch.order_geometry(
+                indices(p.vertices.len()).len(),
+                eye,
+                forward,
+                p.fixed_ot,
+                PacketMode::polygon(p),
+            );
         }
     }
     let camera_point = |p: [i32; 3]| {
@@ -1321,7 +1265,7 @@ fn draw_view(
     };
     let (lens, center) = if split_screen {
         (228, [160, 60])
-    } else if view.secondary {
+    } else if secondary {
         (
             MIRROR_FOCAL as i32,
             [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
@@ -1340,7 +1284,7 @@ fn draw_view(
         ]
     };
     let mut drops = [[0; 4]; 12];
-    let drop_count = contacts.drawn_drops(view.secondary, &mut drops);
+    let drop_count = contacts.drawn_drops(secondary, &mut drops);
     for &[x, y, z, weapon] in &drops[..drop_count] {
         let center = world([x as f32, y as f32, z as f32]);
         let camera = drop_camera(center);
@@ -1370,13 +1314,13 @@ fn draw_view(
             let point = eye
                 + forward * depth
                 + (right * xy[0] as f32 - up * xy[1] as f32) * (depth / lens as f32);
-            solids.push(
+            batch.push(
                 point,
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                 [1.; 4],
             );
         }
-        solids.mask_packet(6, bucket, DrawPass::Bullets);
+        batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
     }
     let white = arena.uv(0, Vec2::ZERO);
     let quad = |batch: &mut Batch, points: [Vec2; 4], depth: f32, colors: [[f32; 4]; 2]| {
@@ -1390,11 +1334,11 @@ fn draw_view(
         }
     };
     let mut bullets = [[0; 8]; 40];
-    let bullet_count = contacts.drawn_bullets(view.secondary, &mut bullets);
+    let bullet_count = contacts.drawn_bullets(secondary, &mut bullets);
     let mut arcs = [[[0; 3]; 16]; 3];
-    let arc_count = contacts.taser_arcs(view.secondary, &mut arcs);
+    let arc_count = contacts.taser_arcs(secondary, &mut arcs);
     let mut particles = [[0; 5]; 80];
-    let count = contacts.drawn_particles(view.secondary, &mut particles);
+    let count = contacts.drawn_particles(secondary, &mut particles);
     for &[x, y, z, kind, ttl] in &particles[..count] {
         use tm1_core::drive::ParticleAnimation::*;
         let Some(particle) = tm1_core::drive::particle_frame(kind, ttl) else {
@@ -1432,11 +1376,6 @@ fn draw_view(
         } else {
             [1.; 4]
         };
-        let batch = if let Some(i) = texture_blend_index(sprite.texture) {
-            &mut texture_blends[i]
-        } else {
-            &mut transparent
-        };
         for &i in indices(4) {
             let [u, v] = corners[i];
             let offset = right * u as f32 - up * v as f32;
@@ -1446,10 +1385,15 @@ fn draw_view(
                 tint,
             );
         }
-        batch.order_packet(6, particle.ordering_bucket(base[2]), DrawPass::Explosions);
+        batch.order_packet(
+            6,
+            particle.ordering_bucket(base[2]),
+            DrawPass::Explosions,
+            PacketMode::texture(sprite.texture),
+        );
     }
     let mut fragments = [[0; 5]; 20];
-    let fragment_count = contacts.fragment_poses(view.secondary, &mut fragments);
+    let fragment_count = contacts.fragment_poses(secondary, &mut fragments);
     for &[x, y, z, variant, phase] in &fragments[..fragment_count] {
         let camera = camera_point([x, y, z]);
         let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
@@ -1463,13 +1407,13 @@ fn draw_view(
         for &i in indices(4) {
             let [u, v] = corners[i];
             let offset = right * u as f32 - up * v as f32;
-            solids.push(
+            batch.push(
                 eye + forward * draw_depth + offset * (draw_depth * pixel_scale / focal),
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                 [1.; 4],
             );
         }
-        solids.mask_packet(6, bucket, DrawPass::Explosions);
+        batch.order_packet(6, bucket, DrawPass::Explosions, PacketMode::Opaque);
     }
     for arc in &arcs[..arc_count] {
         let points = arc.map(|p| {
@@ -1488,12 +1432,12 @@ fn draw_view(
                 Color::srgb_u8(level, level, 255).to_linear().to_f32_array()
             });
             quad(
-                &mut solids,
+                &mut batch,
                 [a - normal, a + normal, b - normal, b + normal],
                 bucket_depth(bucket),
                 colors,
             );
-            solids.mask_packet(6, bucket, DrawPass::Bullets);
+            batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
         }
     }
     for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
@@ -1518,18 +1462,18 @@ fn draw_view(
                 let [a, b] = points.map(screen);
                 let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
                 quad(
-                    &mut solids,
+                    &mut batch,
                     [a - normal, a + normal, b - normal, b + normal],
                     depth,
                     colors.map(rgb),
                 );
-                solids.mask_packet(6, bucket, DrawPass::Bullets);
+                batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
             }
             Primitive::Triangle { points, colors } => {
                 for (point, color) in points.into_iter().zip(colors) {
-                    solids.push(vertex(screen(point)), white, rgb(color));
+                    batch.push(vertex(screen(point)), white, rgb(color));
                 }
-                solids.mask_packet(3, bucket, DrawPass::Bullets);
+                batch.order_packet(3, bucket, DrawPass::Bullets, PacketMode::Opaque);
             }
             Primitive::Sprite {
                 center,
@@ -1543,11 +1487,6 @@ fn draw_view(
                 };
                 let sprite = &frames[frame];
                 let tile = arena.tiles[&(Some(sprite.texture), true)];
-                let batch = if let Some(i) = texture_blend_index(sprite.texture) {
-                    &mut texture_blends[i]
-                } else {
-                    &mut transparent
-                };
                 let [r, g, b] = tint.map(|v| f32::from(v) / 128.);
                 for &i in indices(4) {
                     let point = [
@@ -1560,15 +1499,16 @@ fn draw_view(
                         [r, g, b, 1.],
                     );
                 }
-                batch.order_packet(6, bucket, DrawPass::Bullets);
+                batch.order_packet(
+                    6,
+                    bucket,
+                    DrawPass::Bullets,
+                    PacketMode::texture(sprite.texture),
+                );
             }
         }
     }
-    for (batch, handle) in texture_blends.into_iter().zip(&view.texture_blends) {
-        batch.write(meshes, handle);
-    }
-    solids.write(meshes, &view.solids);
-    transparent.write(meshes, &view.transparent);
+    batch
 }
 
 impl Arena {
@@ -1821,6 +1761,7 @@ enum DrawPass {
 struct DrawPacket {
     bucket: u32,
     pass: DrawPass,
+    mode: PacketMode,
     vertices: std::ops::Range<u32>,
 }
 
@@ -1837,11 +1778,12 @@ impl Batch {
         self.uvs.push(uv);
         self.colors.push(color);
     }
-    fn order_packet(&mut self, vertex_count: usize, bucket: u32, pass: DrawPass) {
+    fn order_packet(&mut self, vertex_count: usize, bucket: u32, pass: DrawPass, mode: PacketMode) {
         let end = self.positions.len() as u32;
         self.packets.push(DrawPacket {
             bucket,
             pass,
+            mode,
             vertices: end - vertex_count as u32..end,
         });
     }
@@ -1872,37 +1814,46 @@ impl Batch {
         Some(if fixed_ot == 0 { bucket } else { fixed_ot })
     }
 
-    fn order_geometry(&mut self, count: usize, eye: Vec3, forward: Vec3, fixed: u32) {
+    fn order_geometry(
+        &mut self,
+        count: usize,
+        eye: Vec3,
+        forward: Vec3,
+        fixed: u32,
+        mode: PacketMode,
+    ) {
         if let Some(bucket) = self.geometry_bucket(count, eye, forward, fixed) {
-            self.order_packet(count, bucket, DrawPass::Hierarchy);
+            self.order_packet(count, bucket, DrawPass::Hierarchy, mode);
         }
     }
 
-    fn mask_geometry(&mut self, count: usize, eye: Vec3, forward: Vec3, fixed: u32) {
-        if let Some(bucket) = self.geometry_bucket(count, eye, forward, fixed) {
-            self.mask_packet(count, bucket, DrawPass::Hierarchy);
-        }
-    }
-
-    fn mask_packet(&mut self, count: usize, bucket: u32, pass: DrawPass) {
-        // Masked faces use texture alpha for cutout. Pass the packet bucket
-        // through the spare vertex alpha without changing projected UVs.
-        let start = self.colors.len() - count;
-        for color in &mut self.colors[start..] {
-            color[3] = bucket as f32;
-        }
-        self.order_packet(count, bucket, pass);
-    }
-
-    fn draw_indices(&mut self) -> Vec<u32> {
+    fn runs(mut self) -> Vec<(bool, Batch)> {
         self.packets
             .sort_unstable_by_key(|p| std::cmp::Reverse((p.bucket, p.pass, p.vertices.start)));
-        let mut indices = Vec::with_capacity(self.positions.len());
-        for packet in &self.packets {
-            indices.extend(packet.vertices.clone());
+        let mut runs: Vec<(bool, Batch)> = Vec::new();
+        for packet in self.packets {
+            // Reverse subtraction cannot replace an opaque texel. Emit the two
+            // disjoint texture masks consecutively, before the following packet.
+            let ordinary =
+                (packet.mode == PacketMode::Subtract).then_some(PacketMode::SubtractOpaque);
+            for mode in std::iter::once(packet.mode).chain(ordinary) {
+                let subtract = mode == PacketMode::Subtract;
+                if runs.last().is_none_or(|r| r.0 != subtract) {
+                    runs.push((subtract, Batch::default()));
+                }
+                let run = &mut runs.last_mut().unwrap().1;
+                let range = packet.vertices.start as usize..packet.vertices.end as usize;
+                run.positions
+                    .extend_from_slice(&self.positions[range.clone()]);
+                run.uvs.extend_from_slice(&self.uvs[range.clone()]);
+                run.colors.extend(
+                    self.colors[range]
+                        .iter()
+                        .map(|&[r, g, b, _]| [r, g, b, mode as u8 as f32]),
+                );
+            }
         }
-        debug_assert_eq!(indices.len(), self.positions.len());
-        indices
+        runs
     }
 
     fn mesh(self) -> Mesh {
@@ -1914,7 +1865,7 @@ impl Batch {
         .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.colors)
     }
-    fn write(mut self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
+    fn write(self, meshes: &mut Assets<Mesh>, handle: &Handle<Mesh>) {
         if self.positions.is_empty()
             && meshes
                 .get(handle)
@@ -1923,11 +1874,6 @@ impl Batch {
             return;
         }
         if let Some(mut mesh) = meshes.get_mut(handle) {
-            if self.packets.is_empty() {
-                mesh.remove_indices();
-            } else {
-                mesh.insert_indices(Indices::U32(self.draw_indices()));
-            }
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, self.positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs);
             mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, self.colors);
@@ -1935,11 +1881,71 @@ impl Batch {
     }
 }
 
+#[derive(SystemParam)]
+pub struct PacketRenderer<'w, 's> {
+    commands: Commands<'w, 's>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    materials: ResMut<'w, Assets<crate::texture_blend::TextureBlend>>,
+}
+
+impl PacketRenderer<'_, '_> {
+    fn submit(&mut self, arena: &mut Arena, secondary: bool, packets: Batch) {
+        let view = usize::from(secondary);
+        let pool = &mut arena.packet_meshes[view];
+        let previous = arena.active_runs[view];
+        let runs = packets.runs();
+        let active = runs.len();
+        for (index, (subtract, run)) in runs.into_iter().enumerate() {
+            if let Some(item) = pool.get(index) {
+                if index >= previous {
+                    self.commands
+                        .entity(item.entity)
+                        .insert(Visibility::Inherited);
+                }
+                if self
+                    .materials
+                    .get(&item.material)
+                    .is_some_and(|m| m.subtract != subtract)
+                {
+                    self.materials.get_mut(&item.material).unwrap().subtract = subtract;
+                }
+                run.write(&mut self.meshes, &item.mesh);
+            } else {
+                let mesh = self.meshes.add(run.mesh());
+                let material = self.materials.add(crate::texture_blend::TextureBlend {
+                    atlas: arena.atlas.clone(),
+                    subtract,
+                    order: index,
+                });
+                let entity = self
+                    .commands
+                    .spawn((
+                        crate::campaign::StageEntity,
+                        Mesh2d(mesh.clone()),
+                        MeshMaterial2d(material.clone()),
+                        RenderLayers::layer(if secondary { 3 } else { 1 }),
+                        NoFrustumCulling,
+                    ))
+                    .id();
+                pool.push(PacketMesh {
+                    entity,
+                    mesh,
+                    material,
+                });
+            }
+        }
+        for item in pool.iter().take(previous).skip(active) {
+            self.commands.entity(item.entity).insert(Visibility::Hidden);
+        }
+        arena.active_runs[view] = active;
+    }
+}
+
 pub fn duel_view(
-    arena: Res<Arena>,
+    mut arena: ResMut<Arena>,
     duel: Res<crate::duel::Duel>,
     window: Single<&Window>,
-    mut meshes: ResMut<Assets<Mesh>>,
+    mut renderer: PacketRenderer,
     mut images: ResMut<Assets<Image>>,
     mut display: Single<
         (&mut Sprite, &mut Transform, &mut Visibility),
@@ -2037,7 +2043,7 @@ pub fn duel_view(
             hud.number(290, 212 + bias, i32::from(ammo), &icons.digits, green);
         }
     }
-    panel.write(&mut meshes, &arena.mesh);
+    panel.write(&mut renderer.meshes, &arena.mesh);
     let lights = duel.scene.car_lights();
     for slot in 0..2 {
         let car = &duel.cars[slot];
@@ -2081,16 +2087,11 @@ pub fn duel_view(
                 transform.translation -= poses[slot].origin * Vec3::new(1., 0., 1.);
             }
         }
-        draw_view(
+        let packets = draw_view(
             &arena,
             car,
             &duel.scene,
-            &mut meshes,
-            if slot == 0 {
-                &arena.main_view
-            } else {
-                &arena.rear_view
-            },
+            slot != 0,
             &poses,
             &lights,
             (!view.show_body).then_some(slot),
@@ -2100,6 +2101,7 @@ pub fn duel_view(
             up,
             focal,
         );
+        renderer.submit(&mut arena, slot != 0, packets);
     }
 }
 
@@ -2139,15 +2141,16 @@ mod tests {
         let mut batch = Batch::default();
         let mut ranges = Vec::new();
         // Mesh construction visits the hierarchy first. RT submits it last.
+        use PacketMode::*;
         let faces = [
-            (Hierarchy, 8, 4),
-            (Hierarchy, 2, 3),
-            (Explosions, 8, 4),
-            (Explosions, 8, 4),
-            (Bullets, 12, 4),
-            (Bullets, 8, 4),
+            (Hierarchy, 8, 4, Add),
+            (Hierarchy, 2, 3, Subtract),
+            (Explosions, 8, 4, QuarterAdd),
+            (Explosions, 8, 4, Average),
+            (Bullets, 12, 4, Opaque),
+            (Bullets, 8, 4, Subtract),
         ];
-        for (pass, bucket, n) in faces {
+        for (pass, bucket, n, mode) in faces {
             let start = batch.positions.len() as u32;
             for &corner in indices(n) {
                 let offset = if n == 4 {
@@ -2155,18 +2158,22 @@ mod tests {
                 } else {
                     0.
                 };
-                batch.push(Vec3::Z * ((8 * bucket) as f32 + offset), [0.; 2], [1.; 4]);
+                batch.push(
+                    Vec3::Z * ((8 * bucket) as f32 + offset),
+                    [batch.positions.len() as f32, 0.],
+                    [1.; 4],
+                );
             }
             let len = indices(n).len();
             if pass == Hierarchy {
-                batch.order_geometry(len, Vec3::ZERO, Vec3::Z, 0);
+                batch.order_geometry(len, Vec3::ZERO, Vec3::Z, 0, mode);
             } else {
-                batch.order_packet(len, bucket, pass);
+                batch.order_packet(len, bucket, pass, mode);
             }
             ranges.push(start..start + len as u32);
         }
         for pass in [Bullets, Explosions, Hierarchy] {
-            for (i, &(source, bucket, _)) in faces.iter().enumerate() {
+            for (i, &(source, bucket, _, _)) in faces.iter().enumerate() {
                 if source == pass {
                     cpu.call(0x80161a60, &[ot + 4 * bucket, packets + 4 * i as u32]);
                 }
@@ -2177,11 +2184,30 @@ mod tests {
             let mut next = cpu.word(ot + 4 * bucket) & 0xffffff;
             while next != 0xffffff {
                 let i = (next - (packets & 0xffffff)) / 4;
-                expected.extend(ranges[i as usize].clone());
+                let mode = faces[i as usize].3;
+                expected.extend(ranges[i as usize].clone().map(|v| (v, mode as u8)));
+                if mode == Subtract {
+                    expected.extend(
+                        ranges[i as usize]
+                            .clone()
+                            .map(|v| (v, SubtractOpaque as u8)),
+                    );
+                }
                 next = cpu.word(next) & 0xffffff;
             }
         }
-        assert_eq!(batch.draw_indices(), expected);
+        let actual: Vec<_> = batch
+            .runs()
+            .into_iter()
+            .flat_map(|(subtract, run)| {
+                run.uvs.into_iter().zip(run.colors).map(move |(uv, color)| {
+                    let mode = color[3] as u8;
+                    assert_eq!(subtract, mode == Subtract as u8);
+                    (uv[0] as u32, mode)
+                })
+            })
+            .collect();
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -2232,21 +2258,19 @@ mod tests {
                     for &i in indices(n) {
                         batch.push(Vec3::Z * depths[i] as f32, [0.; 2], [1.; 4]);
                     }
-                    let mut masked = Batch::default();
-                    for &i in indices(n) {
-                        masked.push(Vec3::Z * depths[i] as f32, [0.; 2], [1.; 4]);
-                    }
-                    masked.mask_geometry(indices(n).len(), Vec3::ZERO, Vec3::Z, fixed);
-                    assert_eq!(masked.positions.is_empty(), expected == 0);
-                    assert!(masked.colors.iter().all(|c| c[3] == expected as f32));
-                    assert_eq!(masked.draw_indices().len(), masked.positions.len());
-                    batch.order_geometry(indices(n).len(), Vec3::ZERO, Vec3::Z, fixed);
+                    batch.order_geometry(
+                        indices(n).len(),
+                        Vec3::ZERO,
+                        Vec3::Z,
+                        fixed,
+                        PacketMode::Opaque,
+                    );
+                    assert_eq!(batch.positions.is_empty(), expected == 0);
                     assert_eq!(
                         batch.packets.first().map_or(0, |p| p.bucket),
                         expected,
                         "{n} corners, depths {depths:?}, fixed {fixed}"
                     );
-                    assert_eq!(batch.draw_indices().len(), batch.positions.len());
                 }
             }
         }
