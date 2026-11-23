@@ -63,15 +63,14 @@ impl DuelBank {
             })
             .collect();
         let programs = battle_programs(cars[0], &cars[1..])
-            .enumerate()
-            .map(|(i, id)| EffectTone::load(bank, id, matches!(i, 1 | 6) || id == 38))
+            .map(|prog| EffectTone::load(bank, prog))
             .collect::<Result<_>>()?;
         Ok(Self {
             programs,
             engines,
             engine_levels,
             score_engines,
-            turbo: EffectTone::load(bank, TURBO_PROGRAM, true)?,
+            turbo: EffectTone::load(bank, TURBO_PROGRAM)?,
             menu: [MenuSound::load(bank, 57)?, MenuSound::load(bank, 58)?],
         })
     }

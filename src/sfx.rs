@@ -42,12 +42,12 @@ struct EffectTone {
 }
 
 impl EffectTone {
-    fn load(bank: &[u8], prog: usize, looping: bool) -> Result<Vec<Self>> {
+    fn load(bank: &[u8], prog: usize) -> Result<Vec<Self>> {
         program(bank, prog)?
             .into_iter()
             .map(|tone| {
                 let priority = tone.priority;
-                let clip = if looping && tone.loop_start.is_some() {
+                let clip = if tone.loop_start.is_some() {
                     let pitch = sample_pitch(&tone, false) as u16;
                     pcm::LoopingTone::new(tone)?.voice(pitch).0
                 } else {
@@ -224,8 +224,7 @@ impl Sounds {
             .map(|prog| MenuSound::load(&bank, prog))
             .collect::<Result<_>>()?;
         let effects = battle_programs(vehicle, opponents)
-            .enumerate()
-            .map(|(id, prog)| EffectTone::load(&bank, prog, matches!(id, 1 | 6) || prog == 38))
+            .map(|prog| EffectTone::load(&bank, prog))
             .collect::<Result<_>>()?;
         let player_engine = EngineSample::load(&bank, vehicle)?;
         let rival_engines = opponents
@@ -235,7 +234,7 @@ impl Sounds {
         Ok(Self {
             menu,
             effects,
-            turbo: EffectTone::load(&bank, TURBO_PROGRAM, true)?,
+            turbo: EffectTone::load(&bank, TURBO_PROGRAM)?,
             rival_engines,
             player_engine,
             screen_engine: Vec::new(),
@@ -812,7 +811,7 @@ mod tests {
             assert!(sample.mix.iter().all(|pair| pair[0] == pair[1]));
         }
         for prog in [12, TURBO_PROGRAM, 38] {
-            let clips = EffectTone::load(&bank, prog, true).unwrap();
+            let clips = EffectTone::load(&bank, prog).unwrap();
             for (mut tone, effect) in program(&bank, prog).unwrap().into_iter().zip(clips) {
                 tone.prepare_loop();
                 let Some(marker) = tone.loop_start else {
@@ -973,6 +972,102 @@ mod tests {
         }
         cpu.put(0x8016bbc8, &[8, 0, 224, 3, 0x21, 0x10, 0x80, 0]); // return chosen voice
         (cpu, program_id, tones.len())
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn catapult_launch_loops_all_seven_disc_tones_until_weapon_stop() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::{BattleRequest, BattleSound, Drive, ExclusiveVoice};
+        use bevy::audio::Decodable;
+
+        let mut world = crate::contest::menu_world();
+        let disc = &world.resource::<Campaign>().0;
+        let (mut cpu, prog, layers) = retail_sound_cpu(disc, 0x12);
+        assert_eq!((prog, layers), (25, 7));
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let stage = Stage::load(
+            disc,
+            Level::Warehouse,
+            Vehicle::RoadKill,
+            Entry::New(Difficulty::Medium),
+        )
+        .unwrap();
+        crate::campaign::replace(&mut world, stage);
+        let id = world.resource::<Drive>().recharge_sound() + 11;
+        let key = ExclusiveVoice::WeaponLaunch(6);
+        cpu.call(0x80107c6c, &[6, 0, 0]);
+        let mut started = Vec::new();
+        cpu.call_observed(0x80105ebc, &[], 0x80000080, |cpu| {
+            if cpu.pc() == 0x8016bbc8 {
+                assert_eq!(cpu.r[6] as usize, prog);
+                started.push(cpu.r[4]);
+            }
+        });
+        assert_eq!(started.len(), layers);
+        world.resource_mut::<Drive>().sounds = vec![BattleRequest::Play(BattleSound {
+            frame: 0,
+            id,
+            exclusive: Some(key),
+            volume_percent: 99,
+            range: 0,
+            channels: [33; 2],
+        })];
+        world.run_system_once(update).unwrap();
+        let mut voices: Vec<_> = world
+            .query::<(&OneShot, &AudioPlayer<pcm::StereoPcm>)>()
+            .iter(&world)
+            .filter(|(voice, _)| voice.key == Some(key))
+            .map(|(voice, player)| (voice.order, player.0.clone()))
+            .collect();
+        voices.sort_by_key(|(order, _)| *order);
+        assert_eq!(voices.len(), layers);
+        for ((_, handle), mut tone) in voices.into_iter().zip(program(&bank, prog).unwrap()) {
+            let pitch = sample_pitch(&tone, false);
+            tone.prepare_loop();
+            let end = tone.pcm.len() * 4096;
+            let start = tone.loop_start.unwrap() * 4096;
+            let gain = pcm::VabVolume::from_tone(&tone).gain(33, 99);
+            assert_eq!(tone.adsr, [0x80ff, 0x4e00]);
+            let wrap = (end - interpolation::INITIAL_PHASE).div_ceil(pitch);
+            let mut source = world
+                .resource::<Assets<pcm::StereoPcm>>()
+                .get(&handle)
+                .unwrap()
+                .decoder();
+            let mut tail = source
+                .by_ref()
+                .skip(2 * (interpolation::KEY_ON_DELAY + wrap));
+            for i in wrap..wrap + 256 {
+                let phase =
+                    start + (interpolation::INITIAL_PHASE + i * pitch - end) % (end - start);
+                // Linear sustain subtracts eight every eight output frames after decay.
+                let level = (32759 - 8 * ((i as i32 - 20) / 8)).max(0);
+                let sample = (interpolation::interpolate(&tone.pcm, phase) * level >> 15) as f32
+                    / 32768.
+                    * gain;
+                assert_eq!([tail.next(), tail.next()], [Some(sample); 2]);
+            }
+        }
+        cpu.put(0x8016bfc0, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        cpu.call(0x80107d18, &[6]);
+        let mut stopped = Vec::new();
+        cpu.call_observed(0x80105ebc, &[], 0x80000080, |cpu| {
+            if cpu.pc() == 0x8016bfc0 {
+                stopped.push(cpu.r[4]);
+            }
+        });
+        started.sort();
+        stopped.sort();
+        assert_eq!(stopped, started);
+        world.resource_mut::<Drive>().sounds = vec![BattleRequest::Stop(key)];
+        world.run_system_once(update).unwrap();
+        assert!(
+            !world
+                .query::<&OneShot>()
+                .iter(&world)
+                .any(|voice| voice.key == Some(key))
+        );
     }
 
     #[test]
@@ -1351,7 +1446,7 @@ mod tests {
             (0x74, sounds.lost_game_signature()),
         ] {
             let prog = usize::from(exe[table + id * 6 + 2]);
-            let expected = EffectTone::load(&bank, prog, false).unwrap();
+            let expected = EffectTone::load(&bank, prog).unwrap();
             assert_eq!(handles.len(), expected.len());
             for (handle, tone) in handles.iter().zip(expected) {
                 let gain = tone.clip.volume.gain(volume, 99);
