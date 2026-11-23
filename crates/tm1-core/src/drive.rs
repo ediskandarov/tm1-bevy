@@ -965,6 +965,8 @@ pub struct VehicleCamera {
 /// World-to-eye transform used by VIEW.c and SOUND.c for positional sound.
 #[derive(Clone, Copy)]
 pub struct SoundListener {
+    local_rotation: [[i32; 3]; 3],
+    parent_rotation: [[i32; 3]; 3],
     eye: [i32; 3],
     matrix: [[i32; 3]; 3],
 }
@@ -1003,6 +1005,7 @@ fn hover_requests(
 /// Position from the hierarchy stack and its active GTE rotation matrix.
 #[derive(Clone, Copy)]
 pub struct HierarchyTransform {
+    pub normals: [[i32; 3]; 6],
     pub rows: [[i32; 3]; 3],
     pub position: [i32; 3],
 }
@@ -1034,6 +1037,16 @@ impl HierarchyTransform {
         Self {
             rows,
             position: local,
+            normals: self.normals.map(|normal| {
+                rotation.map(|row| {
+                    (row.into_iter()
+                        .zip(normal)
+                        .map(|(a, b)| i32::from(a) * b)
+                        .sum::<i32>()
+                        >> 12)
+                        .clamp(-32768, 32767)
+                })
+            }),
         }
     }
 
@@ -1089,7 +1102,7 @@ impl SoundListener {
             [0, 3690, 0],
         ];
         let tilt = [[4096, 0, 0], [0, cp, -sp], [0, sp, cp]];
-        let matrix = if rear {
+        let (local, parent) = if rear {
             let parent = if fixed.is_some() {
                 rotate(tilt, parent)
             } else {
@@ -1100,13 +1113,21 @@ impl SoundListener {
                 .wheel_sin_cos(i64::from(local_pitch - 56))
                 .map(i32::from);
             let local = [[-4096, 0, 0], [0, -c, -s], [0, -s, c]];
-            rotate(rotate(axes, local), parent)
+            (local, parent)
         } else if fixed.is_some() {
-            rotate(axes, rotate(tilt, parent))
+            (
+                [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+                rotate(tilt, parent),
+            )
         } else {
-            rotate(rotate(axes, tilt), parent)
+            (tilt, parent)
         };
-        Self { eye, matrix }
+        Self {
+            eye,
+            matrix: rotate(rotate(axes, local), parent),
+            local_rotation: local,
+            parent_rotation: parent,
+        }
     }
 
     /// Absolute eye, forward row and screen-down row of the JP view transform.
@@ -1114,8 +1135,28 @@ impl SoundListener {
         (self.eye, self.matrix[2], self.matrix[1])
     }
 
-    pub fn hierarchy_transform(&self) -> HierarchyTransform {
+    pub fn hierarchy_transform(&self, compact_view: bool) -> HierarchyTransform {
+        // JP FOV entries 11, 12 and 13 share the same six plane normals.
+        let [x, y, z, w] = if compact_view {
+            [3454, 2200, 1765, 3695]
+        } else {
+            [3355, 2349, 1904, 3626]
+        };
+        let normals = [
+            [-x, y, 0],
+            [x, y, 0],
+            [0, 4095, 0],
+            [0, z, -w],
+            [0, z, w],
+            [0, -4095, 0],
+        ];
+        let transpose_mul = |rotation: [[i32; 3]; 3], normal: [i32; 3]| {
+            std::array::from_fn(|j| (0..3).map(|i| rotation[i][j] * normal[i]).sum::<i32>() >> 12)
+        };
         HierarchyTransform {
+            normals: normals.map(|n| {
+                transpose_mul(self.parent_rotation, transpose_mul(self.local_rotation, n))
+            }),
             rows: self.matrix,
             position: self.eye.map(i32::wrapping_neg),
         }

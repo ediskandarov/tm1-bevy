@@ -18,6 +18,7 @@ use tm1_assets::{
 use bevy::camera::visibility::RenderLayers;
 
 struct BodyGeometry {
+    bounds: Vec<tm1_assets::scene::HierarchyBound>,
     transforms: Vec<tm1_assets::scene::NodeTransform>,
     polygons: std::ops::Range<usize>,
     lods: Vec<tm1_assets::scene::LevelOfDetail>,
@@ -186,6 +187,7 @@ impl Arena {
                     scene.polygons.extend(variant.polygons);
                     BodyGeometry {
                         transforms: variant.transforms,
+                        bounds: variant.bounds,
                         polygons: start..scene.polygons.len(),
                         lods: variant.lods.unwrap_or_default(),
                     }
@@ -987,8 +989,10 @@ fn draw_view(
     view: Option<tm1_core::drive::SoundListener>,
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
-    let depth = if let Some(view) = view {
-        let root = view.hierarchy_transform();
+    let root = view.map(|v| v.hierarchy_transform(split_screen || secondary));
+    let mirror = secondary && !split_screen;
+    let actor_depth = if mirror { 1000 } else { 1200 };
+    let depth = if let Some(root) = root {
         GeometryDepth::from_world_matrix(root.rows[2], root.translation()[2])
     } else {
         let axis = (forward * axis_scale).as_dvec3();
@@ -1001,13 +1005,8 @@ fn draw_view(
     let lights = contacts.car_lights(secondary);
     let wheel_rotation = player.wheel_sin_cos(wheel_steps[4]);
     let [sin, cos] = wheel_rotation.map(|n| f32::from(n) / 4096.);
-    let world_depths = view.map(|view| {
-        GeometryTransform::hierarchy(
-            view.hierarchy_transform(),
-            &arena.scene.transforms,
-            wheel_rotation,
-        )
-    });
+    let world_depths = root
+        .map(|root| GeometryTransform::hierarchy(root, &arena.scene.transforms, wheel_rotation));
     let wheel_vertex = |p, wheel| {
         if let Some(Wheel::Hammerhead { pivot, axis }) = wheel {
             let axis = Vec3::from_array(axis);
@@ -1065,18 +1064,20 @@ fn draw_view(
     let mut car_depths = Vec::with_capacity(poses.len());
     for (stages, pose) in arena.body_ranges.iter().zip(poses) {
         let body = &stages[pose.body_stage];
-        if let Some(view) = view {
+        if let Some(root) = root {
             let pos = [
                 pose.origin.x as i32,
                 -pose.origin.z as i32,
                 pose.origin.y as i32,
             ];
-            let root = view.hierarchy_transform().child(pos, Some(pose.matrix));
-            car_depths.push(GeometryTransform::hierarchy(
-                root,
-                &body.transforms,
-                wheel_rotation,
-            ));
+            let root = root.child(pos, Some(pose.matrix));
+            let frames = GeometryTransform::hierarchy(root, &body.transforms, wheel_rotation);
+            for bound in &body.bounds {
+                if !frames[bound.transform].contains(bound, actor_depth) {
+                    hidden_geometry[body.polygons.clone()][bound.polygons.clone()].fill(true);
+                }
+            }
+            car_depths.push(frames);
         }
         let delta = pose.origin - eye;
         let matrix = tm1_core::math::Matrix {
@@ -1091,6 +1092,22 @@ fn draw_view(
         let local_eye = cs_position.map(|v| -(v as f32));
         for lod in &body.lods {
             lod.hide_other_branches(local_eye, 3, &mut hidden_geometry[body.polygons.clone()]);
+        }
+    }
+    if let Some(frames) = &world_depths {
+        for bound in &arena.scene.bounds {
+            let backdrop = arena
+                .scene
+                .backdrop_start
+                .is_some_and(|start| bound.polygons.start >= start);
+            let depth = if mirror && !backdrop {
+                100
+            } else {
+                actor_depth
+            };
+            if !frames[bound.transform].contains(bound, depth) {
+                hidden_geometry[bound.polygons.clone()].fill(true);
+            }
         }
     }
     for lod in arena.scene.lods.iter().flatten() {
@@ -1365,18 +1382,25 @@ fn draw_view(
         });
     for (model, pose) in missiles.chain(mercs).chain(pedestrians) {
         let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
-        let model_depth = view.map(|view| {
+        let model_depth = root.map(|root| {
             let rotation =
                 std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
-            let root = view
-                .hierarchy_transform()
-                .child([pose[1], pose[2], pose[3]], Some(rotation));
+            let root = root.child([pose[1], pose[2], pose[3]], Some(rotation));
             GeometryTransform::hierarchy(root, &model.transforms, wheel_rotation)
         });
-        for p in &model.polygons {
-            if p.animation
-                .iter()
-                .any(|a| a.selected(player.frame()) != a.child)
+        let mut culled = vec![false; model.polygons.len()];
+        if let Some(frames) = &model_depth {
+            for bound in &model.bounds {
+                if !frames[bound.transform].contains(bound, actor_depth) {
+                    culled[bound.polygons.clone()].fill(true);
+                }
+            }
+        }
+        for (p, culled) in model.polygons.iter().zip(culled) {
+            if culled
+                || p.animation
+                    .iter()
+                    .any(|a| a.selected(player.frame()) != a.child)
             {
                 continue;
             }
@@ -2131,6 +2155,8 @@ impl GeometryDepth {
 
 #[derive(Clone, Copy)]
 struct GeometryTransform {
+    position: [i32; 3],
+    normals: [[i32; 3]; 6],
     rows: [[i32; 3]; 3],
     translation: [i32; 3],
 }
@@ -2154,10 +2180,26 @@ impl GeometryTransform {
         frames
             .into_iter()
             .map(|frame| Self {
+                normals: frame.normals,
+                position: frame.position,
                 rows: frame.rows,
                 translation: frame.translation(),
             })
             .collect()
+    }
+
+    fn contains(&self, bound: &tm1_assets::scene::HierarchyBound, depth: i32) -> bool {
+        let point: [i32; 3] =
+            std::array::from_fn(|i| self.position[i].wrapping_add(bound.center[i]));
+        self.normals.iter().enumerate().all(|(i, normal)| {
+            let distance = normal
+                .iter()
+                .zip(point)
+                .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
+                / 4096;
+            let limit = if i == 5 { -8 * depth } else { 0 };
+            distance >= limit.wrapping_sub(bound.radius)
+        })
     }
 
     fn coordinate(self, axis: usize, point: [i16; 3]) -> i32 {
@@ -3165,6 +3207,7 @@ mod tests {
         cpu.put(base, &data);
         let cs = 0x80008000;
         let parent = tm1_core::drive::HierarchyTransform {
+            normals: [[0; 3]; 6],
             rows: [[3678, 1780, -292], [-202, 1050, 3525], [1513, -3097, 947]],
             position: [77, -420, 151],
         };
@@ -3269,6 +3312,77 @@ mod tests {
                 }
             }
             assert!(total > 0, "{name} has no reference objects");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn arena_frustum_matches_retail_bound_tests() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        for name in ["XARENA1", "WH1", "XFWY1", "PARK1", "SUBURB1", "ROOF1"] {
+            let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
+            let scene = tm1_assets::scene::Dmd::parse(&data)
+                .unwrap()
+                .battle_geometry(name == "XARENA1")
+                .unwrap();
+            let mut outcomes = [0; 2];
+            for (fov, depth, position) in [
+                (6, 1200i32, [0, 0, 0]),
+                (11, 1200, [752, -246, 157]),
+                (13, 100, [-5056, 3145, 1600]),
+                (13, 1000, [0, 0, -149]),
+            ] {
+                let normals = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| {
+                        let addr = 0x170270 + 96 * fov + 48 + 8 * i + 2 * j;
+                        i32::from(i16::from_le_bytes(
+                            cpu.ram[addr..addr + 2].try_into().unwrap(),
+                        ))
+                    })
+                });
+                let root = tm1_core::drive::HierarchyTransform {
+                    rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+                    position,
+                    normals,
+                };
+                let frames = GeometryTransform::hierarchy(root, &scene.transforms, [0, 4096]);
+                cpu.put(0x8018bf04, &depth.to_le_bytes());
+                for bound in &scene.bounds {
+                    let frame = frames[bound.transform];
+                    cpu.put(0x80008000, &bound.center.map(i32::to_le_bytes).concat());
+                    cpu.put(0x80008010, &frame.position.map(i32::to_le_bytes).concat());
+                    for (plane, n) in frame.normals.iter().enumerate() {
+                        for (axis, x) in n.iter().enumerate() {
+                            cpu.put(
+                                0x80008020 + (32 * (plane / 3) + 6 * axis + 2 * (plane % 3)) as u32,
+                                &(*x as i16).to_le_bytes(),
+                            );
+                        }
+                    }
+                    let expected = cpu.call(
+                        0x800fe034,
+                        &[
+                            0x80008000,
+                            bound.radius as u32,
+                            0x80008010,
+                            0x80008020,
+                            0x80008040,
+                        ],
+                    ) != 0;
+                    assert_eq!(
+                        frame.contains(bound, depth),
+                        expected,
+                        "{name} entry {fov} center {:?}",
+                        bound.center
+                    );
+                    outcomes[usize::from(expected)] += 1;
+                }
+            }
+            assert!(
+                outcomes.iter().all(|&count| count > 0),
+                "{name}: {outcomes:?}"
+            );
         }
     }
 

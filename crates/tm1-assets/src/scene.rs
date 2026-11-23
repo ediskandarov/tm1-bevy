@@ -175,7 +175,17 @@ pub struct NodeTransform {
 }
 
 #[derive(Debug)]
+pub struct HierarchyBound {
+    pub transform: usize,
+    pub center: [i32; 3],
+    pub radius: i32,
+    pub polygons: std::ops::Range<usize>,
+}
+
+#[derive(Debug)]
 pub struct Scene {
+    pub bounds: Vec<HierarchyBound>,
+    pub backdrop_start: Option<usize>,
     pub transforms: Vec<NodeTransform>,
     pub version: u32,
     pub root_id: u32,
@@ -268,6 +278,7 @@ impl<'a> Dmd<'a> {
         if indoor {
             let backdrop = self.unique_root(3)?;
             let first = scene.polygons.len();
+            scene.backdrop_start = Some(first);
             self.visit(
                 backdrop,
                 Transform::IDENTITY,
@@ -648,6 +659,8 @@ impl<'a> Dmd<'a> {
         include_lods: bool,
     ) -> Result<Scene> {
         let mut scene = Scene {
+            bounds: vec![],
+            backdrop_start: None,
             transforms: Vec::new(),
             version: self.version,
             root_id,
@@ -1000,6 +1013,25 @@ impl<'a> Dmd<'a> {
         // HIER pushes siblings in directory order and pops the last one first.
         for child in children.into_iter().rev() {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
+        }
+        if start < scene.polygons.len() {
+            let ofs = match d[p] {
+                0 if u32le(d, p + 24)? & 0x2000 == 0 => Some(p + 28),
+                1 if d[p + 21] & 4 == 0 => Some(p + 4),
+                _ => None,
+            };
+            if let Some(ofs) = ofs {
+                scene.bounds.push(HierarchyBound {
+                    transform: transform.index,
+                    center: [
+                        u32le(d, ofs)? as i32,
+                        u32le(d, ofs + 4)? as i32,
+                        u32le(d, ofs + 8)? as i32,
+                    ],
+                    radius: u32le(d, ofs + 12)? as i32,
+                    polygons: start..scene.polygons.len(),
+                });
+            }
         }
         if car_shadow {
             for poly in &mut scene.polygons[start..] {

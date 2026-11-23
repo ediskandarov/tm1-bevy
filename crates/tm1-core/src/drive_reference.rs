@@ -1794,12 +1794,20 @@ fn positional_sound_matches_retail() {
                 &([pitch as i16, 0, 0].map(i16::to_le_bytes)).concat(),
             );
             vec3_cpu(&mut cpu, node + 0x5c, offset);
-            cpu.call_until(0x8010a774, &[view], 0x8010a9fc);
-            assert_eq!(
-                listener.hierarchy_transform().translation()[2],
-                cpu.word(WORLD + 0x50) as i32
-            );
-            // csUpdMat has filled the child matrix and translation by its next SetRotMatrix.
+            let active_node = if fov == 13 { node + 0x600 } else { node };
+            for plane in 0..6 {
+                for axis in 0..3 {
+                    let src = 0x80170270 + 96 * fov + 48 + 8 * plane + 2 * axis;
+                    let value = cpu.ram[(src & 0x1fffff) as usize..][..2].to_vec();
+                    cpu.put(
+                        active_node + 0xc4 + 32 * (plane / 3) + 6 * axis + 2 * (plane % 3),
+                        &value,
+                    );
+                }
+            }
+            cpu.call_until(0x8010a774, &[view], 0x8010ab04);
+            let root = listener.hierarchy_transform(fov != 6);
+            assert_eq!(root.translation()[2], cpu.word(WORLD + 0x50) as i32);
             let child = source + 0x800;
             let rotation = car.rotation();
             let position = [pos[0] - i * 229, pos[1] + 617, pos[2] - 83];
@@ -1813,10 +1821,24 @@ fn positional_sound_matches_retail() {
                     .collect::<Vec<_>>(),
             );
             vec3_cpu(&mut cpu, child + 0x5c, position);
-            cpu.call_until(0x800ff070, &[child, child + 0x200], 0x800ff148);
-            let child_depth = listener
-                .hierarchy_transform()
-                .child(position, Some(rotation));
+            cpu.call(0x800ff070, &[child, child + 0x200]);
+            let child_depth = root.child(position, Some(rotation));
+            for (address, frame) in [(WORLD, root), (child, child_depth)] {
+                for (plane, n) in frame.normals.iter().enumerate() {
+                    for (axis, value) in n.iter().enumerate() {
+                        let addr = ((address & 0x1fffff) as usize)
+                            + 0xc4
+                            + 32 * (plane / 3)
+                            + 6 * axis
+                            + 2 * (plane % 3);
+                        assert_eq!(
+                            *value,
+                            i16::from_le_bytes(cpu.ram[addr..addr + 2].try_into().unwrap()) as i32,
+                            "plane {plane} axis {axis} fov {fov} yaw {yaw}"
+                        );
+                    }
+                }
+            }
             for (j, v) in child_depth.rows.as_flattened().iter().copied().enumerate() {
                 let offset = ((child + 0x34) & 0x1fffff) as usize + 2 * j;
                 assert_eq!(
@@ -5972,6 +5994,8 @@ fn hover_weapon_and_buffered_motor_queue_matches_disc() {
     // Supply the world-to-eye result directly; positional_sound_matches_retail checks VIEW.c.
     cpu.put(0x8010461c, &[8, 0, 224, 3, 0, 0, 0, 0]);
     let listener = SoundListener {
+        local_rotation: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+        parent_rotation: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
         eye: [0; 3],
         matrix: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
     };
