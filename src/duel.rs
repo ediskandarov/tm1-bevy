@@ -967,19 +967,18 @@ mod tests {
         );
         assert_eq!(world.resource::<Duel>().score_time_left, remaining);
         world.insert_resource(ButtonInput::<KeyCode>::default());
+        let last_instant = Duration::from_nanos(1);
         world
             .resource_mut::<Time<Real>>()
-            .advance_by(Duration::from_millis(50));
+            .advance_by(remaining - last_instant);
+        world.run_system_once(advance).unwrap();
         round_menu(&mut world);
         assert!(world.get_entity(hud_entity).is_ok());
+        assert_eq!(world.resource::<Duel>().score_time_left, last_instant);
         assert_eq!(world.resource::<Duel>().score, [2, 4]);
-        for _ in 0..400 {
-            world.run_system_once(advance).unwrap();
-            round_menu(&mut world);
-            if world.get_entity(hud_entity).is_err() {
-                break;
-            }
-        }
+        world.resource_mut::<Time<Real>>().advance_by(last_instant);
+        world.run_system_once(advance).unwrap();
+        round_menu(&mut world);
         assert!(world.get_entity(hud_entity).is_err());
         assert!(
             score_voices
