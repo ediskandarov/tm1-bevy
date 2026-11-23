@@ -40,6 +40,9 @@ impl Material2d for TextureBlend {
     fn depth_bias(&self) -> f32 {
         self.order as f32
     }
+    fn vertex_shader() -> ShaderRef {
+        "embedded://tm1_bevy/texture_blend.wesl".into()
+    }
     fn fragment_shader() -> ShaderRef {
         "embedded://tm1_bevy/texture_blend.wesl".into()
     }

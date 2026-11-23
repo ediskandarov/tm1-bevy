@@ -50,6 +50,8 @@ enum PacketMode {
     QuarterAdd,
     Opaque,
     SubtractOpaque,
+    UntexturedOpaque,
+    UntexturedAverage,
 }
 
 impl PacketMode {
@@ -59,10 +61,11 @@ impl PacketMode {
     }
 
     fn polygon(p: &tm1_assets::scene::Polygon) -> Self {
-        if p.semi_transparent {
-            p.texture.map_or(Self::Average, Self::texture)
-        } else {
-            Self::Opaque
+        match (p.texture, p.semi_transparent) {
+            (Some(texture), true) => Self::texture(texture),
+            (Some(_), false) => Self::Opaque,
+            (None, true) => Self::UntexturedAverage,
+            (None, false) => Self::UntexturedOpaque,
         }
     }
 }
@@ -981,6 +984,15 @@ fn body_light_color(env: u8) -> [f32; 3] {
     channels.map(|c| (32 + c) as f32 / 160.)
 }
 
+fn packet_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
+    [
+        f32::from(r) / 255.,
+        f32::from(g) / 255.,
+        f32::from(b) / 255.,
+        1.,
+    ]
+}
+
 fn draw_view(
     arena: &Arena,
     player: &tm1_core::drive::PlayerVehicle,
@@ -1429,7 +1441,7 @@ fn draw_view(
             let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
             let colors = [j, j + 1].map(|i| {
                 let level = (250 - 12 * i) as u8;
-                Color::srgb_u8(level, level, 255).to_linear().to_f32_array()
+                packet_rgb([level, level, 255])
             });
             quad(
                 &mut batch,
@@ -1437,7 +1449,7 @@ fn draw_view(
                 bucket_depth(bucket),
                 colors,
             );
-            batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
+            batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
         }
     }
     for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
@@ -1455,7 +1467,6 @@ fn draw_view(
         let vertex = |point: Vec2| {
             eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
         };
-        let rgb = |[r, g, b]: [u8; 3]| Color::srgb_u8(r, g, b).to_linear().to_f32_array();
         use tm1_core::bullet::Primitive;
         match primitive {
             Primitive::Line { points, colors } => {
@@ -1465,15 +1476,15 @@ fn draw_view(
                     &mut batch,
                     [a - normal, a + normal, b - normal, b + normal],
                     depth,
-                    colors.map(rgb),
+                    colors.map(packet_rgb),
                 );
-                batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
+                batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
             }
             Primitive::Triangle { points, colors } => {
                 for (point, color) in points.into_iter().zip(colors) {
-                    batch.push(vertex(screen(point)), white, rgb(color));
+                    batch.push(vertex(screen(point)), white, packet_rgb(color));
                 }
-                batch.order_packet(3, bucket, DrawPass::Bullets, PacketMode::Opaque);
+                batch.order_packet(3, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
             }
             Primitive::Sprite {
                 center,
