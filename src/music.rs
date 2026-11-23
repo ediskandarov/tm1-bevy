@@ -25,6 +25,7 @@ pub fn serial_gain(volume: u16) -> f32 {
 #[derive(Asset, TypePath, Clone)]
 pub struct CdTrack {
     pcm: Arc<[u8]>,
+    start: usize,
     normal_end: usize,
     first_lba: usize,
     resume_count: Arc<AtomicU32>,
@@ -34,25 +35,26 @@ pub struct CdTrack {
 impl CdTrack {
     pub fn load(disc: &Disc, number: usize) -> Result<Self> {
         let mut pcm = disc.audio_track(number)?;
-        let next = disc
-            .tracks
-            .get(number)
-            .ok_or_else(|| anyhow::anyhow!("missing next CD track"))?;
         let byte_count = pcm.len();
-        ensure!(byte_count > CD_START, "stage track is too short");
+        let start = if byte_count > CD_START { CD_START } else { 0 };
         let next_bin_sector: u64 = disc.tracks[..number]
             .iter()
             .map(|t| t.size / SECTOR_BYTES as u64)
             .sum();
         // cbready discards the sector within the reported absolute second and
         // repeats only once that second is strictly beyond EndPos.
-        let until_repeat = 75 - next_bin_sector % 75;
-        let normal_end = byte_count + until_repeat as usize * SECTOR_BYTES;
-        let next_index = next_bin_sector + next.index01;
-        let extended_sectors = next.index01 + 75 - next_index % 75;
-        pcm.resize(byte_count + extended_sectors as usize * SECTOR_BYTES, 0);
-        File::open(&next.path)?.read_exact(&mut pcm[byte_count..])?;
+        let mut normal_end = byte_count;
+        if let Some(next) = disc.tracks.get(number) {
+            let until_repeat = 75 - next_bin_sector % 75;
+            let next_index = next_bin_sector + next.index01;
+            let extended_sectors = next.index01 + 75 - next_index % 75;
+            let available = (next.size / SECTOR_BYTES as u64).min(extended_sectors);
+            pcm.resize(byte_count + available as usize * SECTOR_BYTES, 0);
+            File::open(&next.path)?.read_exact(&mut pcm[byte_count..])?;
+            normal_end += until_repeat.min(available) as usize * SECTOR_BYTES;
+        }
         Ok(Self {
+            start,
             pcm: pcm.into(),
             normal_end,
             first_lba: next_bin_sector as usize - byte_count / SECTOR_BYTES,
@@ -81,7 +83,7 @@ impl Decodable for CdTrack {
     fn decoder(&self) -> Self::Decoder {
         CdPlayback {
             track: self.clone(),
-            cursor: CD_START,
+            cursor: self.start,
             resume_count: self.resume_count.load(Ordering::Relaxed),
         }
     }
@@ -98,14 +100,17 @@ impl Iterator for CdPlayback {
                 self.resume_count = count;
                 let lba = self.track.first_lba + self.cursor / SECTOR_BYTES;
                 let reported = lba - lba % 75;
-                self.cursor = CD_START.max((reported - self.track.first_lba) * SECTOR_BYTES);
+                self.cursor = self
+                    .track
+                    .start
+                    .max(reported.saturating_sub(self.track.first_lba) * SECTOR_BYTES);
             }
         }
         if self.cursor == self.track.pcm.len()
             || (self.cursor == self.track.normal_end
                 && !self.track.extended.load(Ordering::Relaxed))
         {
-            self.cursor = CD_START;
+            self.cursor = self.track.start;
         }
         let pcm = &self.track.pcm[self.cursor..self.cursor + 2];
         self.cursor += 2;
