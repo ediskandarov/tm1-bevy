@@ -16,13 +16,17 @@ fn drive_trace() {
         cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     use tm1_core::drive::Vehicle;
-    for (vehicle, timing, ramp) in [
-        (Vehicle::YellowJacket, &[3u8][..], false),
-        (Vehicle::YellowJacket, &[3u8][..], true),
+    let mut first_layout_motion = Vec::new();
+    for (vehicle, timing, ramp, layout) in [
+        (Vehicle::YellowJacket, &[3u8][..], false, 1u8),
+        (Vehicle::YellowJacket, &[3u8][..], true, 1),
     ]
     .into_iter()
-    .chain(Vehicle::ROSTER.map(|car| (car, &[3, 4, 5, 3][..], false)))
-    {
+    .chain(
+        Vehicle::ROSTER
+            .into_iter()
+            .flat_map(|car| (0..4).map(move |layout| (car, &[3, 4, 5, 3][..], false, layout))),
+    ) {
         let mut taxi = Taxi::for_vehicle(&exe, vehicle).unwrap();
         // Construct the retail stat block independently from a cleared player slot.
         let stats = CAR + 0x138;
@@ -51,11 +55,31 @@ fn drive_trace() {
         let mut airborne = false;
         cpu.random_state = taxi.rng_state();
         cpu.put(CAR, taxi.state());
+        cpu.call(0x80150318, &[CAR, u32::from(layout)]);
+        taxi.set_pad_layout(layout);
+        // Ask the JP input reader which physical button activates each action.
+        let bindings = [29, 25, 27, 28, 31, 33, 34, 35, 36, 37].map(|offset| {
+            let button = cpu.ram[0x20000 + 0xc8 + offset] as u32;
+            (0..16)
+                .map(|bit| 1u32 << bit)
+                .find(|mask| {
+                    cpu.call(0x800ffb98, &[2, *mask]);
+                    cpu.call(0x800ffbe4, &[button, 0]) != 0
+                })
+                .unwrap()
+        });
         for entry in [0x80125bc0, 0x8012cd90, 0x80130680, 0x80130a8c, 0x801312f8] {
             cpu.call(entry, &[]);
         }
         cpu.put(0x8018c3b4, &0u32.to_le_bytes());
-        for step in 0..360 {
+        if layout == 0 {
+            first_layout_motion.clear();
+        }
+        let steps = if ramp { 360 } else { 600 };
+        let mut forward_speed = false;
+        let mut backward_speed = false;
+        let mut braking_turn = false;
+        for step in 0..steps {
             let phase = step % 120;
             let accelerate = phase < 63;
             let reverse = (78..115).contains(&phase);
@@ -69,8 +93,8 @@ fn drive_trace() {
                 left,
                 right,
                 hard_turn,
-                cycle_weapon: false,
-                previous_weapon: false,
+                cycle_weapon: step % 33 == 7,
+                previous_weapon: step % 47 == 11,
                 missile: step % 41 == 3,
                 fire_guns: step % 13 < 6,
                 turbo: (180..199).contains(&step),
@@ -80,10 +104,35 @@ fn drive_trace() {
                     accelerate: step < 100,
                     ..Default::default()
                 }
+            } else if step >= 360 {
+                Input {
+                    accelerate: step < 420 || step >= 550,
+                    reverse: (420..560).contains(&step),
+                    right: (420..430).contains(&step),
+                    hard_turn: (420..430).contains(&step),
+                    ..Default::default()
+                }
             } else {
                 input
             };
-            cpu.call(0x800ffb98, &[2, u32::from(input.ps1_buttons())]);
+            let pressed = [
+                input.accelerate,
+                input.reverse,
+                input.left,
+                input.right,
+                input.hard_turn,
+                input.turbo,
+                input.fire_guns,
+                input.missile,
+                input.cycle_weapon,
+                input.previous_weapon,
+            ];
+            let buttons = bindings
+                .iter()
+                .zip(pressed)
+                .filter(|(_, down)| *down)
+                .fold(0, |bits, (mask, _)| bits | mask);
+            cpu.call(0x800ffb98, &[2, buttons]);
             cpu.put(0x80170238, &(fields as u16).to_le_bytes());
             cpu.put(0x8017023a, &(60u16 / fields as u16).to_le_bytes());
             cpu.put(0x8017023c, &(step as u32 + 1).to_le_bytes());
@@ -91,6 +140,22 @@ fn drive_trace() {
             // Execute CarUpdate through the instruction following CarTransUpdate.
             cpu.call_until(0x8011125c, &[CAR], 0x801115c0);
             taxi.step(input, fields);
+            if timing.len() > 1 {
+                let motion = (taxi.position(), taxi.heading(), taxi.speed_mph(fields));
+                if layout == 0 {
+                    first_layout_motion.push(motion);
+                } else {
+                    assert_eq!(
+                        motion, first_layout_motion[step],
+                        "{vehicle:?} layout {layout} step {step}"
+                    );
+                }
+            }
+            if step >= 360 {
+                forward_speed |= step < 420 && taxi.speed_mph(fields) > 0;
+                backward_speed |= step >= 430 && taxi.speed_mph(fields) < 0;
+                braking_turn |= taxi.state()[0xc8 + 0x10] != 0;
+            }
             peak = peak.max(taxi.position()[2]);
             airborne |= (0..4).all(|i| taxi.state()[0x273 + 0x44 * i] != 0);
             assert_eq!(cpu.random_state, taxi.rng_state());
@@ -99,15 +164,20 @@ fn drive_trace() {
                 assert_eq!(
                     byte,
                     cpu.ram[start + offset],
-                    "step {step}, player offset {offset:#x}"
+                    "{vehicle:?} layout {layout} step {step}, player offset {offset:#x}"
                 );
             }
         }
         println!(
-            "{vehicle:?}, timing {timing:?}, ramp {ramp}, 360 steps, max body height {peak}, all tires airborne {airborne}"
+            "{vehicle:?}, timing {timing:?}, ramp {ramp}, layout {layout}, {steps} steps, max body height {peak}, all tires airborne {airborne}"
         );
         if ramp {
             assert!(peak > 96 && airborne);
+        } else {
+            assert!(
+                forward_speed && backward_speed && braking_turn,
+                "{vehicle:?} layout {layout}: forward {forward_speed}, reverse {backward_speed}, braking turn {braking_turn}"
+            );
         }
     }
 }
