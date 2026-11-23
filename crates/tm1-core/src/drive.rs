@@ -446,40 +446,32 @@ impl Input {
     }
 }
 impl PlayerVehicle {
-    pub fn from_executable(exe: &[u8]) -> Option<Self> {
-        Self::for_vehicle(exe, Vehicle::YellowJacket)
+    pub fn for_vehicle(vehicle: Vehicle) -> Self {
+        Self::on_level(vehicle, Level::Arena)
     }
-    pub fn for_vehicle(exe: &[u8], vehicle: Vehicle) -> Option<Self> {
-        Self::on_level(exe, vehicle, Level::Arena)
-    }
-    pub fn on_level(exe: &[u8], vehicle: Vehicle, level: Level) -> Option<Self> {
-        Self::seeded(exe, vehicle, level, 1)
-    }
-    pub fn seeded(exe: &[u8], vehicle: Vehicle, level: Level, initial_seed: u32) -> Option<Self> {
-        Self::contest(exe, vehicle, level, initial_seed, Difficulty::Medium)
+    pub fn on_level(vehicle: Vehicle, level: Level) -> Self {
+        Self::contest(vehicle, level, 1, Difficulty::Medium)
     }
     pub fn contest(
-        exe: &[u8],
         vehicle: Vehicle,
         level: Level,
         initial_seed: u32,
         difficulty: Difficulty,
-    ) -> Option<Self> {
-        Self::initialize(exe, vehicle, level, initial_seed, difficulty, None)
+    ) -> Self {
+        Self::initialize(vehicle, level, initial_seed, difficulty, None)
     }
     /// Initialize the two player records in slot order using the shared PS1 RNG.
     pub fn duel_players(
-        exe: &[u8],
         vehicles: [Vehicle; 2],
         level: Level,
         seed: u32,
         difficulty: Difficulty,
-    ) -> Option<[Self; 2]> {
-        let mut first = Self::initialize(exe, vehicles[0], level, seed, difficulty, Some(0))?;
-        let second = Self::initialize(exe, vehicles[1], level, first.seed, difficulty, Some(1))?;
+    ) -> [Self; 2] {
+        let mut first = Self::initialize(vehicles[0], level, seed, difficulty, Some(0));
+        let second = Self::initialize(vehicles[1], level, first.seed, difficulty, Some(1));
         first.initial_seed = second.seed;
         first.seed = second.seed;
-        Some([first, second])
+        [first, second]
     }
     /// The shell reloads the database into the existing player slots for a rematch.
     pub fn duel_rematch(previous: &[Self; 2], seed: u32) -> [Self; 2] {
@@ -493,14 +485,13 @@ impl PlayerVehicle {
         cars
     }
     fn initialize(
-        exe: &[u8],
         vehicle: Vehicle,
         level: Level,
         initial_seed: u32,
         difficulty: Difficulty,
         duel_slot: Option<i32>,
-    ) -> Option<Self> {
-        let trig = crate::math::TrigTables::from_executable(exe)?;
+    ) -> Self {
+        let trig = crate::math::TrigTables;
 
         let mut state = [0; 0x4a4];
         let mut seed = initial_seed;
@@ -518,7 +509,7 @@ impl PlayerVehicle {
                 )
             };
         }
-        Some(Self {
+        Self {
             cheat_controls: false,
             difficulty,
             level,
@@ -531,7 +522,7 @@ impl PlayerVehicle {
             used_starts: 0,
             last_fields: 3,
             seed,
-        })
+        }
     }
 }
 impl PlayerVehicle {
@@ -573,7 +564,7 @@ impl PlayerVehicle {
             frame: 0,
             level,
             vehicle: self.vehicle,
-            trig: self.trig.clone(),
+            trig: self.trig,
         }
     }
     /// InitLevel calls CarInit again after the database has registered all opponents.

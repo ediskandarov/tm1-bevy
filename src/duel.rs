@@ -176,8 +176,7 @@ pub fn start(
     }) {
         PlayerVehicle::duel_rematch(&previous.cars, seed)
     } else {
-        PlayerVehicle::duel_players(&disc.read("SIPS_600.07")?, kinds, level, seed, difficulty)
-            .ok_or_else(|| anyhow::anyhow!("missing JP rotation table"))?
+        PlayerVehicle::duel_players(kinds, level, seed, difficulty)
     };
     let setup_seed = crate::campaign::round_ticks(world);
     PlayerVehicle::initialize_duel_level(&mut cars, setup_seed);

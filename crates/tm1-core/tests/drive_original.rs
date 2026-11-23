@@ -27,7 +27,7 @@ fn drive_trace() {
             .into_iter()
             .flat_map(|car| (0..4).map(move |layout| (car, &[3, 4, 5, 3][..], false, layout))),
     ) {
-        let mut taxi = Taxi::for_vehicle(&exe, vehicle).unwrap();
+        let mut taxi = Taxi::for_vehicle(vehicle);
         // Construct the retail stat block independently from a cleared player slot.
         let stats = CAR + 0x138;
         cpu.put(stats, &[0; 0x120]);
@@ -187,13 +187,12 @@ fn drive_trace() {
 fn arena_replay() {
     use tm1_core::drive::{CollisionScene, PoliceCar};
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let exe = disc.read("SIPS_600.07").unwrap();
     let data = disc.read("UADMD/XARENA1.DMD").unwrap();
     let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
     let root = |id| roots.iter().find(|r| r.1 == id).unwrap().0;
     let run = || {
         let mut scene = CollisionScene::from_dmd(&data, root(1), root(20), root(50)).unwrap();
-        let mut taxi = Taxi::from_executable(&exe).unwrap();
+        let mut taxi = Taxi::for_vehicle(tm1_core::drive::Vehicle::YellowJacket);
         let mut ai = PoliceCar::spawn(&mut taxi);
         let mut hits = 0;
         let mut trace = Vec::new();

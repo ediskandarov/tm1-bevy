@@ -1928,7 +1928,7 @@ mod tests {
             let mut app = App::new();
             let scene = CollisionScene::from_dmd(&data, root(1), root(20), root(50)).unwrap();
             app.insert_resource(Drive::new(
-                PlayerVehicle::from_executable(&exe).unwrap(),
+                PlayerVehicle::for_vehicle(tm1_core::drive::Vehicle::YellowJacket),
                 scene,
                 &[Vehicle::Outlaw],
                 Default::default(),

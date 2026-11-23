@@ -1,47 +1,36 @@
 //! Original C arithmetic with explicit PS1 scalar layouts.
 
-#[derive(Clone)]
-pub struct TrigTables(Box<[i16]>);
+mod tables;
+use tables::{ROOT, ROTATION, TABLES};
+
+#[derive(Clone, Copy)]
+pub struct TrigTables;
 
 impl TrigTables {
-    pub fn from_executable(exe: &[u8]) -> Option<Self> {
-        if exe.get(..8)? != b"PS-X EXE" {
-            return None;
-        }
-        let base = u32::from_le_bytes(exe.get(24..28)?.try_into().ok()?);
-        let offset = 2048 + 0x80183f14u32.checked_sub(base)? as usize;
-        let trig: Vec<_> = exe
-            .get(offset..offset + (0x80188d58 - 0x80183f14) + 2050)?
-            .chunks_exact(2)
-            .map(|b| i16::from_le_bytes([b[0], b[1]]))
-            .collect();
-        Some(Self(trig.into_boxed_slice()))
-    }
     pub(crate) fn as_ptr(&self) -> *const i16 {
-        self.0.as_ptr()
+        TABLES.as_ptr()
     }
     pub fn sine(&self, angle: i32) -> i32 {
         let phase = (angle & 4095) as usize;
         let i = phase & 1023;
-        let v = i32::from(self.0[if phase & 1024 == 0 { i } else { 1024 - i }]);
+        let v = i32::from(TABLES[if phase & 1024 == 0 { i } else { 1024 - i }]);
         if phase & 2048 == 0 { v } else { -v }
     }
     pub fn rotation_yxz(&self, angles: [i16; 3]) -> Matrix {
         unsafe extern "C" {
             fn tm1_rotation_yxz(table: *const i16, angles: *const i16, matrix: *mut Matrix);
         }
-        let table = &self.0[(0x80184d58u32 - 0x80183f14) as usize / 2..];
+        let table = &TABLES[ROTATION..];
         let mut matrix = Matrix::default();
         unsafe { tm1_rotation_yxz(table.as_ptr(), angles.as_ptr(), &mut matrix) };
         matrix
     }
 
     pub fn sin_cos(&self, angle: i64) -> [i16; 2] {
-        let i =
-            (0x80184d58u32 - 0x80183f14) as usize / 2 + 2 * (angle.unsigned_abs() as usize & 4095);
+        let i = ROTATION + 2 * (angle.unsigned_abs() as usize & 4095);
         [
-            if angle < 0 { -self.0[i] } else { self.0[i] },
-            self.0[i + 1],
+            if angle < 0 { -TABLES[i] } else { TABLES[i] },
+            TABLES[i + 1],
         ]
     }
 }
@@ -105,16 +94,6 @@ pub fn normalize(input: [i32; 3]) -> Option<[i32; 3]> {
     Some(out)
 }
 
-const ROOT_TABLE: [u32; 192] = {
-    let mut table = [0; 192];
-    let mut index = 0;
-    while index < table.len() {
-        table[index] = ((index as u32 + 64) << 18).isqrt();
-        index += 1;
-    }
-    table
-};
-
 /// The SDK counts leading sign bits. Negative inputs occur when a game's
 /// wrapping sum of squares crosses the signed 32-bit boundary.
 fn sdk_square_root(value: i32) -> u32 {
@@ -128,13 +107,7 @@ fn sdk_square_root(value: i32) -> u32 {
     } else {
         value >> (24 - even)
     };
-    let coefficient = if normalized < 0 {
-        // An index before the root table lands in the SDK's quarter-wave sine table.
-        let phase = ((0x80184728u32 - 0x80183f14) / 2) as i32 + normalized - 64;
-        (4096.0 * (f64::from(phase) * std::f64::consts::PI / 2048.0).sin()).round() as u32
-    } else {
-        ROOT_TABLE[(normalized - 64) as usize]
-    };
+    let coefficient = TABLES[(ROOT as i32 + normalized - 64) as usize] as u32;
     (coefficient << ((31 - even) / 2)) >> 12
 }
 

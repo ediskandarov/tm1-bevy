@@ -77,9 +77,11 @@ void uasoundPlayTurboBoost(s32 a, s32 b)
 }
 
 static const s16* trig;
-// The tables are adjacent slices of the verified JP executable image.
-#define ROT_TABLE (trig + (0x80184d58 - 0x80183f14) / 2)
-#define ATAN_TABLE (trig + (0x80188d58 - 0x80183f14) / 2)
+// Word offsets in the Rust math tables (math/tables.rs).
+enum { ROOT_OFFSET = 1025 + 9, INV_ROOT_OFFSET = ROOT_OFFSET + 192 + 10,
+       ROTATION_OFFSET = INV_ROOT_OFFSET + 192, ATAN_OFFSET = ROTATION_OFFSET + 2 * 4096 };
+#define ROT_TABLE (trig + ROTATION_OFFSET)
+#define ATAN_TABLE (trig + ATAN_OFFSET)
 static u32 random_state;
 s32 arena_rand(void)
 {
@@ -114,7 +116,7 @@ s32 ratan2(s32 y, s32 x)
 }
 s32 tm1_fire_angle(const s16* tables, s32 dy, s32 dx)
 {
-    return table_atan2(tables + (0x80188d58 - 0x80183f14) / 2, dy, dx) + 512;
+    return table_atan2(tables + ATAN_OFFSET, dy, dx) + 512;
 }
 void do_smoke(VECTOR3* pos)
 {
@@ -583,7 +585,7 @@ s32 arena_sqrt(s32 value)
         return 0;
     int even = __builtin_clz(magnitude) & ~1;
     s32 normalized = even >= 24 ? (s32)((u32)value << (even - 24)) : value >> (24 - even);
-    int offset = (0x80184728 - 0x80183f14) / 2 + normalized - 64;
+    int offset = ROOT_OFFSET + normalized - 64;
     return ((u32)(s32)trig[offset] << ((31 - even) / 2)) >> 12;
 }
 static PlayerCar* arena_player;
@@ -1030,7 +1032,7 @@ void VectorNormal(VECTOR* in, VECTOR* out)
     u32 magnitude = (s32)squared < 0 ? ~squared : squared;
     int even = magnitude ? __builtin_clz(magnitude) & ~1 : 32;
     s32 index = even >= 24 ? (s32)(squared << (even - 24)) : (s32)squared >> (24 - even);
-    s32 factor = trig[(0x801848bc - 0x80183f14) / 2 + index - 64];
+    s32 factor = trig[INV_ROOT_OFFSET + index - 64];
     int shift = ((31 - even) >> 1) & 31;
     out->vx = x * factor >> shift;
     out->vy = y * factor >> shift;

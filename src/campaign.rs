@@ -228,10 +228,7 @@ impl Stage {
         contacts.start_pedestrians(level, &mut seed);
         let player = match entry {
             Entry::Continue(drive) => drive.player.for_next_stage_seeded(level, seed),
-            Entry::New(difficulty) => {
-                PlayerVehicle::contest(&disc.read("SIPS_600.07")?, vehicle, level, seed, difficulty)
-                    .ok_or_else(|| anyhow::anyhow!("missing JP SDK rotation table"))?
-            }
+            Entry::New(difficulty) => PlayerVehicle::contest(vehicle, level, seed, difficulty),
         };
         let arena = arena_art(
             disc,

@@ -461,7 +461,7 @@ mod tests {
         let db = Dmd::parse(&data).unwrap();
         let textures = Vram::from_tms(&disc.read("UADMD/CARS.TMS").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
-        let trig = tm1_core::math::TrigTables::from_executable(&exe).unwrap();
+        let trig = tm1_core::math::TrigTables;
         let mut cpu = crate::reference_cpu::Cpu::new(&exe);
         let camera = trig.rotation_yxz([182, 0, 0]);
         let cars =

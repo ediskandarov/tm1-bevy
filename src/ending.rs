@@ -383,7 +383,7 @@ mod tests {
     fn credit_poses_follow_the_jp_draw_loop() {
         let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
-        let player = PlayerVehicle::from_executable(&exe).unwrap();
+        let player = PlayerVehicle::for_vehicle(tm1_core::drive::Vehicle::YellowJacket);
         let mut cpu = crate::reference_cpu::Cpu::new(&exe);
         let state = 0x80010000;
         let cs = 0x80010200;
@@ -612,7 +612,7 @@ mod tests {
         assert_eq!(ending.phase, Phase::Credits);
         assert_eq!(ending.credits.lines.len(), 153);
         let mut pixels = ending.backdrop.clone();
-        let player = PlayerVehicle::from_executable(&disc.read("SIPS_600.07").unwrap()).unwrap();
+        let player = PlayerVehicle::for_vehicle(tm1_core::drive::Vehicle::YellowJacket);
         ending.draw_car(&mut pixels, &player);
         assert_ne!(pixels.as_slice(), ending.backdrop.as_slice());
         ending.field(EndingInput {

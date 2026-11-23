@@ -204,8 +204,7 @@ pub fn begin(
     let level = stage.drive.player.level();
     let (labels, centers, half_size) = layout(level);
     let fonts = Fonts::load(disc)?;
-    let trig = tm1_core::math::TrigTables::from_executable(&disc.read("SIPS_600.07")?)
-        .ok_or_else(|| anyhow::anyhow!("missing SDK rotation table"))?;
+    let trig = tm1_core::math::TrigTables;
     let mut lines = vec![
         if advanced {
             "CONGRATULATIONS!"
@@ -468,7 +467,7 @@ mod tests {
     fn deal_vertices_match_the_retail_card_packets() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         let exe = disc.read("SIPS_600.07").unwrap();
-        let trig = tm1_core::math::TrigTables::from_executable(&exe).unwrap();
+        let trig = tm1_core::math::TrigTables;
         let mut cpu = crate::reference_cpu::Cpu::new(&exe);
         for addr in [0x8015e39c, 0x8015e808, 0x80160c74, 0x80160d34] {
             cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);

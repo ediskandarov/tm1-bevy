@@ -71,7 +71,7 @@ impl Reference {
         let scene =
             CollisionScene::from_dmd(&data, root(1), root(vehicle as u16), root(opponent as u16))
                 .unwrap();
-        let mut player = PlayerVehicle::contest(&exe, vehicle, level, 1, difficulty).unwrap();
+        let mut player = PlayerVehicle::contest(vehicle, level, 1, difficulty);
         let mut police = PoliceCar::for_vehicle(&mut player, opponent);
         police.state[0x40] = 1;
         cpu.put(0x800188b8, &data);
@@ -549,7 +549,7 @@ fn warehouse_lineups_and_ai_profiles_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
-    let mut player = PlayerVehicle::from_executable(&exe).unwrap();
+    let mut player = PlayerVehicle::for_vehicle(Vehicle::YellowJacket);
     put(&mut cpu, 0x8018c36c, 1);
     let mut deck = ArenaDeck::default();
     let mut seed = 1;
@@ -611,8 +611,7 @@ fn group_spawn_original() {
         ] {
             put(&mut cpu, 0x8018c3b4, level as u32);
             for vehicle in Vehicle::ROSTER {
-                let mut player =
-                    PlayerVehicle::contest(&exe, vehicle, level, 1, difficulty).unwrap();
+                let mut player = PlayerVehicle::contest(vehicle, level, 1, difficulty);
                 let cards = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
                 cpu.call(init_points, &[]);
                 cpu.random_state = player.seed;
@@ -656,8 +655,7 @@ fn group_battle_selection_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
-    let mut player =
-        PlayerVehicle::on_level(&exe, Vehicle::YellowJacket, Level::Warehouse).unwrap();
+    let mut player = PlayerVehicle::on_level(Vehicle::YellowJacket, Level::Warehouse);
     let lineup = Opponent::spawn_lineup(
         &mut player,
         [Vehicle::Darkside, Vehicle::Thumper, Vehicle::CrimsonFury],
@@ -1542,8 +1540,7 @@ fn split_screen_chase_cameras_match_original() {
             Vehicle::ROSTER[i],
             Vehicle::ROSTER[(i + 1) % Vehicle::ROSTER.len()],
         ];
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+        let mut cars = PlayerVehicle::duel_players(kinds, Level::Arena, 1, Difficulty::Medium);
         for (slot, car) in cars.iter().enumerate() {
             let addr = PLAYER + (slot * car.state.len()) as u32;
             cpu.put(addr, &car.state);
@@ -1718,14 +1715,8 @@ fn positional_sound_matches_retail() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
-    let mut car = PlayerVehicle::contest(
-        &exe,
-        Vehicle::RoadKill,
-        Level::Warehouse,
-        1,
-        Difficulty::Medium,
-    )
-    .unwrap();
+    let mut car =
+        PlayerVehicle::contest(Vehicle::RoadKill, Level::Warehouse, 1, Difficulty::Medium);
     let node = RENDER_SCRATCH;
     let parent = node + 0x200;
     let source = node + 0x400;
@@ -4112,8 +4103,7 @@ fn rooftop_boss_handoff_matches_retail_after_helicopter_initialization() {
             let difficulty = [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard][index % 3];
             let layout = (index as u8 + fields) % 4;
             let initial_seed = 0x123456 + index as u32 * 5 + u32::from(fields);
-            let mut player =
-                PlayerVehicle::contest(&exe, vehicle, level, initial_seed, difficulty).unwrap();
+            let mut player = PlayerVehicle::contest(vehicle, level, initial_seed, difficulty);
             player.set_pad_layout(layout);
             let mut cpu = Cpu::new(&exe);
             cpu.call(0x80150224, &[difficulty as u32]);
@@ -4200,13 +4190,10 @@ fn rooftop_boss_handoff_matches_retail_after_helicopter_initialization() {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn campaign_player_carryover_matches_retail() {
-    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let exe = disc.read("SIPS_600.07").unwrap();
     for vehicle in Vehicle::ROSTER {
         // Warehouse has a matching model for each player in its vehicle-specific database.
         let mut r = Reference::on_difficulty(vehicle, false, Level::Warehouse, Difficulty::Hard);
-        let mut player =
-            PlayerVehicle::contest(&exe, vehicle, Level::Arena, 1, Difficulty::Hard).unwrap();
+        let mut player = PlayerVehicle::contest(vehicle, Level::Arena, 1, Difficulty::Hard);
         r.cpu.put(0x801502d4, &[8, 0, 224, 3, 1, 0, 2, 36]);
         put(&mut r.cpu, 0x8018bf9c, 60);
         for (level, points, fields) in [
@@ -4478,15 +4465,13 @@ fn duel_repair_only_holds_the_occupants_camera() {
     let data = disc
         .read(&format!("UA2PLAY/{}.DMD", level.duel_database().unwrap()))
         .unwrap();
-    let exe = disc.read("SIPS_600.07").unwrap();
     let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
     let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
     let root = |kind| dmd.roots.iter().find(|r| r.1 == kind).unwrap().0;
     for slot in 0..2 {
         let mut scene =
             CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, kinds, level, 1, Difficulty::Medium).unwrap();
+        let mut cars = PlayerVehicle::duel_players(kinds, level, 1, Difficulty::Medium);
         let car = &mut cars[slot];
         car.state[1] = 1;
         car.state[0xb6] = 1;
@@ -4549,8 +4534,7 @@ fn split_screen_stand_lightning_matches_retail_across_rounds() {
         cpu.put(0x80171314, &[0; 16]);
         register_retail_targets(&mut cpu, &dmd.roots);
         assert_eq!(cpu.word(0x80171314) != 0, level != Level::Arena);
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, vehicles, level, 7, Difficulty::Medium).unwrap();
+        let mut cars = PlayerVehicle::duel_players(vehicles, level, 7, Difficulty::Medium);
         for _ in 0..53 {
             cpu.random_state = cars[0].rng_state();
             if level != Level::Arena {
@@ -5275,7 +5259,7 @@ fn arena_animation_matches_retail() {
 fn radar_signals_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
-    let mut player = PlayerVehicle::from_executable(&exe).unwrap();
+    let mut player = PlayerVehicle::for_vehicle(Vehicle::YellowJacket);
     let mut cpu = Cpu::new(&exe);
     const RADAR: u32 = 0x8019e648;
     const OFFSET: u32 = 0x80030000;
@@ -5341,7 +5325,7 @@ fn radar_signals_original() {
 fn radar_hidden_frames_and_repair_stands_original() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
     let exe = disc.read("SIPS_600.07").unwrap();
-    let player = PlayerVehicle::from_executable(&exe).unwrap();
+    let player = PlayerVehicle::for_vehicle(Vehicle::YellowJacket);
     let mut cpu = Cpu::new(&exe);
     const RADAR: u32 = 0x8019e648;
     const OFFSET: u32 = 0x80030000;
@@ -6490,8 +6474,7 @@ fn duel_level_entry_matches_both_retail_player_records() {
             cpu.call_until(0x8014b498, &[level as u32], 0x80109bdc);
             let mut cars = match previous.as_ref() {
                 Some(ended) => PlayerVehicle::duel_rematch(ended, database_seed),
-                None => PlayerVehicle::duel_players(&exe, kinds, level, database_seed, difficulty)
-                    .unwrap(),
+                None => PlayerVehicle::duel_players(kinds, level, database_seed, difficulty),
             };
             assert_eq!(cars[1].seed, cpu.random_state);
             for (slot, car) in cars.iter_mut().enumerate() {
@@ -6558,13 +6541,11 @@ fn split_screen_player_starts_original() {
     ] {
         put(&mut cpu, 0x8018c3b4, level as u32);
         let players = PlayerVehicle::duel_players(
-            &exe,
             [Vehicle::Outlaw, Vehicle::Darkside],
             level,
             1,
             Difficulty::Medium,
-        )
-        .unwrap();
+        );
         for (slot, car) in players.iter().enumerate() {
             cpu.put(PLAYER + 0x388, &[0xff; 0x30]);
             cpu.call(0x80122ea4, &[PLAYER, u32::from(slot == 0)]);
@@ -6587,13 +6568,11 @@ fn duel_pad_routing_matches_original() {
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
     let mut cars = PlayerVehicle::duel_players(
-        &exe,
         [Vehicle::YellowJacket; 2],
         Level::Arena,
         1,
         Difficulty::Medium,
-    )
-    .unwrap();
+    );
     for (tick, buttons) in [0x00000080, 0x00800000, 0xa0802080, 0x00000000]
         .into_iter()
         .enumerate()
@@ -6621,8 +6600,7 @@ fn duel_machine_gun_sound_ids_original() {
         cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
     let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
-    let mut cars =
-        PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+    let mut cars = PlayerVehicle::duel_players(kinds, Level::Arena, 1, Difficulty::Medium);
     let data = disc.read("UA2PLAY/XARENA1.DMD").unwrap();
     let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
     let root = |k| roots.iter().find(|r| r.1 == k).unwrap().0;
@@ -6716,9 +6694,7 @@ fn hammerhead_duel_crush() {
             let target = 1 - slot;
             let mut kinds = [Vehicle::Outlaw; 2];
             kinds[slot] = Vehicle::Hammerhead;
-            let mut cars =
-                PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium)
-                    .unwrap();
+            let mut cars = PlayerVehicle::duel_players(kinds, Level::Arena, 1, Difficulty::Medium);
             let mut scene =
                 CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
             for (i, car) in cars.iter_mut().enumerate() {
@@ -6821,8 +6797,7 @@ fn split_screen_oil_appears_on_launch_pass() {
     let roots = tm1_assets::scene::Dmd::parse(&data).unwrap().roots;
     let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
     let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
-    let mut cars =
-        PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+    let mut cars = PlayerVehicle::duel_players(kinds, Level::Arena, 1, Difficulty::Medium);
     let mut scene =
         CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
     vec3(&mut cars[0].state, 0x388, [2700, 2200, 900]);
@@ -6886,7 +6861,6 @@ fn split_screen_oil_appears_on_launch_pass() {
 #[ignore = "requires the supported TM1_CUE"]
 fn shared_duel_crossfire() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let exe = disc.read("SIPS_600.07").unwrap();
     let data = disc
         .read(&format!(
             "UA2PLAY/{}.DMD",
@@ -6897,13 +6871,11 @@ fn shared_duel_crossfire() {
     let root = |kind| roots.iter().find(|r| r.1 == kind).unwrap().0;
     for shooter in 0..2 {
         let mut cars = PlayerVehicle::duel_players(
-            &exe,
             [Vehicle::YellowJacket, Vehicle::Outlaw],
             Level::Arena,
             1,
             Difficulty::Medium,
-        )
-        .unwrap();
+        );
         let mut scene = CollisionScene::for_duel(
             &data,
             root(1),
@@ -6943,7 +6915,6 @@ fn shared_duel_crossfire() {
 #[ignore = "requires the supported TM1_CUE"]
 fn duel_stages_from_disc() {
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let exe = disc.read("SIPS_600.07").unwrap();
     for level in [
         Level::Arena,
         Level::Warehouse,
@@ -6959,8 +6930,7 @@ fn duel_stages_from_disc() {
         let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
         let mut scene =
             CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, kinds, level, 1, Difficulty::Medium).unwrap();
+        let mut cars = PlayerVehicle::duel_players(kinds, level, 1, Difficulty::Medium);
         for (slot, car) in cars.iter_mut().enumerate() {
             car.state[0x49e..0x4a0].copy_from_slice(&(11 + slot as i16).to_le_bytes());
         }
@@ -6990,13 +6960,11 @@ fn duel_round_reseeds_from_retail_timer() {
     let exe = disc.read("SIPS_600.07").unwrap();
     let mut cpu = Cpu::new(&exe);
     let mut cars = PlayerVehicle::duel_players(
-        &exe,
         [Vehicle::YellowJacket, Vehicle::Outlaw],
         Level::Arena,
         1,
         Difficulty::Medium,
-    )
-    .unwrap();
+    );
     // Run the final GetCurTics/srand calls of uaInitDB and InitLevel. Only the
     // physical counter read is supplied; GetCurTics combines it with gTotalTics.
     for (entry, total, counter) in [
@@ -7040,8 +7008,7 @@ fn duel_winner_and_return_delay_original() {
         ] {
             cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
-        let mut cars =
-            PlayerVehicle::duel_players(&exe, kinds, Level::Arena, 1, Difficulty::Medium).unwrap();
+        let mut cars = PlayerVehicle::duel_players(kinds, Level::Arena, 1, Difficulty::Medium);
         let mut scene =
             CollisionScene::for_duel(&data, root(1), kinds.map(|v| root(v as u16))).unwrap();
         let mut winner = None;

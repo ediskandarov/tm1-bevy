@@ -73,8 +73,7 @@ impl Garage {
             bios,
             portraits: dmd.occupant_portraits()?,
             textures,
-            trig: tm1_core::math::TrigTables::from_executable(&disc.read("SIPS_600.07")?)
-                .ok_or_else(|| anyhow::anyhow!("invalid showroom rotation tables"))?,
+            trig: tm1_core::math::TrigTables,
             row: 0,
             field: 0,
             portrait_fields: 0,
