@@ -1799,6 +1799,30 @@ fn positional_sound_matches_retail() {
                 listener.world_depth_transform().1,
                 cpu.word(WORLD + 0x50) as i32
             );
+            // csUpdMat has filled the child matrix and translation by its next SetRotMatrix.
+            let child = source + 0x800;
+            let rotation = car.rotation();
+            let position = [pos[0] - i * 229, pos[1] + 617, pos[2] - 83];
+            put(&mut cpu, child + 0x10, WORLD);
+            cpu.put(
+                child + 0x14,
+                &rotation
+                    .as_flattened()
+                    .iter()
+                    .flat_map(|x| x.to_le_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            vec3_cpu(&mut cpu, child + 0x5c, position);
+            cpu.call_until(0x800ff070, &[child, child + 0x200], 0x800ff148);
+            let (depth_row, translation) = listener.model_depth_transform(position, rotation);
+            for (j, v) in depth_row.into_iter().enumerate() {
+                let offset = ((child + 0x40) & 0x1fffff) as usize + 2 * j;
+                assert_eq!(
+                    v,
+                    i16::from_le_bytes(cpu.ram[offset..offset + 2].try_into().unwrap()) as i32
+                );
+            }
+            assert_eq!(translation, cpu.word(child + 0x50) as i32);
             let matrix = ((WORLD + 0x34) & 0x1fffff) as usize;
             for (j, value) in listener.matrix.iter().flatten().enumerate() {
                 let at = matrix + 2 * j;

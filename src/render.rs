@@ -1000,34 +1000,15 @@ fn draw_view(
     let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
         .map(|n| f32::from(n) / 4096.);
-    let transform = |index: usize, p: [f32; 3]| {
-        if index >= arena.vehicle_start {
-            let car = arena
-                .body_ranges
-                .partition_point(|ranges| ranges[2].polygons.end <= index);
-            let pose = &poses[car];
-            let p = if let Some(Wheel::Hammerhead { pivot, axis }) =
-                arena.scene.polygons[index].wheel
-            {
-                let axis = Vec3::from_array(axis);
-                let pivot = Vec3::from_array(pivot);
-                let offset = Vec3::from_array(p) - pivot;
-                (pivot
-                    + offset * cos
-                    + axis.cross(offset) * sin
-                    + axis * axis.dot(offset) * (1. - cos))
-                    .to_array()
-            } else {
-                p
-            };
-            pose.origin
-                + world(std::array::from_fn(|i| {
-                    (0..3)
-                        .map(|j| pose.matrix[j][i] as f32 * p[j] / 4096.)
-                        .sum()
-                }))
+    let wheel_vertex = |p, wheel| {
+        if let Some(Wheel::Hammerhead { pivot, axis }) = wheel {
+            let axis = Vec3::from_array(axis);
+            let pivot = Vec3::from_array(pivot);
+            let offset = Vec3::from_array(p) - pivot;
+            (pivot + offset * cos + axis.cross(offset) * sin + axis * axis.dot(offset) * (1. - cos))
+                .to_array()
         } else {
-            world(p)
+            p
         }
     };
     let right = forward.cross(camera_up).normalize();
@@ -1073,7 +1054,17 @@ fn draw_view(
             }),
     );
     let mut hidden_geometry = vec![false; arena.scene.polygons.len()];
+    let mut car_depths = Vec::with_capacity(poses.len());
     for (stages, pose) in arena.body_ranges.iter().zip(poses) {
+        if let Some(view) = view {
+            let pos = [
+                pose.origin.x as i32,
+                -pose.origin.z as i32,
+                pose.origin.y as i32,
+            ];
+            let (row, translation) = view.model_depth_transform(pos, pose.matrix);
+            car_depths.push(GeometryDepth::from_world_matrix(row, translation));
+        }
         let body = &stages[pose.body_stage];
         let delta = pose.origin - eye;
         let matrix = tm1_core::math::Matrix {
@@ -1147,24 +1138,44 @@ fn draw_view(
             continue;
         }
         let slot = arena.tiles[&(p.texture, p.semi_transparent)];
+        let car = (i >= arena.vehicle_start).then(|| {
+            arena
+                .body_ranges
+                .partition_point(|ranges| ranges[2].polygons.end <= i)
+        });
+        let mut points = [Vec3::ZERO; 4];
+        let mut depths = [0; 4];
+        for (corner, vertex) in p.vertices.iter().enumerate() {
+            let local = wheel_vertex(vertex.position, p.wheel);
+            let center = if let Some(car) = car {
+                let pose = &poses[car];
+                pose.origin
+                    + world(std::array::from_fn(|k| {
+                        (0..3)
+                            .map(|j| pose.matrix[j][k] as f32 * local[j] / 4096.)
+                            .sum()
+                    }))
+            } else {
+                world(local)
+            };
+            points[corner] = billboard_point(center, p.billboard, corner);
+            depths[corner] = if let Some(transform) = car.and_then(|slot| car_depths.get(slot)) {
+                transform.vertex(world(local).to_array())
+            } else {
+                depth.vertex(points[corner].to_array())
+            };
+        }
         if !p.double_sided
             && p.billboard.is_none()
-            && back_facing([0, 1, 2].map(|j| transform(i, p.vertices[j].position)), eye)
+            && back_facing([points[0], points[1], points[2]], eye)
         {
             continue;
         }
         let indices = indices(p.vertices.len());
-        let tint = if i >= arena.vehicle_start {
-            let car = arena
-                .body_ranges
-                .partition_point(|ranges| ranges[2].polygons.end <= i);
-            body_light_color(lights[car])
-        } else {
-            [1.; 3]
-        };
+        let tint = car.map_or([1.; 3], |slot| body_light_color(lights[slot]));
         for &i_vertex in indices {
             let v = &p.vertices[i_vertex];
-            let point = billboard_point(transform(i, v.position), p.billboard, i_vertex);
+            let point = points[i_vertex];
             let [r, g, b, a] = v.color;
             batch.push(
                 point,
@@ -1172,7 +1183,7 @@ fn draw_view(
                 [r * tint[0], g * tint[1], b * tint[2], a],
             );
         }
-        batch.order_geometry(indices.len(), depth, p.fixed_ot, PacketMode::polygon(p));
+        batch.order_face(indices.len(), depths, p.fixed_ot, PacketMode::polygon(p));
     }
     let mut faces = [[0; 14]; 180];
     let count = contacts.contrail_faces(secondary, &mut faces);
@@ -1239,6 +1250,13 @@ fn draw_view(
         });
     for (model, pose) in missiles.chain(mercs).chain(pedestrians) {
         let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
+        let model_depth = view.map(|view| {
+            let rotation =
+                std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
+            let (row, translation) =
+                view.model_depth_transform([pose[1], pose[2], pose[3]], rotation);
+            GeometryDepth::from_world_matrix(row, translation)
+        });
         for p in &model.polygons {
             if p.animation
                 .iter()
@@ -1246,6 +1264,7 @@ fn draw_view(
             {
                 continue;
             }
+            let mut depths = [0; 4];
             let mut points = [Vec3::ZERO; 4];
             for (corner, vertex) in p.vertices.iter().enumerate() {
                 let rotated = std::array::from_fn(|k| {
@@ -1254,6 +1273,11 @@ fn draw_view(
                         .sum()
                 });
                 points[corner] = billboard_point(origin + world(rotated), p.billboard, corner);
+                depths[corner] = if let Some(transform) = model_depth {
+                    transform.vertex(world(vertex.position).to_array())
+                } else {
+                    depth.vertex(points[corner].to_array())
+                };
             }
             if !p.double_sided
                 && p.billboard.is_none()
@@ -1266,9 +1290,9 @@ fn draw_view(
                 let v = &p.vertices[i];
                 batch.push(points[i], arena.uv(slot, v.uv.into()), v.color);
             }
-            batch.order_geometry(
+            batch.order_face(
                 indices(p.vertices.len()).len(),
-                depth,
+                depths,
                 p.fixed_ot,
                 PacketMode::polygon(p),
             );
@@ -1944,29 +1968,26 @@ impl Batch {
         });
     }
 
-    fn geometry_bucket(
-        &mut self,
-        vertex_count: usize,
-        transform: GeometryDepth,
-        fixed_ot: u32,
-    ) -> Option<u32> {
-        let start = self.positions.len() - vertex_count;
-        let vertices = &self.positions[start..];
-        let depth = |i: usize| transform.vertex(vertices[i]);
-        // geomProc's triangle path compares SZ1 and SZ3, then SZ3 again.
-        // The quad path includes all four GTE depths (expanded indices 0,1,2,2,1,3).
-        let mut farthest = depth(0).max(depth(2));
-        if vertex_count == 6 {
-            farthest = farthest.max(depth(1)).max(depth(5));
+    fn order_face(&mut self, count: usize, depths: [u32; 4], fixed: u32, mode: PacketMode) {
+        // geomProc compares SZ1 and SZ3, then SZ3 again for triangles.
+        let mut farthest = depths[0].max(depths[2]);
+        if count == 6 {
+            farthest = farthest.max(depths[1]).max(depths[3]);
         }
         let bucket = farthest >> 3;
-        if !(2..=4095).contains(&bucket) {
+        if (2..=4095).contains(&bucket) {
+            self.order_packet(
+                count,
+                if fixed == 0 { bucket } else { fixed },
+                DrawPass::Hierarchy,
+                mode,
+            );
+        } else {
+            let start = self.positions.len() - count;
             self.positions.truncate(start);
             self.uvs.truncate(start);
             self.colors.truncate(start);
-            return None;
         }
-        Some(if fixed_ot == 0 { bucket } else { fixed_ot })
     }
 
     fn order_geometry(
@@ -1976,9 +1997,9 @@ impl Batch {
         fixed: u32,
         mode: PacketMode,
     ) {
-        if let Some(bucket) = self.geometry_bucket(count, transform, fixed) {
-            self.order_packet(count, bucket, DrawPass::Hierarchy, mode);
-        }
+        let vertices = &self.positions[self.positions.len() - count..];
+        let depths = [0, 1, 2, count - 1].map(|i| transform.vertex(vertices[i]));
+        self.order_face(count, depths, fixed, mode);
     }
 
     fn runs(mut self) -> Vec<(bool, Batch)> {

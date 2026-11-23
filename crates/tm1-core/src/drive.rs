@@ -1072,6 +1072,37 @@ impl SoundListener {
         (self.matrix[2], self.effect_coordinates([0; 3])[2])
     }
 
+    /// Depth registers for a child of the world CS after csUpdMat.
+    pub fn model_depth_transform(
+        &self,
+        position: [i32; 3],
+        rotation: [[i16; 3]; 3],
+    ) -> ([i32; 3], i32) {
+        let relative = std::array::from_fn(|i| position[i].wrapping_sub(self.eye[i]));
+        let local = crate::math::multiply(
+            &crate::math::Matrix {
+                rotation,
+                ..Default::default()
+            },
+            relative,
+            false,
+        );
+        let row = rotation.map(|axis| {
+            let sum: i32 = axis
+                .into_iter()
+                .zip(self.matrix[2])
+                .map(|(a, b)| i32::from(a) * b)
+                .sum();
+            (sum >> 12).clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+        });
+        let translation = row
+            .into_iter()
+            .zip(local)
+            .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
+            / 4096;
+        (row, translation)
+    }
+
     /// WEAPON and EXPLODE transform each point with mathMulVec before perspective division.
     pub fn effect_coordinates(&self, point: [i32; 3]) -> [i32; 3] {
         let delta: [i32; 3] = std::array::from_fn(|i| point[i].wrapping_sub(self.eye[i]));
