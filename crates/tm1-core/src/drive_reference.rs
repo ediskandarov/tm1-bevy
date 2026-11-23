@@ -2150,6 +2150,36 @@ fn rooftops_fall_camera_original() {
             assert_eq!(pose[3], r.cpu.word(cs + 0x54) as i16 as i32);
             assert_eq!(pose[4], r.cpu.word(cs + 0x58) as i16 as i32);
             assert_eq!(r.cpu.word(PLAYER + 0xf4), 5);
+            // Use the parent produced by UASetCameraPosition directly in viewProc.
+            let primary = cs + 0x200;
+            let rear = cs + 0x400;
+            put(&mut r.cpu, 0x8018c50c, primary);
+            put(&mut r.cpu, 0x8018c510, rear);
+            put(&mut r.cpu, 0x8018c51c, 6);
+            put(&mut r.cpu, 0x8018c520, 13);
+            put(&mut r.cpu, primary + 0x10, cs);
+            put(&mut r.cpu, rear + 0x10, cs + 0x600);
+            for which in 0..2 {
+                r.cpu.call_until(0x8010a774, &[which], 0x8010a9f4);
+                let transform = if which == 0 {
+                    SoundListener::new(&r.player, &view, None)
+                } else {
+                    SoundListener::rear_view(&r.player, &view)
+                };
+                let (eye, forward, down) = transform.camera_axes();
+                let axis = |row: usize| {
+                    std::array::from_fn(|col| {
+                        let at = (WORLD as usize & 0x1fffff) + 0x34 + 6 * row + 2 * col;
+                        i16::from_le_bytes(r.cpu.ram[at..at + 2].try_into().unwrap()) as i32
+                    })
+                };
+                assert_eq!(
+                    eye,
+                    [0, 4, 8].map(|d| -(r.cpu.word(WORLD + 0x68 + d) as i32))
+                );
+                assert_eq!(forward, axis(2));
+                assert_eq!(down, axis(1));
+            }
         }
         r.player.state[0x390..0x394].copy_from_slice(&6800i32.to_le_bytes());
         put(&mut r.cpu, PLAYER + 0x390, 6800);

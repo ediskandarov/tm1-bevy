@@ -1062,6 +1062,11 @@ impl SoundListener {
         Self { eye, matrix }
     }
 
+    /// Absolute eye, forward row and screen-down row of the JP view transform.
+    pub fn camera_axes(&self) -> ([i32; 3], [i32; 3], [i32; 3]) {
+        (self.eye, self.matrix[2], self.matrix[1])
+    }
+
     fn range_and_x(&self, position: [i32; 3]) -> (i32, i32) {
         let delta: [i32; 3] =
             std::array::from_fn(|j| position[j].wrapping_sub(self.eye[j]).min(3357));

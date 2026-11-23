@@ -272,6 +272,16 @@ fn world(p: [f32; 3]) -> Vec3 {
     Vec3::new(p[0], p[2], -p[1])
 }
 
+fn camera_pose(view: tm1_core::drive::SoundListener) -> (Vec3, Vec3, Vec3) {
+    let (eye, forward, down) = view.camera_axes();
+    let vector = |p: [i32; 3]| world(p.map(|v| v as f32));
+    (
+        vector(eye),
+        vector(forward).normalize(),
+        -vector(down).normalize(),
+    )
+}
+
 pub fn setup(
     duel: Option<Res<crate::duel::Duel>>,
     mut commands: Commands,
@@ -810,8 +820,6 @@ pub fn update(
         arena.yaw.cos() * arena.pitch.cos(),
     );
     let origin = world(drive.player.position().map(|v| v as f32));
-    let angle = drive.player.heading() as f32 * std::f32::consts::TAU / 4096.;
-    let vehicle_rotation = Quat::from_rotation_y(-angle);
     let matrix = drive.player.rotation();
     let poses: Vec<_> = std::iter::once(CarPose {
         origin,
@@ -828,70 +836,33 @@ pub fn update(
     .collect();
     let hide_player =
         !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
-    let rotate = |local: Vec3| {
-        if drive.camera.mode == tm1_core::drive::CarView::Cockpit {
-            let p = [local.x, -local.z, local.y];
-            world(std::array::from_fn(|i| {
-                (0..3).map(|j| matrix[j][i] as f32 * p[j] / 4096.).sum()
-            }))
-        } else {
-            vehicle_rotation * local
-        }
-    };
-    let (eye, target, camera_up) = if arena.overview {
-        (
-            arena.center + direction * arena.radius * arena.zoom,
-            arena.center,
-            Vec3::Y,
-        )
-    } else if let Some([x, y, z, pitch, yaw]) = drive.helicopter_pose().or(drive.camera.fixed_pose)
-    {
-        let eye = world([x, y, z].map(|v| v as f32));
-        let radians = std::f32::consts::TAU / 4096.;
-        let (sp, cp) = (pitch as f32 * radians).sin_cos();
-        let (sy, cy) = (yaw as f32 * radians).sin_cos();
-        (
-            eye,
-            eye + Vec3::new(sy * cp, -sp, -cy * cp) * 100.,
-            Vec3::new(sy * sp, cp, -cy * sp),
-        )
+    let (eye, forward, camera_up) = if arena.overview {
+        let eye = arena.center + direction * arena.radius * arena.zoom;
+        (eye, (arena.center - eye).normalize(), Vec3::Y)
     } else {
-        let eye = origin + rotate(world(drive.camera.offset.map(|v| v as f32)));
-        let pitch = drive.camera.pitch as f32 * std::f32::consts::TAU / 4096.;
-        let (sin, cos) = pitch.sin_cos();
-        (
-            eye,
-            eye + rotate(Vec3::new(0., -sin, -cos)) * 100.,
-            rotate(Vec3::new(0., cos, -sin)),
-        )
-    };
-    // VIEW.c viewProc(1) copies the parent pose and local translation, then
-    // reverses local yaw and subtracts 56 PS1 angle units from local pitch.
-    let angle = (drive.camera.pitch - 56) as f32 * std::f32::consts::TAU / 4096.;
-    let (sin, cos) = angle.sin_cos();
-    let (rear_forward, rear_up) = if drive.camera.fixed_pose.is_some() {
-        let forward = (target - eye).normalize();
-        (
-            -forward * cos - camera_up * sin,
-            camera_up * cos - forward * sin,
-        )
-    } else {
-        (
-            rotate(Vec3::new(0., -sin, cos)).normalize(),
-            rotate(Vec3::new(0., cos, sin)).normalize(),
-        )
+        camera_pose(tm1_core::drive::SoundListener::new(
+            &drive.player,
+            &drive.camera,
+            drive.helicopter_pose(),
+        ))
     };
     let mirror = drive.mirror && !arena.overview;
+    let rear_pose = mirror.then(|| {
+        camera_pose(tm1_core::drive::SoundListener::rear_view(
+            &drive.player,
+            &drive.camera,
+        ))
+    });
     for (mut camera, mut settings, sky, rear) in &mut cameras {
         if rear {
             settings.is_active = mirror;
-            if !mirror {
+            let Some((rear_eye, rear_forward, rear_up)) = rear_pose else {
                 continue;
-            }
-            *camera = Transform::from_translation(eye).looking_to(rear_forward, rear_up);
+            };
+            *camera = Transform::from_translation(rear_eye).looking_to(rear_forward, rear_up);
             camera.scale.x = VIEW_SCALE_X;
         } else {
-            *camera = Transform::from_translation(eye).looking_at(target, camera_up);
+            *camera = Transform::from_translation(eye).looking_to(forward, camera_up);
             if !arena.overview {
                 camera.scale.x = VIEW_SCALE_X;
             }
@@ -916,11 +887,11 @@ pub fn update(
         hide_player.then_some(0),
         false,
         eye,
-        (target - eye).normalize(),
+        forward,
         camera_up,
     );
     renderer.submit(&mut arena, false, packets);
-    if mirror {
+    if let Some((rear_eye, rear_forward, rear_up)) = rear_pose {
         let packets = draw_view(
             &arena,
             &drive.player,
@@ -930,7 +901,7 @@ pub fn update(
             &lights,
             hide_player.then_some(0),
             false,
-            eye,
+            rear_eye,
             rear_forward,
             rear_up,
         );
@@ -2189,24 +2160,7 @@ pub fn duel_view(
     for slot in 0..2 {
         let car = &duel.cars[slot];
         let view = &duel.cameras[slot];
-        let radians = std::f32::consts::TAU / 4096.;
-        let yaw = Quat::from_rotation_y(-(car.heading() as f32) * radians);
-        let (eye, forward, up) = if let Some([x, y, z, pitch, yaw]) = view.fixed_pose {
-            let (sp, cp) = (pitch as f32 * radians).sin_cos();
-            let (sy, cy) = (yaw as f32 * radians).sin_cos();
-            (
-                world([x as f32, y as f32, z as f32]),
-                Vec3::new(sy * cp, -sp, -cy * cp),
-                Vec3::new(sy * sp, cp, -cy * sp),
-            )
-        } else {
-            let (sin, cos) = (view.pitch as f32 * radians).sin_cos();
-            (
-                poses[slot].origin + yaw * world(view.offset.map(|v| v as f32)),
-                yaw * Vec3::new(0., -sin, -cos),
-                yaw * Vec3::new(0., cos, -sin),
-            )
-        };
+        let (eye, forward, up) = camera_pose(tm1_core::drive::SoundListener::new(car, view, None));
         let top = if slot == 0 { 0 } else { height / 2 };
         let h = if slot == 0 { height / 2 } else { height - top };
         let focal = window.height() * BATTLE_FOCAL / 240.;
