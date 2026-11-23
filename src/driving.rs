@@ -1772,7 +1772,7 @@ mod tests {
                         .map(|ai| (ai.vehicle(), ai.position(), ai.health()))
                         .collect::<Vec<_>>(),
                     (0..6)
-                        .filter_map(|i| drive.contacts.pedestrian_pose(i))
+                        .filter_map(|i| drive.contacts.pedestrian_pose(i, true))
                         .collect::<Vec<_>>(),
                 )
             };
@@ -1822,8 +1822,19 @@ mod tests {
                 app.world_mut()
                     .resource_mut::<ButtonInput<KeyCode>>()
                     .press(KeyCode::KeyW);
-                for _ in 0..180 {
+                let targets = |app: &App, secondary| {
+                    let scene = &app.world().resource::<Drive>().contacts;
+                    (
+                        std::array::from_fn::<_, 6, _>(|i| scene.pedestrian_pose(i, secondary)),
+                        std::array::from_fn::<_, 2, _>(|i| scene.merc_pose(i, secondary)),
+                        scene.hidden_pickups(secondary),
+                        scene.health_stands(secondary),
+                    )
+                };
+                for step in 0..180 {
+                    let before = targets(app, true);
                     tick(app, 50);
+                    assert_eq!(targets(app, false), before, "{level:?} step {step}");
                 }
             };
             run(&mut app);
@@ -1901,7 +1912,7 @@ mod tests {
                 d.opponents[0].position(),
                 d.opponents[0].health(),
                 d.player.rng_state(),
-                d.contacts.hidden_pickups(),
+                d.contacts.hidden_pickups(true),
             )
         };
         let (mut app, _) = build();

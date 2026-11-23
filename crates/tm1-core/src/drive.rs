@@ -1852,57 +1852,86 @@ impl CollisionScene {
             };
         }
     }
-    pub fn pedestrian_pose(&self, slot: usize) -> Option<[i32; 14]> {
+    pub fn pedestrian_pose(&self, slot: usize, secondary: bool) -> Option<[i32; 14]> {
         if slot >= 6 {
             return None;
         }
         unsafe extern "C" {
-            fn tm1_ped_pose(scene: *const std::ffi::c_void, slot: i32, pose: *mut i32) -> i32;
+            fn tm1_ped_pose(
+                scene: *const std::ffi::c_void,
+                slot: i32,
+                secondary: i32,
+                pose: *mut i32,
+            ) -> i32;
         }
         let mut pose = [0; 14];
-        (unsafe { tm1_ped_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
+        (unsafe {
+            tm1_ped_pose(
+                self.native.as_ptr(),
+                slot as i32,
+                secondary.into(),
+                pose.as_mut_ptr(),
+            )
+        } != 0)
             .then_some(pose)
     }
-    fn merc_state(&self, slot: usize) -> Option<[i32; 5]> {
+    fn merc_state(&self, slot: usize, secondary: bool) -> Option<[i32; 5]> {
         if slot >= 2 {
             return None;
         }
         unsafe extern "C" {
-            fn tm1_merc_pose(scene: *const std::ffi::c_void, slot: i32, out: *mut i32) -> i32;
+            fn tm1_merc_pose(
+                scene: *const std::ffi::c_void,
+                slot: i32,
+                secondary: i32,
+                out: *mut i32,
+            ) -> i32;
         }
         let mut pose = [0; 5];
-        (unsafe { tm1_merc_pose(self.native.as_ptr(), slot as i32, pose.as_mut_ptr()) } != 0)
+        (unsafe {
+            tm1_merc_pose(
+                self.native.as_ptr(),
+                slot as i32,
+                secondary.into(),
+                pose.as_mut_ptr(),
+            )
+        } != 0)
             .then_some(pose)
     }
-    pub fn merc_pose(&self, slot: usize) -> Option<[i32; 5]> {
-        self.merc_state(slot)
+    pub fn merc_pose(&self, slot: usize, secondary: bool) -> Option<[i32; 5]> {
+        self.merc_state(slot, secondary)
             .map(|[branch, x, y, z, flags]| [branch, x, y, z, flags & 1])
     }
     pub fn hover_sounds(
         &self,
         listener: &SoundListener,
     ) -> impl Iterator<Item = (HoverSound, [i32; 3])> {
-        let sources = [0, 1].map(|slot| self.merc_state(slot).filter(|pose| pose[4] & 1 != 0));
+        let sources =
+            [0, 1].map(|slot| self.merc_state(slot, true).filter(|pose| pose[4] & 1 != 0));
         hover_requests(sources, listener)
     }
-    pub fn damage_branch(&self, address: u32) -> u8 {
+    pub fn damage_branch(&self, address: u32, secondary: bool) -> u8 {
         unsafe extern "C" {
-            fn tm1_damage_branch(scene: *const std::ffi::c_void, address: u32) -> i32;
+            fn tm1_damage_branch(
+                scene: *const std::ffi::c_void,
+                address: u32,
+                secondary: i32,
+            ) -> i32;
         }
-        unsafe { tm1_damage_branch(self.native.as_ptr(), address) as u8 }
+        unsafe { tm1_damage_branch(self.native.as_ptr(), address, secondary.into()) as u8 }
     }
-    pub fn arena_switch_branches(&self) -> [u8; 8] {
+    pub fn arena_switch_branches(&self, secondary: bool) -> [u8; 8] {
         unsafe extern "C" {
-            fn tm1_arena_switch_states(scene: *const std::ffi::c_void) -> u64;
+            fn tm1_arena_switch_states(scene: *const std::ffi::c_void, secondary: i32) -> u64;
         }
-        unsafe { tm1_arena_switch_states(self.native.as_ptr()) }.to_le_bytes()
+        unsafe { tm1_arena_switch_states(self.native.as_ptr(), secondary.into()) }.to_le_bytes()
     }
     /// Active and selected DMD branch bits for the ten health stand slots.
-    pub fn health_stands(&self) -> (u16, u16) {
+    pub fn health_stands(&self, secondary: bool) -> (u16, u16) {
         unsafe extern "C" {
-            fn tm1_stand_state(scene: *const std::ffi::c_void) -> u32;
+            fn tm1_stand_state(scene: *const std::ffi::c_void, secondary: i32) -> u32;
         }
-        let state = unsafe { tm1_stand_state(self.native.as_ptr()) };
+        let state = unsafe { tm1_stand_state(self.native.as_ptr(), secondary.into()) };
         (state as u16, (state >> 16) as u16)
     }
     pub fn respawn_player(&mut self, player: &mut PlayerVehicle) {
@@ -2566,11 +2595,11 @@ impl Opponent {
 mod reference;
 
 impl CollisionScene {
-    pub fn hidden_pickups(&self) -> u64 {
+    pub fn hidden_pickups(&self, secondary: bool) -> u64 {
         unsafe extern "C" {
-            fn tm1_hidden_pickups(scene: *mut std::ffi::c_void) -> u64;
+            fn tm1_hidden_pickups(scene: *mut std::ffi::c_void, secondary: i32) -> u64;
         }
-        unsafe { tm1_hidden_pickups(self.native.as_ptr()) }
+        unsafe { tm1_hidden_pickups(self.native.as_ptr(), secondary.into()) }
     }
 }
 

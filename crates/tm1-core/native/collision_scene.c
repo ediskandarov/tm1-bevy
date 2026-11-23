@@ -7,6 +7,8 @@
 typedef struct DecodedNode {
     DbNode model;
     u32 address;
+    bool has_primary_branch;
+    u8 primary_branch;
 } DecodedNode;
 
 typedef struct ArenaTarget {
@@ -36,6 +38,10 @@ typedef struct CollisionScene {
     ArenaMerc mercs[2];
     ArenaPed peds[6], initial_peds[6];
     int ped_count, peds_ready;
+    int primary_peds[6][14], primary_mercs[2][5];
+    bool primary_targets_ready;
+    uint64_t primary_switches, primary_hidden_pickups;
+    u32 primary_stands;
     StaticCop cops[25];
     int cop_cycle;
     ArenaTarget targets[50];
@@ -460,15 +466,20 @@ void tm1_start_ped(CollisionScene* s, int slot, int level, int route, int end)
     p->model.unk0C = 1;
     s->initial_peds[slot] = *p;
     s->peds_ready = slot + 1;
+    s->primary_targets_ready = false;
 }
 void tm1_move_pedestrians(int level, const VECTOR3* pos)
 {
     for (int i = 0; i < current->peds_ready; i++)
         arena_move_ped(&current->peds[i], level, pos);
 }
-int tm1_ped_pose(const CollisionScene* s, int slot, int* pose)
+int tm1_ped_pose(const CollisionScene* s, int slot, int secondary, int* pose)
 {
-    if (slot >= s->peds_ready) return 0;
+    if (slot < 0 || slot >= s->peds_ready) return 0;
+    if (!secondary && s->primary_targets_ready) {
+        memcpy(pose, s->primary_peds[slot], sizeof s->primary_peds[slot]);
+        return 1;
+    }
     const ArenaPed* p = &s->peds[slot];
     pose[0] = p->node->sel;
     pose[1] = p->model.pos.vx;
@@ -493,11 +504,15 @@ void tm1_move_mercs(int level, const VECTOR3* player)
 {
     arena_move_mercs(current->mercs, level, player);
 }
-int tm1_merc_pose(const CollisionScene* scene, int slot, int* out)
+int tm1_merc_pose(const CollisionScene* scene, int slot, int secondary, int* out)
 {
     const ArenaMerc* merc = &scene->mercs[slot];
     if (!merc->node)
         return 0;
+    if (!secondary && scene->primary_targets_ready) {
+        memcpy(out, scene->primary_mercs[slot], sizeof scene->primary_mercs[slot]);
+        return 1;
+    }
     out[0] = merc->node->sel;
     out[1] = merc->model.pos.vx;
     out[2] = merc->model.pos.vy;
@@ -657,8 +672,9 @@ u8 health_stand_active(s32 id)
     return current && id >= 1 && id <= 10 && (current->active_stands & (1u << (id-1)));
 }
 
-u32 tm1_stand_state(const CollisionScene* scene)
+u32 tm1_stand_state(const CollisionScene* scene, int secondary)
 {
+    if (!secondary && scene->primary_targets_ready) return scene->primary_stands;
     u32 state = scene->active_stands;
     for (int i = 0; i < 10; i++)
         if (scene->stands[i] && scene->stands[i]->sel)
@@ -744,6 +760,7 @@ void tm1_reset_projectiles(CollisionScene* s)
 {
     memset(s->bullets, 0, sizeof s->bullets);
     s->drawn_bullet_count = 0;
+    s->primary_targets_ready = false;
     s->primary_missile_count = 0;
     s->primary_contrail_count = 0;
     memset(s->effects, 0, sizeof s->effects);
@@ -1025,13 +1042,16 @@ static void damage_target(int type, int sub, int damage)
     }
 }
 
-int tm1_damage_branch(const CollisionScene* s, u32 addr)
+int tm1_damage_branch(const CollisionScene* s, u32 addr, int secondary)
 {
     if (addr < s->base || (addr & 3) || (addr - s->base) / 4 >= s->slots)
         return 0;
     DbNode* n = s->nodes[(addr - s->base) / 4];
     if (!n)
         return 0;
+    const DecodedNode* decoded = (const DecodedNode*)n;
+    if (!secondary && s->primary_targets_ready && decoded->has_primary_branch)
+        return decoded->primary_branch;
     if (n->h.op == DB_OP_GROUP)
         return n->grp.nChild == 0;
     return n->h.op == DB_OP_SWITCH ? n->sw.sel : 0;
@@ -1272,8 +1292,9 @@ void tm1_check_ai_smash(AICar* car)
     check_smash(&car->stats, &car->motion, car->tires, car->flags, NULL, NULL, NULL);
 }
 
-uint64_t tm1_hidden_pickups(CollisionScene* s)
+uint64_t tm1_hidden_pickups(CollisionScene* s, int secondary)
 {
+    if (!secondary && s->primary_targets_ready) return s->primary_hidden_pickups;
     uint64_t mask = 0;
     for (int i = 0; i < 50; i++)
         if (s->pickups[i] && !s->pickups[i]->nChild)
@@ -1486,8 +1507,9 @@ void tm1_move_rooftop_targets(void)
     advance_rooftop_switch(current->arena_switches[7], &current->window_tick);
 }
 
-uint64_t tm1_arena_switch_states(const CollisionScene* scene)
+uint64_t tm1_arena_switch_states(const CollisionScene* scene, int secondary)
 {
+    if (!secondary && scene->primary_targets_ready) return scene->primary_switches;
     uint64_t states = 0;
     for (int i = 0; i < 8; i++)
         if (scene->arena_switches[i])
@@ -2005,6 +2027,28 @@ size_t tm1_missile_poses(CollisionScene* s, int secondary, s32 (*out)[13])
 
 void arena_capture_primary_models(void)
 {
+    for (int i = 0; i < current->peds_ready; i++)
+        tm1_ped_pose(current, i, 1, current->primary_peds[i]);
+    for (int i = 0; i < 2; i++)
+        tm1_merc_pose(current, i, 1, current->primary_mercs[i]);
+    current->primary_switches = tm1_arena_switch_states(current, 1);
+    current->primary_hidden_pickups = tm1_hidden_pickups(current, 1);
+    current->primary_stands = tm1_stand_state(current, 1);
+    for (int group = 0; group < 2; group++) {
+        for (int i = 0; i < current->num_damage_nodes[group]; i++) {
+            DecodedNode* n = (DecodedNode*)current->damage_nodes[group][i].node;
+            n->primary_branch = group ? n->model.grp.nChild == 0 : n->model.sw.sel;
+            n->has_primary_branch = true;
+        }
+    }
+    for (int i = 0; i < 25; i++) {
+        DecodedNode* n = (DecodedNode*)current->cops[i].node;
+        if (n) {
+            n->primary_branch = n->model.sw.sel;
+            n->has_primary_branch = true;
+        }
+    }
+    current->primary_targets_ready = true;
     tm1_capture_car_lights();
     memcpy(current->primary_wheel_steps, current->wheel_steps, sizeof current->wheel_steps);
     current->primary_missile_count = copy_missile_poses(current, current->primary_missiles);

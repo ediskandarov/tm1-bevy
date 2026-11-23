@@ -4320,7 +4320,7 @@ fn warehouse_stands_match_retail() {
         }
     }
     let _clear = Clear;
-    assert_eq!(r.scene.health_stands().0, 3);
+    assert_eq!(r.scene.health_stands(true).0, 3);
     for id in 1..=2 {
         let mut car = Record(r.player.state);
         car.0[0x270 + 14] = id;
@@ -4341,13 +4341,17 @@ fn warehouse_stands_match_retail() {
                 break;
             }
         }
-        assert_eq!(r.scene.health_stands().0 & (1 << (id - 1)), 0);
+        assert_eq!(r.scene.health_stands(true).0 & (1 << (id - 1)), 0);
     }
     for tick in 1..=4002 {
         unsafe { tm1_regenerate_stands() };
         r.cpu.call(0x80135e10, &[]);
         let retail = r.cpu.call(0x80135c74, &[1]) | (r.cpu.call(0x80135c74, &[2]) << 1);
-        assert_eq!(u32::from(r.scene.health_stands().0), retail, "tick {tick}");
+        assert_eq!(
+            u32::from(r.scene.health_stands(true).0),
+            retail,
+            "tick {tick}"
+        );
         assert_eq!(retail, if tick == 4002 { 3 } else { 0 });
     }
 }
@@ -5198,6 +5202,7 @@ fn radar_hidden_frames_and_repair_stands_original() {
 #[ignore = "requires the supported TM1_CUE"]
 fn barricade_impacts_match_retail_switches() {
     unsafe extern "C" {
+        fn arena_capture_primary_models();
         fn UAeffectBarricade(tag: i32, sub: i32, bearing: i32);
     }
     let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
@@ -5232,21 +5237,24 @@ fn barricade_impacts_match_retail_switches() {
         assert_eq!(r.cpu.word(0x8019cfe4 + 4 * slot as u32), addr);
         let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
         for bearing in [1, 2, 0, -1, 1] {
+            let before = r.cpu.ram[((addr + 7) & 0x1fffff) as usize];
             unsafe {
                 tm1_use_scene(r.scene.native.as_ptr());
+                arena_capture_primary_models();
                 UAeffectBarricade(700, slot as i32 + 1, bearing);
                 tm1_use_scene(std::ptr::null_mut());
             }
+            assert_eq!(r.scene.arena_switch_branches(false)[slot], before);
             r.cpu
                 .call(0x801468bc, &[700, slot as u32 + 1, bearing as u32]);
             assert_eq!(
-                r.scene.arena_switch_branches()[slot],
+                r.scene.arena_switch_branches(true)[slot],
                 r.cpu.ram[((addr + 7) & 0x1fffff) as usize],
                 "{level:?} slot {slot} bearing {bearing}"
             );
         }
     }
-    let damaged = r.scene.arena_switch_branches();
+    let damaged = r.scene.arena_switch_branches(true);
     assert!(damaged[..4].iter().all(|&branch| branch != 0));
     r.sync();
     put(&mut r.cpu, 0x8018c3b4, level as u32);
@@ -5262,9 +5270,9 @@ fn barricade_impacts_match_retail_switches() {
             damaged[slot as usize]
         );
     }
-    assert_eq!(r.scene.arena_switch_branches(), damaged);
+    assert_eq!(r.scene.arena_switch_branches(true), damaged);
     r.scene.reset_projectiles();
-    assert_eq!(r.scene.arena_switch_branches(), [0; 8]);
+    assert_eq!(r.scene.arena_switch_branches(true), [0; 8]);
 }
 
 #[test]
@@ -5374,7 +5382,10 @@ fn compare_rooftop_switches(
         r.cpu.call(0x8010d03c, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         assert_eq!(r.cpu.ram[0x188b8 + records[0]], 1, "retail shot at {pos:?}");
-        assert_eq!(r.scene.arena_switch_branches()[usize::from(first_slot)], 1);
+        assert_eq!(
+            r.scene.arena_switch_branches(true)[usize::from(first_slot)],
+            1
+        );
         if trigger == 1001 {
             let mut effects = [[0; 5]; 122];
             let count = r.scene.effects(&mut effects);
@@ -5410,7 +5421,7 @@ fn compare_rooftop_switches(
             r.cpu.call(advance, &[]);
             for (i, &offset) in records.iter().enumerate() {
                 assert_eq!(
-                    r.scene.arena_switch_branches()[usize::from(first_slot) + i],
+                    r.scene.arena_switch_branches(true)[usize::from(first_slot) + i],
                     r.cpu.ram[0x188b8 + offset],
                     "tick {tick}, switch {i}"
                 );
@@ -5418,7 +5429,8 @@ fn compare_rooftop_switches(
         }
         r.scene.reset_projectiles();
         assert_eq!(
-            &r.scene.arena_switch_branches()[usize::from(first_slot)..usize::from(first_slot) + 2],
+            &r.scene.arena_switch_branches(true)
+                [usize::from(first_slot)..usize::from(first_slot) + 2],
             &[0, 0]
         );
         let impact = [pos[0] + 125, pos[1], pos[2]];
@@ -5575,9 +5587,17 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
     let initial_branches: Vec<_> = art
         .damage_branches
         .iter()
-        .map(|(ptr, _, _)| r.scene.damage_branch(*ptr))
+        .map(|(ptr, _, _)| r.scene.damage_branch(*ptr, true))
         .collect();
     let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    unsafe extern "C" {
+        fn arena_capture_primary_models();
+    }
+    unsafe {
+        tm1_use_scene(r.scene.native.as_ptr());
+        arena_capture_primary_models();
+        tm1_use_scene(std::ptr::null_mut());
+    }
     for index in 0..count {
         let [kind, sub, hp, x, y, z] = target_record(&r.scene, index).unwrap();
         for (dx, owner, radius) in [
@@ -5625,7 +5645,8 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
                     "{db} hit {index} health {slot}"
                 );
             }
-            for &(ptr, _, _) in &art.damage_branches {
+            for (&(ptr, _, _), &initial) in art.damage_branches.iter().zip(&initial_branches) {
+                assert_eq!(r.scene.damage_branch(ptr, false), initial);
                 let p = (ptr & 0x1fffff) as usize;
                 let branch = if r.cpu.ram[p] == 1 {
                     u8::from(r.cpu.ram[p + 20] == 0)
@@ -5633,7 +5654,7 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
                     r.cpu.ram[p + 7]
                 };
                 assert_eq!(
-                    r.scene.damage_branch(ptr),
+                    r.scene.damage_branch(ptr, true),
                     branch,
                     "{db} hit {index} model {ptr:x}"
                 );
@@ -5651,7 +5672,7 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
         initial_branches.into_iter().eq(art
             .damage_branches
             .iter()
-            .map(|(ptr, _, _)| r.scene.damage_branch(*ptr)))
+            .map(|(ptr, _, _)| r.scene.damage_branch(*ptr, true)))
     );
 }
 
@@ -5879,7 +5900,7 @@ fn static_cop_encounters_match_disc() {
                         bulDispatchDamage(8, kind as i32, slot as i32 + 1, 1, std::ptr::null(), 0);
                         tm1_use_scene(std::ptr::null_mut());
                     }
-                    assert_eq!(r.scene.damage_branch(ptr), 4);
+                    assert_eq!(r.scene.damage_branch(ptr, true), 4);
                     assert_eq!(r.cpu.ram[(ptr as usize & 0x1fffff) + 7], 4);
                     phases.insert(4);
                 }
@@ -5887,7 +5908,7 @@ fn static_cop_encounters_match_disc() {
                 r.scene.phase(&mut r.player, &mut r.police, 3, 3);
                 let branch = r.cpu.ram[(ptr as usize & 0x1fffff) + 7];
                 assert_eq!(
-                    r.scene.damage_branch(ptr),
+                    r.scene.damage_branch(ptr, true),
                     branch,
                     "{level:?} {kind} tick {t}"
                 );
@@ -5904,7 +5925,7 @@ fn static_cop_encounters_match_disc() {
                 phases.into_iter().collect::<Vec<_>>(),
                 (0..7).collect::<Vec<_>>()
             );
-            assert_eq!(r.scene.damage_branch(ptr), 0);
+            assert_eq!(r.scene.damage_branch(ptr, true), 0);
         }
     }
     assert_eq!(kinds.into_iter().collect::<Vec<_>>(), [753, 754, 755]);
@@ -6005,7 +6026,7 @@ fn hover_mercenaries_match_disc() {
             vec3_cpu(&mut r.cpu, PLAYER + 0x388, target);
             if t == 900 {
                 for slot in 0..2 {
-                    if r.scene.merc_pose(slot).is_none() {
+                    if r.scene.merc_pose(slot, true).is_none() {
                         continue;
                     }
                     let kind = [750, 752][slot];
@@ -6024,7 +6045,7 @@ fn hover_mercenaries_match_disc() {
             for (slot, seen) in phases.iter_mut().enumerate() {
                 let merc = 0x801f83fc + 28 * slot as u32;
                 let cs = r.cpu.word(merc + 4);
-                let pose = r.scene.merc_pose(slot);
+                let pose = r.scene.merc_pose(slot, true);
                 assert_eq!(cs != 0, pose.is_some());
                 if let Some([branch, x, y, z, hover]) = pose {
                     let request = hover_requests
@@ -6035,7 +6056,7 @@ fn hover_mercenaries_match_disc() {
                         1 | (firing << 1) | (launching << 2)
                     });
                     assert_eq!(
-                        r.scene.merc_state(slot).unwrap()[4] as u32,
+                        r.scene.merc_state(slot, true).unwrap()[4] as u32,
                         expected,
                         "{level:?} slot {slot} tick {t}"
                     );
@@ -6082,7 +6103,7 @@ fn pedestrians_match_disc() {
         r.player.state[0x3a8..0x3aa].copy_from_slice(&517i16.to_le_bytes());
         r.sync();
         let start_poses: Vec<_> = (0..kinds.len())
-            .map(|i| r.scene.pedestrian_pose(i))
+            .map(|i| r.scene.pedestrian_pose(i, true))
             .collect();
         let mut hidden = vec![false; kinds.len()];
         let mut shots = false;
@@ -6136,7 +6157,7 @@ fn pedestrians_match_disc() {
                 hidden[i] |= pose[13] == 0;
                 assert_eq!(
                     Some(pose),
-                    r.scene.pedestrian_pose(i),
+                    r.scene.pedestrian_pose(i, true),
                     "{level:?} tick {tick} slot {i}"
                 );
             }
@@ -6149,7 +6170,7 @@ fn pedestrians_match_disc() {
         assert_eq!(
             start_poses,
             (0..kinds.len())
-                .map(|i| r.scene.pedestrian_pose(i))
+                .map(|i| r.scene.pedestrian_pose(i, true))
                 .collect::<Vec<_>>()
         );
     }

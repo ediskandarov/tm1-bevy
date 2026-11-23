@@ -1023,9 +1023,9 @@ fn draw_view(
     let right = forward.cross(camera_up).normalize();
     let up = right.cross(forward);
     let near = arena.radius * 0.005;
-    let hidden = contacts.hidden_pickups();
-    let switches = contacts.arena_switch_branches();
-    let (_, stand_branches) = contacts.health_stands();
+    let hidden = contacts.hidden_pickups(secondary);
+    let switches = contacts.arena_switch_branches(secondary);
+    let (_, stand_branches) = contacts.health_stands(secondary);
     let mut batch = Batch::default();
     if !secondary {
         let [r, g, b, a] = contacts.hit_sheet();
@@ -1087,7 +1087,7 @@ fn draw_view(
         hidden_geometry[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
     }
     for (address, branch, polygons) in &arena.scene.damage_branches {
-        if contacts.damage_branch(*address) != *branch {
+        if contacts.damage_branch(*address, secondary) != *branch {
             hidden_geometry[polygons.clone()].fill(true);
         }
     }
@@ -1213,7 +1213,7 @@ fn draw_view(
         .iter()
         .enumerate()
         .filter_map(|(slot, frames)| {
-            let [branch, x, y, z, _] = contacts.merc_pose(slot)?;
+            let [branch, x, y, z, _] = contacts.merc_pose(slot, secondary)?;
             Some((
                 frames.get(branch as usize)?,
                 [0, x, y, z, 4096, 0, 0, 0, 4096, 0, 0, 0, 4096],
@@ -1224,7 +1224,7 @@ fn draw_view(
         .iter()
         .enumerate()
         .filter_map(|(i, frames)| {
-            let pose = contacts.pedestrian_pose(i)?;
+            let pose = contacts.pedestrian_pose(i, secondary)?;
             if pose[13] == 0 {
                 return None;
             }
