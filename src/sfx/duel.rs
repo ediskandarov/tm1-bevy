@@ -243,7 +243,10 @@ pub fn mix(
             continue;
         }
         let levels = Levels::new(channels, percent);
-        for tone in layers {
+        for tone in layers
+            .iter()
+            .take(super::TONE_POOL_SIZE.saturating_sub(ranked.len()))
+        {
             let order = sequence.next();
             let entity = commands
                 .spawn((
@@ -712,12 +715,36 @@ mod tests {
         }
         // Program 19 alternates three priority-21 tones with one priority-81 tone.
         world.run_system_once(crate::duel::advance).unwrap();
-        let mut expected: Vec<_> = world
+        let disc = &world.resource::<crate::campaign::Campaign>().0;
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let mut engines: Vec<_> = world
             .query_filtered::<&Voice, With<DuelEngine>>()
             .iter(&world)
             .map(|v| (v.order, v.priority, v.distance))
             .collect();
-        expected.sort_by_key(|v| v.0);
+        engines.sort_by_key(|v| v.0);
+        let mut expected = Vec::new();
+        let mut allocate = |order, priority, range: u32| {
+            let record = cpu.call(0x80107280, &[]);
+            if record != 0 {
+                cpu.put(record + 6, &[priority]);
+                cpu.put(record + 0x74, &range.to_le_bytes());
+                if let Some(order) = order {
+                    cpu.put(
+                        0x80007000 + 4 * expected.len() as u32,
+                        &record.to_le_bytes(),
+                    );
+                    expected.push((record, order));
+                }
+            }
+        };
+        for (order, priority, range) in engines {
+            allocate(Some(order), priority, range);
+        }
+        // The previous crash still owns nine tone records during admission.
+        for _ in 0..9 {
+            allocate(None, 0, 0);
+        }
         let mut serial = world.resource::<VoiceSequence>().serial;
         let mut requests = Vec::new();
         for i in 0..10 {
@@ -728,21 +755,23 @@ mod tests {
             requests.push(request(4, None, percent, channels, range));
             for tone in &world.resource::<DuelBank>().programs[4] {
                 serial += 1;
-                expected.push((serial, tone.priority, range));
+                allocate(Some(serial), tone.priority, range);
             }
         }
-        tm1_core::sound::sort_requested(&mut expected, |v| v.2, |v| v.1);
-        let mut expected: Vec<_> = expected[..24].iter().map(|v| v.0).collect();
+        cpu.call(0x80104f98, &[0x80007000, 0, expected.len() as u32 - 1]);
+        let mut expected: Vec<_> = (0..24)
+            .map(|i| {
+                let record = cpu.word(0x80007000 + 4 * i);
+                expected.iter().find(|(ptr, _)| *ptr == record).unwrap().1
+            })
+            .collect();
         expected.sort_unstable();
         world.resource_mut::<Duel>().sounds = requests;
         world.run_system_once(mix).unwrap();
         let mut survivors: Vec<_> = world
             .query_filtered::<&Voice, With<AudioPlayer<StereoPcm>>>()
             .iter(&world)
-            .map(|v| {
-                assert_eq!(v.priority, 21);
-                v.order
-            })
+            .map(|v| v.order)
             .collect();
         survivors.sort_unstable();
         assert_eq!(survivors, expected);

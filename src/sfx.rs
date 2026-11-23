@@ -167,6 +167,8 @@ impl Sample {
 
 // Program 26 is the four-tone sound at ID 0x82 in the JP sound table.
 const TURBO_PROGRAM: usize = 26;
+// SOUND.c allocates tone records before it selects the 24 hardware voices.
+const TONE_POOL_SIZE: usize = 35;
 
 fn battle_programs(
     vehicle: tm1_core::drive::Vehicle,
@@ -627,7 +629,10 @@ pub fn update(
             continue;
         }
         let control = pcm::Levels::new(channels, percent);
-        for tone in tones {
+        for tone in tones
+            .iter()
+            .take(TONE_POOL_SIZE.saturating_sub(ranked.len()))
+        {
             let clip = tone.clip.with_levels(control.clone());
             let order = sequence.next();
             let entity = commands
