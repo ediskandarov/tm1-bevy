@@ -1032,11 +1032,7 @@ fn draw_view(
             }
         }
         for lod in &sky.lods {
-            lod.hide_other_branches(
-                [eye.x - sky_origin.x, sky_origin.z - eye.z, eye.y],
-                3,
-                hidden,
-            );
+            lod.hide_at_position(frames[lod.transform_index()].position, 3, hidden);
         }
         Some(frames)
     });
@@ -1056,7 +1052,15 @@ fn draw_view(
                     hidden_geometry[body.polygons.clone()][bound.polygons.clone()].fill(true);
                 }
             }
+            for lod in &body.lods {
+                lod.hide_at_position(
+                    frames[lod.transform_index()].position,
+                    3,
+                    &mut hidden_geometry[body.polygons.clone()],
+                );
+            }
             car_depths.push(frames);
+            continue;
         }
         let delta = pose.origin - eye;
         let matrix = tm1_core::math::Matrix {
@@ -1088,12 +1092,25 @@ fn draw_view(
                 hidden_geometry[bound.polygons.clone()].fill(true);
             }
         }
-    }
-    for lod in arena.scene.lods.iter().flatten() {
-        lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_geometry);
-    }
-    for controller in &arena.scene.visibility {
-        hidden_geometry[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
+        for lod in arena.scene.lods.iter().flatten() {
+            lod.hide_at_position(
+                frames[lod.transform_index()].position,
+                3,
+                &mut hidden_geometry,
+            );
+        }
+        for controller in &arena.scene.visibility {
+            hidden_geometry
+                [controller.hidden_at_position(frames[controller.transform_index()].position)]
+            .fill(true);
+        }
+    } else {
+        for lod in arena.scene.lods.iter().flatten() {
+            lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_geometry);
+        }
+        for controller in &arena.scene.visibility {
+            hidden_geometry[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
+        }
     }
     for (address, branch, polygons) in &arena.scene.damage_branches {
         if contacts.damage_branch(*address, secondary) != *branch {
@@ -3714,6 +3731,237 @@ mod tests {
             }
         }
         assert_eq!((count, overflow), (200, 20));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_branches_match_jp_stack_during_world_traversal() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let mut counts = [0; 2];
+        for name in ["XARENA1", "WH1", "XFWY1", "PARK1", "SUBURB1", "ROOF1"] {
+            let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
+            let scene = tm1_assets::scene::Dmd::parse(&data)
+                .unwrap()
+                .battle_world()
+                .unwrap();
+            let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+            cpu.put(u32::from_le_bytes(data[12..16].try_into().unwrap()), &data);
+            let cs = 0x80008000;
+            cpu.call(0x800fe9a0, &[3]);
+            // Include branches behind the camera. Keep the traversal's real capacity and switch state.
+            cpu.put(0x800fe034, &[8, 0, 224, 3, 1, 0, 2, 36]);
+            for position in [
+                [0, 0, 0],
+                [752, -246, 157],
+                [-5056, 3145, 1600],
+                [2013, 10008, -348],
+            ] {
+                let root = tm1_core::drive::HierarchyTransform {
+                    rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+                    position,
+                    normals: [[0; 3]; 6],
+                };
+                let frames = GeometryTransform::hierarchy(root, &scene.transforms, [0, 4096]);
+                cpu.put(cs + 0x68, &position.map(i32::to_le_bytes).concat());
+                cpu.put(0x8018c484, &[0; 12]);
+                let mut pending = None;
+                cpu.call_observed(0x800fd914, &[cs, scene.root_id], 0x80000080, |cpu| {
+                    if let Some((ret, expected, actual)) = pending {
+                        if cpu.pc() == ret {
+                            assert_eq!(expected, actual, "{name} at {position:?}");
+                            pending = None;
+                        } else if cpu.pc() == 0x800fd7dc {
+                            pending = Some((ret, expected, Some(cpu.r[4])));
+                        }
+                    }
+                    let ctrl = cpu.pc() == 0x800fe2a4;
+                    if cpu.pc() != 0x800fe144 && !ctrl {
+                        return;
+                    }
+                    let node = cpu.r[4];
+                    let pos = [8, 12, 16].map(|d| cpu.word(cpu.r[5] + d) as i32);
+                    let expected = if ctrl {
+                        let c = scene
+                            .visibility
+                            .iter()
+                            .find(|c| c.node == node && frames[c.transform_index()].position == pos)
+                            .expect("controller stack position");
+                        let addr = cpu.word(node + if c.inside_at_position(pos) { 16 } else { 12 });
+                        (addr != 0).then_some(addr)
+                    } else {
+                        let l = scene
+                            .lods
+                            .as_ref()
+                            .unwrap()
+                            .iter()
+                            .find(|l| l.node == node && frames[l.transform_index()].position == pos)
+                            .expect("LOD stack position");
+                        l.selected_child(pos, 3)
+                    };
+                    counts[usize::from(ctrl)] += 1;
+                    pending = Some((cpu.r[31], expected, None));
+                });
+                assert!(pending.is_none());
+            }
+        }
+        assert!(counts.iter().all(|&n| n > 0), "{counts:?}");
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn nested_lod_uses_stack_position_even_when_retail_matrix_slots_fill() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut data = disc.read("UADMD/WH1.DMD").unwrap();
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        let source = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .battle_world()
+            .unwrap();
+        let object = source.object_ids[0];
+        let other = *source.object_ids.iter().find(|&&id| id != object).unwrap();
+        for id in [object, other] {
+            data[(id - base) as usize + 25] |= 0x20;
+        }
+        // Two oblique rotations around a two-range LOD using real Warehouse objects.
+        let start = data.len().next_multiple_of(4);
+        data.resize(start + 144, 0);
+        let root = base + start as u32;
+        data[24..28].copy_from_slice(&root.to_le_bytes());
+        let block = &mut data[start..];
+        for (offset, rot, trans, child) in [
+            (
+                0usize,
+                [[3784i16, -1567, 0], [1567, 3784, 0], [0, 0, 4096]],
+                [41i32, -93, 51],
+                root + 44,
+            ),
+            (
+                44,
+                [[4096, 0, 0], [0, 2896, -2896], [0, 2896, 2896]],
+                [-15, 27, 33],
+                root + 88,
+            ),
+        ] {
+            block[offset] = 5;
+            block[offset + 4..offset + 22].copy_from_slice(
+                &rot.as_flattened()
+                    .iter()
+                    .flat_map(|n| n.to_le_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            block[offset + 24..offset + 36].copy_from_slice(&trans.map(i32::to_le_bytes).concat());
+            block[offset + 38] = 1;
+            block[offset + 40..offset + 44].copy_from_slice(&child.to_le_bytes());
+        }
+        block[2..4].copy_from_slice(&0xfffeu16.to_le_bytes());
+        block[88] = 2;
+        for (ofs, w) in [
+            (104, 2),
+            (108, root + 116),
+            (112, root + 128),
+            (116, 10000),
+            (120, 0),
+            (124, object),
+            (128, u32::MAX),
+            (132, 10000),
+            (136, other),
+        ] {
+            block[ofs..ofs + 4].copy_from_slice(&w.to_le_bytes());
+        }
+        let mut db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        db.roots = vec![(root, 1)];
+        let scene = db.battle_world().unwrap();
+        let lod = &scene.lods.as_ref().unwrap()[0];
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(base, &data);
+        let cs = 0x80008000;
+        let identity = [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]];
+        for offset in [0x34, 0x3c, 0x44] {
+            cpu.put(cs + offset, &4096i16.to_le_bytes());
+        }
+        cpu.call(0x800fe9a0, &[3]);
+        let mut choices = std::collections::BTreeSet::new();
+        let mut different = 0;
+        let mut inherited_rows = None;
+        for initial in [0u32, 69, 70] {
+            for y in -8..8 {
+                for x in 735..760 {
+                    let position = [x, y, 93];
+                    let frame = tm1_core::drive::HierarchyTransform {
+                        rows: identity,
+                        position,
+                        normals: [[0; 3]; 6],
+                    };
+                    let frames = GeometryTransform::hierarchy(frame, &scene.transforms, [0, 4096]);
+                    cpu.put(cs + 0x68, &position.map(i32::to_le_bytes).concat());
+                    cpu.put(0x8018c484, &[0; 12]);
+                    cpu.put(0x8018c488, &initial.to_le_bytes());
+                    let mut seen = None;
+                    cpu.call_observed(0x800fd914, &[cs, root], 0x80000080, |cpu| {
+                        if cpu.pc() == 0x800fe144 {
+                            let e = cpu.r[5];
+                            seen = Some([8, 12, 16].map(|d| cpu.word(e + d) as i32));
+                        }
+                    });
+                    let pos = frames[lod.transform_index()].position;
+                    assert_eq!(seen, Some(pos));
+                    assert_eq!(cpu.word(0x8018c484), 1);
+                    let slot = (initial + 2).min(70);
+                    assert_eq!(cpu.word(0x801acfe8 + 24), slot);
+                    let rows =
+                        [0, 4, 8, 12, 16].map(|offset| cpu.word(0x801aeb70 + 32 * slot + offset));
+                    if x == 735 && y == -8 {
+                        if let Some(previous) = inherited_rows {
+                            assert_ne!(rows, previous);
+                        }
+                        inherited_rows = Some(rows);
+                    }
+                    let id = cpu.word(0x801acfe8);
+                    let mut hidden = vec![false; scene.polygons.len()];
+                    lod.hide_at_position(pos, 3, &mut hidden);
+                    assert!(
+                        scene
+                            .polygons
+                            .iter()
+                            .zip(&hidden)
+                            .all(|(p, &h)| h == (p.object_id != id))
+                    );
+                    choices.insert(id);
+                    hidden.fill(false);
+                    lod.hide_other_branches(position.map(|v| -v as f32), 3, &mut hidden);
+                    different += usize::from(
+                        scene
+                            .polygons
+                            .iter()
+                            .zip(hidden)
+                            .any(|(p, h)| h != (p.object_id != id)),
+                    );
+                }
+            }
+        }
+        // hierProc keeps the index at 70 for the next coordinate system. hierTraverse
+        // writes the CS matrix into that slot even though earlier object records refer to it.
+        let next_cs = 0x80008400;
+        let matrix = [[0i16, -4096, 0], [4096, 0, 0], [0, 0, 4096]];
+        let bytes = matrix
+            .as_flattened()
+            .iter()
+            .flat_map(|v| v.to_le_bytes())
+            .collect::<Vec<_>>();
+        let old_position = [4, 8, 12].map(|d| cpu.word(0x801acfe8 + d));
+        cpu.put(next_cs + 0x34, &bytes);
+        cpu.call(0x800fd914, &[next_cs, object]);
+        assert_eq!(cpu.word(0x8018c484), 2);
+        assert_eq!([0, 32].map(|d| cpu.word(0x801acfe8 + d + 24)), [70, 70]);
+        assert_eq!([4, 8, 12].map(|d| cpu.word(0x801acfe8 + d)), old_position);
+        let last_slot = (0x1aeb70 + 32 * 70) as usize;
+        assert_eq!(&cpu.ram[last_slot..last_slot + 18], bytes);
+        assert_eq!(choices.len(), 2);
+        assert!(
+            different > 0,
+            "fixture must cross a boundary where composed floating transforms disagree"
+        );
     }
 
     #[test]

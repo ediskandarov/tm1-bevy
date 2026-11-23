@@ -111,7 +111,7 @@ impl VisibilityBox {
             let projected = (0..3).fold(0i32, |sum, j| {
                 sum.wrapping_add(point[j].wrapping_mul(i32::from(self.matrix[i][j])))
             }) / 4096;
-            let distance = projected + i32::from(self.lo[i]);
+            let distance = projected.wrapping_add(i32::from(self.lo[i]));
             distance > 0 && distance < i32::from(self.hi[i])
         })
     }
@@ -134,34 +134,75 @@ impl VisibilityController {
         });
         self.boxes.iter().any(|b| b.contains(point))
     }
+    pub fn transform_index(&self) -> usize {
+        self.transform.index
+    }
+
+    pub fn inside_at_position(&self, position: [i32; 3]) -> bool {
+        let eye = position.map(i32::wrapping_neg);
+        self.boxes.iter().any(|b| b.contains(eye))
+    }
+    pub fn hidden_at_position(&self, position: [i32; 3]) -> std::ops::Range<usize> {
+        self.branches[usize::from(!self.inside_at_position(position))].clone()
+    }
     pub fn hidden_polygons(&self, eye: [f32; 3]) -> std::ops::Range<usize> {
         self.branches[usize::from(!self.camera_inside(eye))].clone()
     }
 }
 
 #[derive(Debug)]
+struct LodBranch {
+    near: u32,
+    far: u32,
+    child: u32,
+    polygons: std::ops::Range<usize>,
+}
+
+#[derive(Debug)]
 pub struct LevelOfDetail {
+    pub node: u32,
     transform: Transform,
     offset: [i32; 3],
-    branches: Vec<(u32, u32, std::ops::Range<usize>)>,
+    branches: Vec<LodBranch>,
 }
 
 impl LevelOfDetail {
     pub fn hide_other_branches(&self, eye: [f32; 3], lod_scale: u32, hidden: &mut [bool]) {
-        let mut distance = 0u32;
-        for axis in 0..3 {
-            let local = (0..3)
+        let position = std::array::from_fn(|axis| {
+            (0..3)
                 .map(|j| self.transform.axes[j][axis] * (self.transform.offset[j] - eye[j]))
-                .sum::<f32>() as i32;
-            let scaled = local.wrapping_add(self.offset[axis]) >> lod_scale;
-            distance = distance.wrapping_add(scaled.wrapping_mul(scaled) as u32);
-        }
-        let mut selected = false;
-        for (near, far, range) in &self.branches {
-            if !selected && (*near..*far).contains(&distance) {
-                selected = true;
-            } else {
-                hidden[range.clone()].fill(true);
+                .sum::<f32>() as i32
+        });
+        self.hide_at_position(position, lod_scale, hidden);
+    }
+
+    pub fn transform_index(&self) -> usize {
+        self.transform.index
+    }
+
+    fn selected_index(&self, position: [i32; 3], lod_scale: u32) -> Option<usize> {
+        let distance = position
+            .into_iter()
+            .zip(self.offset)
+            .fold(0u32, |sum, (p, ofs)| {
+                let d = p.wrapping_add(ofs) >> lod_scale;
+                sum.wrapping_add(d.wrapping_mul(d) as u32)
+            });
+        self.branches
+            .iter()
+            .position(|b| (b.near..b.far).contains(&distance))
+    }
+
+    pub fn selected_child(&self, position: [i32; 3], lod_scale: u32) -> Option<u32> {
+        self.selected_index(position, lod_scale)
+            .map(|index| self.branches[index].child)
+    }
+
+    pub fn hide_at_position(&self, position: [i32; 3], lod_scale: u32, hidden: &mut [bool]) {
+        let selected = self.selected_index(position, lod_scale);
+        for (i, b) in self.branches.iter().enumerate() {
+            if Some(i) != selected {
+                hidden[b.polygons.clone()].fill(true);
             }
         }
     }
@@ -788,13 +829,19 @@ impl<'a> Dmd<'a> {
                         for polygon in &mut scene.polygons[first..] {
                             polygon.lod_dependent = true;
                         }
-                        branches.push((near, u32le(d, r)?, first..scene.polygons.len()));
+                        branches.push(LodBranch {
+                            near,
+                            far: u32le(d, r)?,
+                            child,
+                            polygons: first..scene.polygons.len(),
+                        });
                     } else if nearest.is_none_or(|(best, _)| near < best) {
                         nearest = Some((near, child));
                     }
                 }
                 if let Some(lods) = &mut scene.lods {
                     lods.push(LevelOfDetail {
+                        node: ptr,
                         transform,
                         offset: [
                             u32le(d, p + 4)? as i32,
