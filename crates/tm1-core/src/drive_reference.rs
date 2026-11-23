@@ -3550,9 +3550,6 @@ fn pothole_wheel_contacts_match_retail() {
     unsafe extern "C" {
         fn CheckPotHoles(car: *mut u8, is_player: u8);
     }
-    #[repr(align(4))]
-    struct Record([u8; 0x560]);
-
     let mut r = Reference::new();
     let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
     for (level, init) in [
@@ -3575,40 +3572,86 @@ fn pothole_wheel_contacts_match_retail() {
             let z = r.cpu.word(hole + 12) as i32;
             let w = (r.cpu.word(hole) >> 16) as i16 as i32;
             let h = r.cpu.word(hole + 4) as i16 as i32;
-            let offsets = [-1, 0, 1, 2, w - 1, w, w + 1];
-            for (player, tires, collision) in [(1, 0x270, 0x258), (0, 0x32c, 0x148)] {
-                let mut car = Record([0; 0x560]);
-                let start = (PLAYER & 0x1fffff) as usize;
-                r.cpu.put(PLAYER, &car.0);
-                for dz in [-1, 0, 1, 2, h - 1, h, h + 1] {
-                    for (step, dx) in offsets.into_iter().enumerate() {
-                        car.0[collision + 0x12] = 0;
-                        r.cpu.put(PLAYER + collision as u32 + 0x12, &[0]);
-                        for wheel in 0..4 {
-                            let tire = tires + 0x44 * wheel;
-                            let skip = u8::from((step + wheel) % 4 == 0);
-                            let wx = if wheel < 2 { dx } else { w - dx };
-                            let wz = if wheel % 2 == 0 { dz } else { h - dz };
-                            car.0[tire + 3] = skip;
-                            car.0[tire + 0x38..tire + 0x3c]
-                                .copy_from_slice(&(x + wx).to_le_bytes());
-                            car.0[tire + 0x3c..tire + 0x40]
-                                .copy_from_slice(&(z + wz).to_le_bytes());
-                            r.cpu.put(PLAYER + tire as u32 + 3, &[skip]);
-                            r.cpu.put(
-                                PLAYER + tire as u32 + 0x38,
-                                &car.0[tire + 0x38..tire + 0x40],
-                            );
-                        }
-                        r.cpu.call(0x8011e944, &[PLAYER, player]);
-                        unsafe { CheckPotHoles(car.0.as_mut_ptr(), player as u8) };
-                        assert_eq!(
-                            car.0[..],
-                            r.cpu.ram[start..start + car.0.len()],
-                            "{level:?} hole {index} player {player} at {dx},{dz}"
-                        );
-                    }
+            compare_wheel_contacts(&mut r.cpu, level, [x, z, w, h], 0x8011e944, CheckPotHoles);
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn curb_wheel_contacts_match_retail() {
+    unsafe extern "C" {
+        fn CheckCurbs(car: *mut u8, is_player: u8);
+    }
+    let mut r = Reference::new();
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    for (level, init, expected_count) in [
+        (Level::Warehouse, 0x80130a98, 8),
+        (Level::Arena, 0x80130a8c, 0),
+        (Level::CityPark, 0x80130c20, 16),
+        (Level::Freeway, 0x80130c14, 0),
+        (Level::Cyburbia, 0x80130ee4, 25),
+        (Level::Rooftops, 0x801312ec, 0),
+        (Level::Arena5, 0x80130a8c, 0),
+    ] {
+        r.cpu.call(init, &[]);
+        unsafe { tm1_bind_level(level as i32) };
+        let count = r.cpu.word(0x8018bfe0) >> 16;
+        assert_eq!(count, expected_count);
+        for index in 0..count.max(1) {
+            let curb = 0x801a9a30 + 16 * index;
+            let size = r.cpu.word(curb);
+            let rect = [
+                r.cpu.word(curb + 8) as i32,
+                r.cpu.word(curb + 12) as i32,
+                size as i16 as i32,
+                (size >> 16) as i16 as i32,
+            ];
+            compare_wheel_contacts(&mut r.cpu, level, rect, 0x8011ec68, CheckCurbs);
+        }
+    }
+}
+
+fn compare_wheel_contacts(
+    cpu: &mut Cpu,
+    level: Level,
+    [x, z, w, h]: [i32; 4],
+    retail: u32,
+    native: unsafe extern "C" fn(*mut u8, u8),
+) {
+    #[repr(align(4))]
+    struct Record([u8; 0x560]);
+
+    let offsets = [-1, 0, 1, 2, w - 1, w, w + 1];
+    for (player, tires, collision) in [(1, 0x270, 0x258), (0, 0x32c, 0x148)] {
+        let mut car = Record([0; 0x560]);
+        let start = (PLAYER & 0x1fffff) as usize;
+        cpu.put(PLAYER, &car.0);
+        for dz in [-1, 0, 1, 2, h - 1, h, h + 1] {
+            for (step, dx) in offsets.into_iter().enumerate() {
+                car.0[collision + 0x12] = 0;
+                cpu.put(PLAYER + collision as u32 + 0x12, &[0]);
+                for wheel in 0..4 {
+                    let tire = tires + 0x44 * wheel;
+                    let skip = u8::from((step + wheel) % 4 == 0);
+                    let wx = if wheel < 2 { dx } else { w - dx };
+                    let wz = if wheel % 2 == 0 { dz } else { h - dz };
+                    car.0[tire + 3] = skip;
+                    car.0[tire + 0x38..tire + 0x3c].copy_from_slice(&(x + wx).to_le_bytes());
+                    car.0[tire + 0x3c..tire + 0x40].copy_from_slice(&(z + wz).to_le_bytes());
+                    cpu.put(PLAYER + tire as u32 + 3, &[skip]);
+                    cpu.put(
+                        PLAYER + tire as u32 + 0x38,
+                        &car.0[tire + 0x38..tire + 0x40],
+                    );
                 }
+                cpu.call(retail, &[PLAYER, player]);
+                unsafe { native(car.0.as_mut_ptr(), player as u8) };
+                assert_eq!(
+                    car.0[..],
+                    cpu.ram[start..start + car.0.len()],
+                    "{level:?} rectangle at {x},{z} player {player} at {dx},{dz}"
+                );
             }
         }
     }
