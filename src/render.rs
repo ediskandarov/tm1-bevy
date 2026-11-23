@@ -1125,26 +1125,49 @@ fn draw_view(
         let offset = pixel_right * (x as f32 * axis_scale) - up * y as f32;
         eye + forward * depth + offset * (depth / lens as f32)
     };
-    let billboard_point = |origin: Vec3,
-                           extent: Option<[i16; 2]>,
-                           corner: usize,
-                           z: u32,
-                           transform: Option<GeometryTransform>,
-                           local: [i16; 3]| {
-        let Some(extent) = extent else {
-            return origin;
-        };
-        let sign_x = if corner & 1 == 0 { -1 } else { 1 };
-        let sign_y = if corner < 2 { -1 } else { 1 };
-        if let Some(transform) = transform {
-            let xy = [0, 1].map(|axis| transform.coordinate(axis, local));
-            let [x, y] = gte_screen_offset(xy, z, lens, center);
-            let [w, h] = sprite_half_size(extent, lens, z);
-            vertex([x + sign_x * w, y + sign_y * h], bucket_depth(z >> 3))
-        } else {
-            origin + right * (sign_x as f32 * f32::from(extent[0]))
-                - up * (sign_y as f32 * f32::from(extent[1]))
+    let face_points = |p: &tm1_assets::scene::Polygon,
+                       node: Option<GeometryTransform>,
+                       project: bool,
+                       origin: &dyn Fn([f32; 3]) -> Vec3| {
+        let mut points = [Vec3::ZERO; 4];
+        let mut depths = [0; 4];
+        let mut screen = [[0; 2]; 4];
+        let packet_transform = node.filter(|_| project || p.billboard.is_some());
+        for (i, v) in p.vertices.iter().enumerate() {
+            if let Some(transform) = packet_transform {
+                let z = transform.depth(v.local);
+                depths[i] = z;
+                let xy = [0, 1].map(|axis| transform.coordinate(axis, v.local));
+                let mut pixel = gte_screen_offset(xy, z, lens, center);
+                if let Some(extent) = p.billboard {
+                    let [w, h] = sprite_half_size(extent, lens, z);
+                    pixel[0] += if i & 1 == 0 { -w } else { w };
+                    pixel[1] += if i < 2 { -h } else { h };
+                }
+                screen[i] = pixel;
+                points[i] = vertex(pixel, bucket_depth(z >> 3));
+            } else {
+                let pos = origin(v.position);
+                depths[i] = node.map_or_else(|| depth.vertex(pos.to_array()), |t| t.depth(v.local));
+                points[i] = if let Some([w, h]) = p.billboard {
+                    pos + right * f32::from(w) * if i & 1 == 0 { -1. } else { 1. }
+                        + up * f32::from(h) * if i < 2 { 1. } else { -1. }
+                } else {
+                    pos
+                };
+            }
         }
+        let visible = p.double_sided
+            || p.billboard.is_some()
+            || if packet_transform.is_some() {
+                packet_front_facing(
+                    [screen[0], screen[1], screen[2]],
+                    secondary && !split_screen,
+                )
+            } else {
+                !back_facing([points[0], points[1], points[2]], eye)
+            };
+        visible.then_some((points, depths))
     };
     for i in visible {
         if hidden_geometry[i] {
@@ -1191,12 +1214,10 @@ fn draw_view(
         let node_depth = car
             .map_or(world_depths.as_ref(), |slot| car_depths.get(slot))
             .map(|table| table[p.transform_index]);
-        let mut points = [Vec3::ZERO; 4];
-        let mut depths = [0; 4];
-        for (corner, vertex) in p.vertices.iter().enumerate() {
-            let local = wheel_vertex(vertex.position, p.wheel);
-            let center = if let Some(car) = car {
-                let pose = &poses[car];
+        let Some((points, depths)) = face_points(p, node_depth, car.is_some(), &|position| {
+            let local = wheel_vertex(position, p.wheel);
+            if let Some(slot) = car {
+                let pose = &poses[slot];
                 pose.origin
                     + world(std::array::from_fn(|k| {
                         (0..3)
@@ -1205,27 +1226,10 @@ fn draw_view(
                     }))
             } else {
                 world(local)
-            };
-            depths[corner] = if let Some(transform) = node_depth {
-                transform.depth(vertex.local)
-            } else {
-                depth.vertex(center.to_array())
-            };
-            points[corner] = billboard_point(
-                center,
-                p.billboard,
-                corner,
-                depths[corner],
-                node_depth,
-                vertex.local,
-            );
-        }
-        if !p.double_sided
-            && p.billboard.is_none()
-            && back_facing([points[0], points[1], points[2]], eye)
-        {
+            }
+        }) else {
             continue;
-        }
+        };
         let indices = indices(p.vertices.len());
         let tint = car.map_or([1.; 3], |slot| body_light_color(lights[slot]));
         for &i_vertex in indices {
@@ -1321,35 +1325,16 @@ fn draw_view(
                 continue;
             }
             let node_depth = model_depth.as_ref().map(|t| t[p.transform_index]);
-            let mut depths = [0; 4];
-            let mut points = [Vec3::ZERO; 4];
-            for (corner, vertex) in p.vertices.iter().enumerate() {
-                let rotated = std::array::from_fn(|k| {
-                    (0..3)
-                        .map(|j| pose[4 + 3 * j + k] as f32 * vertex.position[j] / 4096.)
-                        .sum()
-                });
-                let center = origin + world(rotated);
-                depths[corner] = if let Some(table) = &model_depth {
-                    table[p.transform_index].depth(vertex.local)
-                } else {
-                    depth.vertex(center.to_array())
-                };
-                points[corner] = billboard_point(
-                    center,
-                    p.billboard,
-                    corner,
-                    depths[corner],
-                    node_depth,
-                    vertex.local,
-                );
-            }
-            if !p.double_sided
-                && p.billboard.is_none()
-                && back_facing([points[0], points[1], points[2]], eye)
-            {
+            let Some((points, depths)) = face_points(p, node_depth, true, &|position| {
+                origin
+                    + world(std::array::from_fn(|k| {
+                        (0..3)
+                            .map(|j| pose[4 + 3 * j + k] as f32 * position[j] / 4096.)
+                            .sum()
+                    }))
+            }) else {
                 continue;
-            }
+            };
             let slot = arena.tiles[&(p.texture, p.semi_transparent)];
             for &i in indices(p.vertices.len()) {
                 let v = &p.vertices[i];
@@ -1900,6 +1885,11 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, radar: &tm1_core::drive::RadarFr
     );
 }
 // The PS1 screen Y axis points down. geomProc keeps clockwise faces in the normal view.
+fn packet_front_facing([a, b, c]: [[i32; 2]; 3], mirror: bool) -> bool {
+    let area = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    (area < 0) == mirror
+}
+
 fn back_facing([a, b, c]: [Vec3; 3], eye: Vec3) -> bool {
     (b - a).cross(c - a).dot(eye - a) > 0.
 }
@@ -2872,6 +2862,54 @@ mod tests {
                     assert_eq!(
                         depth.vertex(world(p.map(f32::from)).to_array()),
                         z.max(0) as u32
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn model_face_winding_matches_retail_geom_proc() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let stub = 0x80010000;
+        let words = |code: &[u32]| {
+            code.iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>()
+        };
+        // Return 1 when the JP branch reaches packet emission, 0 at geomNextPrim.
+        cpu.put(0x800f8154, &words(&[0x03e00008, 0x00001021]));
+        for (start, accept, area_reg, mirror_reg) in [
+            (0x800f7bd4, 0x800f7bf4, 22, 23),
+            (0x800f7cb0, 0x800f7cd0, 23, 2),
+        ] {
+            cpu.put(accept, &words(&[0x03e00008, 0x24020001]));
+            cpu.put(
+                stub,
+                &words(&[
+                    0x00800021 | (area_reg << 11),
+                    0x08000000 | ((start >> 2) & 0x03ffffff),
+                    0x00a00021 | (mirror_reg << 11),
+                ]),
+            );
+            for points in [
+                [[0, 0], [1, 0], [0, 1]],
+                [[0, 0], [0, 1], [1, 0]],
+                [[6, 1], [6, 1], [17, 8]],
+                [[-1024, -1024], [1023, 1023], [-1024, 1023]],
+            ] {
+                let [a, b, c] = points;
+                // NCLIP's signed shoelace sum uses the three projected SXY entries.
+                let nclip: i32 = a[0] * b[1] + b[0] * c[1] + c[0] * a[1]
+                    - a[0] * c[1]
+                    - b[0] * a[1]
+                    - c[0] * b[1];
+                for mirror in [false, true] {
+                    assert_eq!(
+                        packet_front_facing(points, mirror),
+                        cpu.call(stub, &[nclip as u32, u32::from(mirror)]) != 0
                     );
                 }
             }
