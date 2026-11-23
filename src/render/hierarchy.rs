@@ -23,6 +23,7 @@ pub(super) type Visits = std::collections::BTreeMap<u32, u64>;
 
 pub(super) struct Pass<S> {
     pub visits: Visits,
+    pub lod_scale: u32,
     matrices: Vec<HierarchyTransform>,
     pub lights: Vec<super::LightMatrix>,
     pub objects: Vec<Object<S>>,
@@ -34,6 +35,7 @@ impl<S: Copy> Pass<S> {
     pub fn new(world: HierarchyTransform, battle: bool) -> Self {
         Self {
             visits: Visits::new(),
+            lod_scale: 3,
             matrices: vec![world],
             lights: vec![super::WORLD_LIGHT],
             objects: Vec::with_capacity(220),
@@ -142,7 +144,7 @@ impl<S: Copy> Pass<S> {
                 }
                 HierarchyKind::Lod(id) => {
                     let Some(active) =
-                        scene.lods.as_ref().unwrap()[*id].selected_index(position, 3)
+                        scene.lods.as_ref().unwrap()[*id].selected_index(position, self.lod_scale)
                     else {
                         continue;
                     };

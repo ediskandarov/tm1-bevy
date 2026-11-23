@@ -213,17 +213,17 @@ impl Garage {
         };
         let model = self.trig.rotation_yxz([0, 0, self.heading as i16]);
         let camera = self.trig.rotation_yxz([182, 0, 0]);
+        let mut table = crate::render::menu::ModelTable::default();
         for (index, relative) in self.display_cars(i, locked).into_iter().flatten() {
-            crate::ending::draw_model(
-                &mut frame,
+            table.submit(
                 &self.cars[index],
-                &self.textures,
                 self.field,
-                crate::ending::model_transform(&camera, &model, relative),
+                crate::render::menu::model_transform(&camera, &model, relative),
                 crate::render::lighting::LightEnvironment::GARAGE,
                 8,
             );
         }
+        table.draw(&mut frame, &self.textures);
         let centers = [42, 277];
         let mut portrait = |car: usize, slot: usize, w: usize, h: usize| {
             for y in 0..h {

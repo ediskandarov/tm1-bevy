@@ -1,6 +1,7 @@
 //! Arena presentation in PlayStation ordering-table traversal order.
 mod hierarchy;
 pub(crate) mod lighting;
+pub(crate) mod menu;
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
