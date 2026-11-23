@@ -1,9 +1,10 @@
 //! SCREEN.c startup cards and STR movies from raw Mode 2 sectors.
+mod xa;
 use anyhow::{Context, Result, ensure};
 use bevy::prelude::{Assets, AudioSource, Entity, Handle, Image};
 use std::{
     ffi::OsString,
-    io::Read,
+    io::{BufReader, Read, Seek, SeekFrom},
     process::{Child, Command, Stdio},
     time::Duration,
 };
@@ -87,41 +88,28 @@ impl Cinema {
         ensure!(end <= disc.tracks[0].size, "invalid cinema extent");
         let mut input = OsString::from("subfile:");
         input.push(&disc.tracks[0].path);
-        // psxstr consumes complete raw sectors, including the interleaved XA audio.
-        let decoder = || {
-            let mut cmd = Command::new("ffmpeg");
-            cmd.args([
-                "-nostdin",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "psxstr",
-                "-start",
-            ])
-            .arg(start.to_string())
-            .arg("-end")
-            .arg(end.to_string())
-            .arg("-i")
-            .arg(&input);
-            cmd
-        };
-        let audio = decoder()
-            .args([
-                "-map", "0:a:0", "-ar", "44100", "-ac", "2", "-f", "s16le", "pipe:1",
-            ])
-            .output()
-            .context("starting FFmpeg for disc cinema")?;
-        ensure!(
-            audio.status.success() && !audio.stdout.is_empty(),
-            "XA decode failed: {}",
-            String::from_utf8_lossy(&audio.stderr)
-        );
-        let sound = crate::music::stereo_wave(&audio.stdout)?;
+        let mut track = BufReader::new(std::fs::File::open(&disc.tracks[0].path)?);
+        track.seek(SeekFrom::Start(start))?;
+        let audio = xa::decode(track, (end - start) / 2352)?;
+        let sound = crate::music::stereo_wave_at_rate(&audio, xa::RATE)?;
         // MOVIE.c's one-frame lookahead stops before displaying the limit frame.
         movie.frames = limit - 1;
         movie.decoder = Some(Decoder(
-            decoder()
+            Command::new("ffmpeg")
+                .args([
+                    "-nostdin",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "psxstr",
+                    "-start",
+                ])
+                .arg(start.to_string())
+                .arg("-end")
+                .arg(end.to_string())
+                .arg("-i")
+                .arg(&input)
                 .args(["-map", "0:v:0", "-frames:v"])
                 .arg(movie.frames.to_string())
                 .args(["-pix_fmt", "rgba", "-f", "rawvideo", "pipe:1"])

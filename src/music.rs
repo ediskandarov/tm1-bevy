@@ -162,7 +162,11 @@ pub fn opening_track(level: tm1_core::drive::Level, split: bool) -> usize {
     }
 }
 pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
-    ensure!(pcm.len() % 4 == 0, "incomplete stereo CD frame");
+    stereo_wave_at_rate(pcm, 44_100)
+}
+
+pub(crate) fn stereo_wave_at_rate(pcm: &[u8], rate: u32) -> Result<AudioSource> {
+    ensure!(pcm.len() % 4 == 0, "incomplete stereo frame");
     let size = u32::try_from(pcm.len())?;
     let mut wav = Vec::with_capacity(44 + pcm.len());
     wav.extend(b"RIFF");
@@ -171,8 +175,8 @@ pub fn stereo_wave(pcm: &[u8]) -> Result<AudioSource> {
     wav.extend(16u32.to_le_bytes());
     wav.extend(1u16.to_le_bytes());
     wav.extend(2u16.to_le_bytes());
-    wav.extend(44100u32.to_le_bytes());
-    wav.extend(176400u32.to_le_bytes());
+    wav.extend(rate.to_le_bytes());
+    wav.extend((rate * 4).to_le_bytes());
     wav.extend(4u16.to_le_bytes());
     wav.extend(16u16.to_le_bytes());
     wav.extend(b"data");
