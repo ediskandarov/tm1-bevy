@@ -32,7 +32,6 @@ pub const NAMES: [&str; 6] = [
 #[derive(Resource)]
 pub struct Duel {
     pub(crate) primary_cars: [crate::render::CarPose; 2],
-    pub(crate) primary_appearance: crate::render::CarAppearance,
     pub(crate) primary_view: tm1_core::drive::SoundListener,
     pub(crate) primary_hidden: bool,
     pub cars: [PlayerVehicle; 2],
@@ -231,7 +230,6 @@ pub fn start(
     cars[1].set_rng_state(opening_seed);
     world.insert_resource(Duel {
         primary_cars: cars.each_ref().map(crate::render::CarPose::player),
-        primary_appearance: crate::render::CarAppearance::capture(&scene),
         primary_view: tm1_core::drive::SoundListener::new(&cars[0], &cameras[0], None),
         primary_hidden: !cameras[0].show_body,
         cars,
@@ -553,7 +551,6 @@ pub fn advance(
         }
         let listener = tm1_core::drive::SoundListener::new(&duel.cars[0], &duel.cameras[0], None);
         duel.primary_cars = duel.cars.each_ref().map(crate::render::CarPose::player);
-        duel.primary_appearance = crate::render::CarAppearance::capture(&duel.scene);
         duel.primary_view = listener;
         duel.primary_hidden = !duel.cameras[0].show_body;
         let previous_view =

@@ -28,19 +28,6 @@ pub(crate) struct CarPose {
     body_stage: usize,
     shadow_visible: bool,
 }
-pub(crate) struct CarAppearance {
-    lights: [u8; 9],
-    wheel_steps: [i64; 14],
-}
-
-impl CarAppearance {
-    pub(crate) fn capture(scene: &tm1_core::drive::CollisionScene) -> Self {
-        Self {
-            lights: scene.car_lights(),
-            wheel_steps: scene.wheel_steps(),
-        }
-    }
-}
 impl CarPose {
     pub(crate) fn player(car: &tm1_core::drive::PlayerVehicle) -> Self {
         Self {
@@ -908,7 +895,6 @@ pub fn update(
         &drive.contacts,
         false,
         &drive.primary_cars,
-        &drive.primary_appearance,
         (drive.primary_hidden && !arena.overview).then_some(0),
         false,
         eye,
@@ -921,7 +907,6 @@ pub fn update(
         let poses: Vec<_> = std::iter::once(CarPose::player(&drive.player))
             .chain(drive.opponents.iter().map(CarPose::rival))
             .collect();
-        let appearance = CarAppearance::capture(&drive.contacts);
         let hide_player = !drive.camera.show_body;
         let packets = draw_view(
             &arena,
@@ -929,7 +914,6 @@ pub fn update(
             &drive.contacts,
             true,
             &poses,
-            &appearance,
             hide_player.then_some(0),
             false,
             rear_eye,
@@ -992,7 +976,6 @@ fn draw_view(
     contacts: &tm1_core::drive::CollisionScene,
     secondary: bool,
     poses: &[CarPose],
-    appearance: &CarAppearance,
     hidden_car: Option<usize>,
     split_screen: bool,
     eye: Vec3,
@@ -1002,7 +985,8 @@ fn draw_view(
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let depth_axis = forward * axis_scale;
-    let wheel_steps = &appearance.wheel_steps;
+    let wheel_steps = contacts.wheel_steps(secondary);
+    let lights = contacts.car_lights(secondary);
     let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
         .map(|n| f32::from(n) / 4096.);
@@ -1164,7 +1148,7 @@ fn draw_view(
             let car = arena
                 .body_ranges
                 .partition_point(|ranges| ranges[2].polygons.end <= i);
-            body_light_color(appearance.lights[car])
+            body_light_color(lights[car])
         } else {
             [1.; 3]
         };
@@ -1187,7 +1171,7 @@ fn draw_view(
         );
     }
     let mut faces = [[0; 14]; 180];
-    let count = contacts.contrail_faces(&mut faces);
+    let count = contacts.contrail_faces(secondary, &mut faces);
     for face in &faces[..count] {
         let frame = arena.contrail_frames[face[0] as usize];
         let slot = arena.tiles[&(Some(frame.texture), true)];
@@ -1217,7 +1201,7 @@ fn draw_view(
         batch.order_geometry(6, eye, depth_axis, 0, PacketMode::texture(frame.texture));
     }
     let mut poses = [[0; 13]; 10];
-    let count = contacts.missile_poses(&mut poses);
+    let count = contacts.missile_poses(secondary, &mut poses);
     let missiles = poses[..count].iter().filter_map(|pose| {
         Some((
             arena.missile_models[usize::from(pose[0] == 312)].as_ref()?,
@@ -2190,22 +2174,15 @@ pub fn duel_view(
     }
     panel.write(&mut renderer.meshes, &arena.mesh);
     let current_cars = duel.cars.each_ref().map(CarPose::player);
-    let current_appearance = CarAppearance::capture(&duel.scene);
     for slot in 0..2 {
         let car = &duel.cars[slot];
         let view = &duel.cameras[slot];
-        let (transform, poses, appearance, hidden) = if slot == 0 {
-            (
-                duel.primary_view,
-                &duel.primary_cars,
-                &duel.primary_appearance,
-                duel.primary_hidden,
-            )
+        let (transform, poses, hidden) = if slot == 0 {
+            (duel.primary_view, &duel.primary_cars, duel.primary_hidden)
         } else {
             (
                 tm1_core::drive::SoundListener::new(car, view, None),
                 &current_cars,
-                &current_appearance,
                 !view.show_body,
             )
         };
@@ -2238,7 +2215,6 @@ pub fn duel_view(
             &duel.scene,
             slot != 0,
             poses,
-            appearance,
             hidden.then_some(slot),
             true,
             eye,

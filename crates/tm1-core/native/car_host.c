@@ -1058,7 +1058,7 @@ static size_t contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fiel
         arena_capture_fragments();
         arena_animate_flames();
         arena_animate_effects();
-        tm1_capture_car_lights();
+        arena_capture_primary_models();
         return before_primary_view;
     }
     CarMotion* m = is_player ? &player->motion : &ai->motion;

@@ -1227,7 +1227,7 @@ fn exterior_damage_lights_original() {
                     .position(|&env| env == cpu.word(cs + 4))
                     .unwrap() as u8
             });
-            assert_eq!(scene.car_lights(), expected, "tick {tick}");
+            assert_eq!(scene.car_lights(false), expected, "tick {tick}");
             if tick == 1 {
                 assert!(expected.contains(&2));
                 // Execute the InitUALevel2 loop that rebinds every registered model.
@@ -1239,15 +1239,15 @@ fn exterior_damage_lights_original() {
                 cpu.call_until(0x8014c6dc, &[], 0x8014c748);
                 tm1_new_life(scene.native.as_ptr());
                 assert!(nodes.iter().all(|&cs| cpu.word(cs + 4) == envs[0]));
-                assert_eq!(scene.car_lights(), [0; 9]);
+                assert_eq!(scene.car_lights(false), [0; 9]);
                 tm1_capture_car_lights();
-                assert_eq!(scene.car_lights(), [0; 9]);
+                assert_eq!(scene.car_lights(false), [0; 9]);
             }
         }
         tm1_use_scene(std::ptr::null_mut());
     }
     scene.reset_projectiles();
-    assert_eq!(scene.car_lights(), [0; 9]);
+    assert_eq!(scene.car_lights(false), [0; 9]);
 }
 
 #[test]
@@ -1282,7 +1282,7 @@ fn wheel_motion_original() {
                     tm1_use_scene(std::ptr::null_mut());
                 }
             }
-            let step = r.scene.wheel_steps()[slot as usize];
+            let step = r.scene.wheel_steps(true)[slot as usize];
             if slot == 4 {
                 assert_eq!(step, i64::from(r.cpu.word(0x8018c2f8) as i32));
                 let [sin, cos] = r.player.wheel_sin_cos(step);
@@ -1311,7 +1311,7 @@ fn wheel_motion_original() {
         }
     }
     r.scene.reset_projectiles();
-    assert_eq!(r.scene.wheel_steps(), [0; 14]);
+    assert_eq!(r.scene.wheel_steps(true), [0; 14]);
 }
 
 #[test]
@@ -3258,7 +3258,17 @@ fn special_missiles_original() {
             );
             for tick in 0..93 {
                 let mut poses = [[0; 13]; 10];
-                let count = r.scene.missile_poses(&mut poses);
+                let count = r.scene.missile_poses(true, &mut poses);
+                let mut primary = [[0; 13]; 10];
+                let before_actors = r.scene.missile_poses(false, &mut primary);
+                if tick == 0 {
+                    assert_eq!(
+                        before_actors, 0,
+                        "launch followed the primary hierarchy pass"
+                    );
+                } else {
+                    assert_eq!(primary[..before_actors], poses[..count]);
+                }
                 let active: Vec<_> = (0..10)
                     .filter(|&i| r.cpu.word(missile(i) + 0x34) as i32 > 0)
                     .collect();
@@ -3287,7 +3297,17 @@ fn special_missiles_original() {
                     }
                 }
                 let mut faces = [[0; 14]; 180];
-                let count = r.scene.contrail_faces(&mut faces);
+                let count = r.scene.contrail_faces(true, &mut faces);
+                let mut primary = [[0; 14]; 180];
+                let before_actors = r.scene.contrail_faces(false, &mut primary);
+                if tick == 0 {
+                    assert_eq!(
+                        before_actors, 0,
+                        "launch followed the primary hierarchy pass"
+                    );
+                } else {
+                    assert_eq!(primary[..before_actors], faces[..count]);
+                }
                 let mut expected = Vec::new();
                 for i in 0..10 {
                     let m = missile(i);
@@ -4945,7 +4965,7 @@ fn compare_battle_controls(
                 );
             }
         }
-        let steps = r.scene.wheel_steps();
+        let steps = r.scene.wheel_steps(true);
         for slot in 1..=13 {
             if slot == 4 {
                 assert_eq!(
@@ -5773,7 +5793,7 @@ fn verify_pyramid_clouds(prefill: usize, original: &Cpu) {
 
 fn compare_projectiles(r: &Reference, vehicle: Vehicle, tick: usize) {
     let mut poses = [[0; 13]; 10];
-    let count = r.scene.missile_poses(&mut poses);
+    let count = r.scene.missile_poses(true, &mut poses);
     let expected = (0..10)
         .map(|i| 0x801a9c10 + 0x3e8 * i)
         .filter(|&m| r.cpu.word(m + 0x34) as i32 > 0)

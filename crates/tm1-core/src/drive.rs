@@ -1925,23 +1925,23 @@ impl CollisionScene {
         self.audio.clear();
         self.next_audio.clear();
     }
-    pub fn wheel_steps(&self) -> [i64; 14] {
+    pub fn wheel_steps(&self, secondary: bool) -> [i64; 14] {
         unsafe extern "C" {
-            fn tm1_wheel_steps(scene: *const std::ffi::c_void, out: *mut i64);
+            fn tm1_wheel_steps(scene: *const std::ffi::c_void, secondary: i32, out: *mut i64);
         }
         let mut steps = [0; 14];
         unsafe {
-            tm1_wheel_steps(self.native.as_ptr(), steps.as_mut_ptr());
+            tm1_wheel_steps(self.native.as_ptr(), secondary.into(), steps.as_mut_ptr());
         }
         steps
     }
-    pub fn car_lights(&self) -> [u8; 9] {
+    pub fn car_lights(&self, secondary: bool) -> [u8; 9] {
         unsafe extern "C" {
-            fn tm1_car_lights(scene: *const std::ffi::c_void, out: *mut u8);
+            fn tm1_car_lights(scene: *const std::ffi::c_void, secondary: i32, out: *mut u8);
         }
         let mut lights = [0; 9];
         unsafe {
-            tm1_car_lights(self.native.as_ptr(), lights.as_mut_ptr());
+            tm1_car_lights(self.native.as_ptr(), secondary.into(), lights.as_mut_ptr());
         }
         lights
     }
@@ -2291,17 +2291,25 @@ impl CollisionScene {
         }
         unsafe { tm1_flame_particles(self.native.as_ptr(), particles.as_mut_ptr()) }
     }
-    pub fn contrail_faces(&self, out: &mut [[i32; 14]; 180]) -> usize {
+    pub fn contrail_faces(&self, secondary: bool, out: &mut [[i32; 14]; 180]) -> usize {
         unsafe extern "C" {
-            fn tm1_contrail_faces(scene: *mut std::ffi::c_void, out: *mut [i32; 14]) -> usize;
+            fn tm1_contrail_faces(
+                scene: *mut std::ffi::c_void,
+                secondary: i32,
+                out: *mut [i32; 14],
+            ) -> usize;
         }
-        unsafe { tm1_contrail_faces(self.native.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_contrail_faces(self.native.as_ptr(), secondary.into(), out.as_mut_ptr()) }
     }
-    pub fn missile_poses(&self, out: &mut [[i32; 13]; 10]) -> usize {
+    pub fn missile_poses(&self, secondary: bool, out: &mut [[i32; 13]; 10]) -> usize {
         unsafe extern "C" {
-            fn tm1_missile_poses(scene: *mut std::ffi::c_void, out: *mut [i32; 13]) -> usize;
+            fn tm1_missile_poses(
+                scene: *mut std::ffi::c_void,
+                secondary: i32,
+                out: *mut [i32; 13],
+            ) -> usize;
         }
-        unsafe { tm1_missile_poses(self.native.as_ptr(), out.as_mut_ptr()) }
+        unsafe { tm1_missile_poses(self.native.as_ptr(), secondary.into(), out.as_mut_ptr()) }
     }
     pub fn taser_arcs(&self, secondary: bool, arcs: &mut [[[i32; 3]; 16]; 3]) -> usize {
         unsafe extern "C" {

@@ -52,7 +52,7 @@ typedef struct CollisionScene {
     int opponent_count, model_count;
     bool duel, beat_level;
     int wheel_distance[14];
-    int64_t wheel_steps[14];
+    int64_t wheel_steps[14], primary_wheel_steps[14];
     struct { Cs* node; int count; } hit_lights[6];
     bool hit_light_flash;
     u8 displayed_lights[9];
@@ -75,6 +75,10 @@ typedef struct CollisionScene {
     s32 drawn_bullets[40][8];
     size_t drawn_bullet_count;
     Missile missiles[10];
+    s32 primary_missiles[10][13];
+    size_t primary_missile_count;
+    s32 primary_contrails[180][14];
+    size_t primary_contrail_count;
     DropWeap drops[12];
     ArenaTaser tasers[3];
     struct {
@@ -740,6 +744,8 @@ void tm1_reset_projectiles(CollisionScene* s)
 {
     memset(s->bullets, 0, sizeof s->bullets);
     s->drawn_bullet_count = 0;
+    s->primary_missile_count = 0;
+    s->primary_contrail_count = 0;
     memset(s->effects, 0, sizeof s->effects);
     s->primary_particle_count = 0;
     s->has_temporary_hole = false;
@@ -754,6 +760,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->beat_level = false;
     memset(s->wheel_distance, 0, sizeof s->wheel_distance);
     memset(s->wheel_steps, 0, sizeof s->wheel_steps);
+    memset(s->primary_wheel_steps, 0, sizeof s->primary_wheel_steps);
     memset(s->hit_lights, 0, sizeof s->hit_lights);
     s->hit_light_flash = false;
     memset(&s->hit_sheet, 0, sizeof s->hit_sheet);
@@ -1777,12 +1784,17 @@ void tm1_clear_freeze_light(u8 player, s16 index)
     if (current)
         (player ? GetPlayerCs3D(index) : GetAICs3D(index))->env = NULL;
 }
+static void copy_car_lights(const CollisionScene* scene, u8* out)
+{
+    memset(out, 0, 9);
+    for (int i = 0; i <= scene->opponent_count + scene->duel; i++) {
+        const Cs* cs = i ? &scene->opponents[i - 1] : &scene->taxi;
+        out[i] = cs->env ? cs->env->index : 0;
+    }
+}
 void tm1_capture_car_lights(void)
 {
-    for (int i = 0; i <= current->opponent_count + current->duel; i++) {
-        Cs* cs = current->duel || !i ? GetPlayerCs3D(i) : GetAICs3D(i - 1);
-        current->displayed_lights[i] = cs->env ? cs->env->index : 0;
-    }
+    copy_car_lights(current, current->displayed_lights);
 }
 void tm1_update_car_speed(int car_id, int speed)
 {
@@ -1799,13 +1811,16 @@ void tm1_update_car_speed(int car_id, int speed)
         }
     }
 }
-void tm1_wheel_steps(const CollisionScene* scene, int64_t* out)
+void tm1_wheel_steps(const CollisionScene* scene, int secondary, int64_t* out)
 {
-    memcpy(out, scene->wheel_steps, sizeof scene->wheel_steps);
+    memcpy(out, secondary ? scene->wheel_steps : scene->primary_wheel_steps, sizeof scene->wheel_steps);
 }
-void tm1_car_lights(const CollisionScene* s, u8* out)
+void tm1_car_lights(const CollisionScene* s, int secondary, u8* out)
 {
-    memcpy(out, s->displayed_lights, sizeof s->displayed_lights);
+    if (secondary)
+        copy_car_lights(s, out);
+    else
+        memcpy(out, s->displayed_lights, sizeof s->displayed_lights);
 }
 s16 MakeFakePotHole(void)
 {
@@ -1926,7 +1941,7 @@ size_t tm1_flame_particles(CollisionScene* s, s32 (*out)[4])
     }
     return n;
 }
-size_t tm1_contrail_faces(CollisionScene* s, s32 (*out)[14])
+static size_t copy_contrail_faces(CollisionScene* s, s32 (*out)[14])
 {
     size_t count = 0;
     for (int i = 0; i < 10; i++) {
@@ -1953,7 +1968,7 @@ size_t tm1_contrail_faces(CollisionScene* s, s32 (*out)[14])
     }
     return count;
 }
-size_t tm1_missile_poses(CollisionScene* s, s32 (*out)[13])
+static size_t copy_missile_poses(CollisionScene* s, s32 (*out)[13])
 {
     size_t count = 0;
     for (int i = 0; i < 10; i++) {
@@ -1972,6 +1987,30 @@ size_t tm1_missile_poses(CollisionScene* s, s32 (*out)[13])
     }
     return count;
 }
+size_t tm1_contrail_faces(CollisionScene* s, int secondary, s32 (*out)[14])
+{
+    if (secondary)
+        return copy_contrail_faces(s, out);
+    memcpy(out, s->primary_contrails, s->primary_contrail_count * sizeof(*out));
+    return s->primary_contrail_count;
+}
+
+size_t tm1_missile_poses(CollisionScene* s, int secondary, s32 (*out)[13])
+{
+    if (secondary)
+        return copy_missile_poses(s, out);
+    memcpy(out, s->primary_missiles, s->primary_missile_count * sizeof(*out));
+    return s->primary_missile_count;
+}
+
+void arena_capture_primary_models(void)
+{
+    tm1_capture_car_lights();
+    memcpy(current->primary_wheel_steps, current->wheel_steps, sizeof current->wheel_steps);
+    current->primary_missile_count = copy_missile_poses(current, current->primary_missiles);
+    current->primary_contrail_count = copy_contrail_faces(current, current->primary_contrails);
+}
+
 size_t tm1_taser_arcs(CollisionScene* s, int view, VECTOR3 (*out)[16])
 {
     size_t count = 0;
