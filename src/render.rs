@@ -1127,14 +1127,13 @@ fn draw_view(
     };
     let face_points = |p: &tm1_assets::scene::Polygon,
                        node: Option<GeometryTransform>,
-                       project: bool,
                        origin: &dyn Fn([f32; 3]) -> Vec3| {
         let mut points = [Vec3::ZERO; 4];
         let mut depths = [0; 4];
         let mut screen = [[0; 2]; 4];
-        let packet_transform = node.filter(|_| project || p.billboard.is_some());
+
         for (i, v) in p.vertices.iter().enumerate() {
-            if let Some(transform) = packet_transform {
+            if let Some(transform) = node {
                 let z = transform.depth(v.local);
                 depths[i] = z;
                 let xy = [0, 1].map(|axis| transform.coordinate(axis, v.local));
@@ -1148,7 +1147,7 @@ fn draw_view(
                 points[i] = vertex(pixel, bucket_depth(z >> 3));
             } else {
                 let pos = origin(v.position);
-                depths[i] = node.map_or_else(|| depth.vertex(pos.to_array()), |t| t.depth(v.local));
+                depths[i] = depth.vertex(pos.to_array());
                 points[i] = if let Some([w, h]) = p.billboard {
                     pos + right * f32::from(w) * if i & 1 == 0 { -1. } else { 1. }
                         + up * f32::from(h) * if i < 2 { 1. } else { -1. }
@@ -1159,7 +1158,7 @@ fn draw_view(
         }
         let visible = p.double_sided
             || p.billboard.is_some()
-            || if packet_transform.is_some() {
+            || if node.is_some() {
                 packet_front_facing(
                     [screen[0], screen[1], screen[2]],
                     secondary && !split_screen,
@@ -1167,7 +1166,75 @@ fn draw_view(
             } else {
                 !back_facing([points[0], points[1], points[2]], eye)
             };
-        visible.then_some((points, depths))
+        visible.then_some((points, depths, screen))
+    };
+    let mut subdivision_count = 0;
+    let mut submit_face = |batch: &mut Batch,
+                           p: &tm1_assets::scene::Polygon,
+                           points: [Vec3; 4],
+                           depths: [u32; 4],
+                           screen: [[i32; 2]; 4],
+                           slot: usize,
+                           tint: [f32; 3]| {
+        let n = p.vertices.len();
+        let raw = face_bucket(n, depths);
+        if !(2..=4095).contains(&raw) {
+            return;
+        }
+        let bucket = if p.fixed_ot == 0 { raw } else { p.fixed_ot };
+        let mode = PacketMode::polygon(p);
+        let scale = if p.texture.is_some() { 128. } else { 255. };
+        let corners: [PacketCorner; 4] = std::array::from_fn(|i| {
+            let v = &p.vertices[i.min(n - 1)];
+            PacketCorner {
+                xy: screen[i],
+                uv: v.uv.map(|u| u as i32),
+                rgb: std::array::from_fn(|k| {
+                    (v.color[k] * tint[k] * scale).round().clamp(0., 255.) as i32
+                }),
+            }
+        });
+        let subdivide = view.is_some() && p.subdivide_near && raw < 100 && subdivision_count < 200;
+        let mut emit = |quad: [PacketCorner; 4], pass: DrawPass, child: bool| {
+            let start = batch.positions.len();
+            for tri in indices(n).chunks_exact(3) {
+                if view.is_some()
+                    && !triangle_fits_gpu([quad[tri[0]].xy, quad[tri[1]].xy, quad[tri[2]].xy])
+                {
+                    continue;
+                }
+                for &i in tri {
+                    let c = quad[i];
+                    let pos = if child {
+                        vertex(c.xy, bucket_depth(raw))
+                    } else {
+                        points[i]
+                    };
+                    let uv = arena.uv(slot, Vec2::new(c.uv[0] as f32, c.uv[1] as f32));
+                    let rgb = c.rgb.map(|k| k as f32 / scale);
+                    batch.push(pos, uv, [rgb[0], rgb[1], rgb[2], 1.]);
+                }
+            }
+            let count = batch.positions.len() - start;
+            if count != 0 {
+                batch.order_packet(count, bucket, pass, mode);
+            }
+        };
+        if subdivide {
+            subdivision_count += 1;
+            if p.billboard.is_none() {
+                let pass = if n == 3 {
+                    DrawPass::SubTriangles
+                } else {
+                    DrawPass::SubQuads
+                };
+                for child in subdivided_faces(corners, n) {
+                    emit(child, pass, true);
+                }
+            }
+        } else {
+            emit(corners, DrawPass::Hierarchy, false);
+        }
     };
     for i in visible {
         if hidden_geometry[i] {
@@ -1214,7 +1281,7 @@ fn draw_view(
         let node_depth = car
             .map_or(world_depths.as_ref(), |slot| car_depths.get(slot))
             .map(|table| table[p.transform_index]);
-        let Some((points, depths)) = face_points(p, node_depth, car.is_some(), &|position| {
+        let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
             let local = wheel_vertex(position, p.wheel);
             if let Some(slot) = car {
                 let pose = &poses[slot];
@@ -1230,19 +1297,8 @@ fn draw_view(
         }) else {
             continue;
         };
-        let indices = indices(p.vertices.len());
         let tint = car.map_or([1.; 3], |slot| body_light_color(lights[slot]));
-        for &i_vertex in indices {
-            let v = &p.vertices[i_vertex];
-            let point = points[i_vertex];
-            let [r, g, b, a] = v.color;
-            batch.push(
-                point,
-                arena.uv(slot, v.uv.into()),
-                [r * tint[0], g * tint[1], b * tint[2], a],
-            );
-        }
-        batch.order_face(indices.len(), depths, p.fixed_ot, PacketMode::polygon(p));
+        submit_face(&mut batch, p, points, depths, screen, slot, tint);
     }
     let mut faces = [[0; 14]; 180];
     let count = contacts.contrail_faces(secondary, &mut faces);
@@ -1325,7 +1381,7 @@ fn draw_view(
                 continue;
             }
             let node_depth = model_depth.as_ref().map(|t| t[p.transform_index]);
-            let Some((points, depths)) = face_points(p, node_depth, true, &|position| {
+            let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
                 origin
                     + world(std::array::from_fn(|k| {
                         (0..3)
@@ -1336,16 +1392,7 @@ fn draw_view(
                 continue;
             };
             let slot = arena.tiles[&(p.texture, p.semi_transparent)];
-            for &i in indices(p.vertices.len()) {
-                let v = &p.vertices[i];
-                batch.push(points[i], arena.uv(slot, v.uv.into()), v.color);
-            }
-            batch.order_face(
-                indices(p.vertices.len()).len(),
-                depths,
-                p.fixed_ot,
-                PacketMode::polygon(p),
-            );
+            submit_face(&mut batch, p, points, depths, screen, slot, [1.; 3]);
         }
     }
     let coords = |p: [i32; 3]| {
@@ -1960,6 +2007,66 @@ fn sprite_half_size(extent: [i16; 2], lens: i32, depth: u32) -> [i32; 2] {
     extent.map(|v| (i32::from(v) * lens / depth.max(1) as i32).clamp(1, 500))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PacketCorner {
+    xy: [i32; 2],
+    uv: [i32; 2],
+    rgb: [i32; 3],
+}
+
+impl PacketCorner {
+    fn midpoint(self, b: Self) -> Self {
+        fn avg<const N: usize>(a: [i32; N], b: [i32; N]) -> [i32; N] {
+            std::array::from_fn(|i| (a[i] + b[i]) >> 1)
+        }
+        Self {
+            xy: avg(self.xy, b.xy),
+            uv: avg(self.uv, b.uv),
+            rgb: avg(self.rgb, b.rgb),
+        }
+    }
+}
+
+fn subdivided_faces([a, b, c, d]: [PacketCorner; 4], count: usize) -> [[PacketCorner; 4]; 4] {
+    let ab = a.midpoint(b);
+    let ac = a.midpoint(c);
+    if count == 3 {
+        let bc = b.midpoint(c);
+        [
+            [a, ac, ab, ab],
+            [bc, b, ab, ab],
+            [bc, ac, c, c],
+            [bc, ac, ab, ab],
+        ]
+    } else {
+        let bd = b.midpoint(d);
+        let cd = c.midpoint(d);
+        let mid = ac.midpoint(bd);
+        [
+            [a, ab, ac, mid],
+            [ac, mid, c, cd],
+            [ab, b, mid, bd],
+            [mid, bd, cd, d],
+        ]
+    }
+}
+
+fn triangle_fits_gpu(p: [[i32; 2]; 3]) -> bool {
+    [1023, 511].into_iter().enumerate().all(|(axis, max)| {
+        let [a, b, c] = p.map(|q| q[axis]);
+        a.max(b).max(c) - a.min(b).min(c) <= max
+    })
+}
+
+fn face_bucket(n: usize, depths: [u32; 4]) -> u32 {
+    let far = depths[0].max(depths[2]);
+    (if n == 4 {
+        far.max(depths[1]).max(depths[3])
+    } else {
+        far
+    }) >> 3
+}
+
 fn indices(n: usize) -> &'static [usize] {
     if n == 4 {
         &[0, 1, 2, 2, 1, 3]
@@ -1975,6 +2082,8 @@ enum DrawPass {
     Explosions,
     Radar,
     Hierarchy,
+    SubTriangles,
+    SubQuads,
 }
 
 struct DrawPacket {
@@ -2073,11 +2182,7 @@ impl Batch {
 
     fn order_face(&mut self, count: usize, depths: [u32; 4], fixed: u32, mode: PacketMode) {
         // geomProc compares SZ1 and SZ3, then SZ3 again for triangles.
-        let mut farthest = depths[0].max(depths[2]);
-        if count == 6 {
-            farthest = farthest.max(depths[1]).max(depths[3]);
-        }
-        let bucket = farthest >> 3;
+        let bucket = face_bucket(if count == 6 { 4 } else { 3 }, depths);
         if (2..=4095).contains(&bucket) {
             self.order_packet(
                 count,
@@ -2865,6 +2970,74 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn gpu_triangle_span_limits_include_the_boundary() {
+        assert!(triangle_fits_gpu([[-500, -250], [523, -250], [523, 261]]));
+        assert!(!triangle_fits_gpu([[-501, -250], [523, -250], [523, 261]]));
+        assert!(!triangle_fits_gpu([[-500, -251], [523, -250], [523, 261]]));
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn subdivided_packets_match_jp_vertices_and_links() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let db: u32 = 0x80010000;
+        let flags = db + 64;
+        let record = db + 128;
+        let packet = db + 192;
+        let extra = db + 256;
+        let ot = db + 1024;
+        let corners = std::array::from_fn(|i| PacketCorner {
+            xy: [[-711, -102], [317, -35], [-161, 446], [402, 310]][i],
+            uv: [[8, 253], [143, 16], [201, 33], [237, 204]][i],
+            rgb: [[115, 170, 23], [204, 5, 39], [91, 36, 216], [249, 249, 174]][i],
+        });
+        for (n, routine) in [(3, 0x80108ae4), (4, 0x801090c4)] {
+            let words = (n * 3) as u32;
+            cpu.put(db, &ot.to_le_bytes());
+            cpu.put(db + 8, &extra.to_le_bytes());
+            cpu.put(db + 12, &(extra + 600).to_le_bytes());
+            cpu.put(record, &flags.to_le_bytes());
+            cpu.put(record + 4, &7u32.to_le_bytes());
+            cpu.put(record + 8, &packet.to_le_bytes());
+            cpu.put(ot + 28, &0xffffffu32.to_le_bytes());
+            cpu.put(flags, &[n as u8, n as u8, 0, words as u8]);
+            cpu.put(flags + 14, &[0xc0 | n as u8]);
+            for (i, c) in corners[..n].iter().enumerate() {
+                let base = packet + 4 + 12 * i as u32;
+                cpu.put(base, &c.rgb.map(|v| v as u8));
+                cpu.put(base + 4, &c.xy.map(|v| (v as i16).to_le_bytes()).concat());
+                cpu.put(base + 8, &c.uv.map(|v| v as u8));
+            }
+            cpu.call(routine, &[db, record, 1]);
+            let mut next = cpu.word(ot + 28) & 0xffffff;
+            for (index, child) in subdivided_faces(corners, n).iter().enumerate().rev() {
+                let addr = if index == 0 {
+                    packet
+                } else {
+                    extra + (index as u32 - 1) * 4 * (words + 1)
+                };
+                assert_eq!(next, addr & 0xffffff);
+                for (i, c) in child[..n].iter().enumerate() {
+                    let base = addr + 4 + 12 * i as u32;
+                    let xy = cpu.word(base + 4);
+                    assert_eq!(c.xy, [xy as i16 as i32, (xy >> 16) as i16 as i32]);
+                    assert_eq!(
+                        c.uv,
+                        [0, 8].map(|s| ((cpu.word(base + 8) >> s) & 255) as i32)
+                    );
+                    assert_eq!(
+                        c.rgb,
+                        [0, 8, 16].map(|s| ((cpu.word(base) >> s) & 255) as i32)
+                    );
+                }
+                next = cpu.word(addr) & 0xffffff;
+            }
+            assert_eq!(next, 0xffffff);
         }
     }
 

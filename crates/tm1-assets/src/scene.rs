@@ -96,6 +96,7 @@ pub struct Polygon {
     pub double_sided: bool,
     pub semi_transparent: bool,
     pub fixed_ot: u32,
+    pub subdivide_near: bool,
 }
 #[derive(Debug)]
 struct VisibilityBox {
@@ -1098,6 +1099,7 @@ impl<'a> Dmd<'a> {
                 texture,
                 double_sided: flags >> 31 != 0,
                 semi_transparent: command & 2 != 0,
+                subdivide_near: header[0] & 0x7f != 0 && u16le(self.data, p + 26)? & 4 != 0,
                 fixed_ot: (u32le(self.data, p + 24)? >> 19) & 0xfff,
             });
             poly += len;
