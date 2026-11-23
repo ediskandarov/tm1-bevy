@@ -1865,40 +1865,77 @@ mod tests {
             tm1_assets::texture::Vram::from_tms(&disc.read("UADMD/CARS.TMS").unwrap()).unwrap();
         let portraits = tm1_assets::scene::Dmd::parse(&dmd)
             .unwrap()
-            .occupant_portraits(&textures)
+            .occupant_portraits()
             .unwrap();
+        let base = u32::from_le_bytes(dmd[12..16].try_into().unwrap());
+        let nodes: Vec<_> = (0..dmd.len() - 20)
+            .step_by(4)
+            .filter(|&i| {
+                dmd[i] == 0
+                    && dmd[i + 2..i + 4] == 1300u16.to_le_bytes()
+                    && dmd[i + 16..i + 20] == 12u32.to_le_bytes()
+            })
+            .collect();
+        assert_eq!(nodes.len(), 1);
         let mut cpu = crate::reference_cpu::Cpu::new(&exe);
-        let mut right = 32;
-        let mut bottom = 45;
-        for _ in 0..9 {
-            let menu = world.resource::<Contest>();
-            let i = menu.duel_cars[0];
-            let rendered = menu.frame();
-            let with_no_portrait = menu
-                .garage
-                .duel_frame(&menu.fonts, menu.duel_cars[1], 1, None);
-            let w = (2 * right) as usize;
-            let h = (45 + bottom) as usize;
-            for y in 35..125 {
-                for x in 10..74 {
-                    let at = 4 * (y * 320 + x);
-                    let mut expected: [u8; 4] = with_no_portrait[at..at + 4].try_into().unwrap();
-                    if (42 - w / 2..42 + w / 2).contains(&x) && y < 35 + h {
-                        let src = 4 * (64 * ((y - 35) * 90 / h) + (x + w / 2 - 42) * 64 / w);
-                        let pixel = &portraits[i][src..src + 4];
-                        if pixel[3] == 128 {
-                            for c in 0..3 {
-                                expected[c] = expected[c] / 2 + pixel[c] / 2;
-                            }
-                        } else if pixel[3] != 0 {
-                            expected.copy_from_slice(pixel);
-                        }
-                    }
-                    assert_eq!(rendered[at..at + 4], expected);
+        cpu.put(base, &dmd);
+        // Return scratch packet space at 0x80010000 from uadashGetTopBlitAddr.
+        cpu.put(0x80144314, &[8, 0, 224, 3, 1, 128, 2, 60]);
+        cpu.call(0x8013a320, &[base + nodes[0] as u32]);
+        for (i, portrait) in portraits.iter().enumerate() {
+            let packet = 0x80010000 + 40 * i as u32;
+            assert_eq!(cpu.word(packet + 4), 0x2ebfbfbf);
+            for j in 0..4 {
+                let coords = cpu.word(packet + 8 + 8 * j);
+                assert_eq!(
+                    portrait.xy[j as usize],
+                    [coords as i16 as i32, (coords >> 16) as i16 as i32]
+                );
+                let uv = cpu.word(packet + 12 + 8 * j);
+                assert_eq!(
+                    portrait.uv[j as usize],
+                    [uv as u8 as i32, (uv >> 8) as u8 as i32]
+                );
+                if j == 0 {
+                    assert_eq!(portrait.texture.clut, (uv >> 16) as u16);
+                }
+                if j == 1 {
+                    assert_eq!(portrait.texture.page, (uv >> 16) as u16);
                 }
             }
-            right = cpu.call(0x801511d8, &[right, 24, 50]);
-            bottom = cpu.call(0x801511d8, &[bottom, 22, 50]);
+        }
+        let selected = world.resource::<Contest>().duel_cars[0];
+        let portrait = &portraits[selected];
+        let mut xy = portrait.xy;
+        for _ in 0..9 {
+            let menu = world.resource::<Contest>();
+            let rendered = menu.frame();
+            let mut expected = menu
+                .garage
+                .duel_frame(&menu.fonts, menu.duel_cars[1], 1, None);
+            crate::render::menu::draw_portrait(
+                &mut expected,
+                &textures,
+                portrait,
+                xy.map(|[x, y]| [x + 42, y + 80]),
+            );
+            for y in 35..125 {
+                let start = 4 * (y * 320 + 10);
+                assert_eq!(rendered[start..start + 256], expected[start..start + 256]);
+            }
+            for (j, point) in xy.iter_mut().enumerate() {
+                point[0] = cpu.call(
+                    0x801511d8,
+                    &[
+                        point[0] as u32,
+                        if j < 2 { 24 } else { (-24i32) as u32 },
+                        50,
+                    ],
+                ) as i32;
+                if j == 0 || j == 2 {
+                    point[1] = cpu.call(0x801511d8, &[point[1] as u32, 22, 50]) as i32;
+                }
+            }
             world.resource_mut::<Contest>().garage.tick(1);
         }
     }

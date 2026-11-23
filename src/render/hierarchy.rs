@@ -321,6 +321,10 @@ mod tests {
             visits = pass.visits;
             expected += if visible { 2 } else { 0 };
             assert_eq!(visits.get(&frame.node).copied().unwrap_or(0), expected);
+            // Vary the battle update length while visiting the same shared animation.
+            let fields = [3u16, 4, 5][i % 3];
+            cpu.put(0x80170238, &fields.to_le_bytes());
+            cpu.put(0x8017023a, &(60 / fields).to_le_bytes());
             cpu.put(CS + 0x68, &position.map(i32::to_le_bytes).concat());
             cpu.put(CS + 0xc4, &4096i16.to_le_bytes());
             cpu.put(0x8018c484, &0u32.to_le_bytes());

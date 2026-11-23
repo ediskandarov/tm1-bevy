@@ -151,7 +151,7 @@ Up and Down select OPTIONS or 1P CONTEST on the title screen. AUDIO CONTROLS cha
 
 ## Vehicle selection
 
-When the first player confirms a duel car, the second player inherits the ongoing carousel rotation and slide. The locked portrait shrinks over eight fields, keeping its upper edge at screen Y 35. A keyboard test confirms mid-slide and compares the portrait region on nine successive frames against the disc texture and the JP SmoothValue coordinates.
+When the first player confirms a duel car, the second player inherits the ongoing carousel rotation and slide. The garage draws the twelve occupant portraits from their original textured quad coordinates, palette and page. They use the same fixed-point UV interpolation and five-bit modulation and blending as the showroom model packets. A disc replay compares all twelve initialized packets with screenInitCarOccupants. The locked portrait shrinks over eight fields, keeping its upper edge at screen Y 35. A keyboard test confirms mid-slide and compares the portrait region on nine successive frames against the disc texture and the JP SmoothValue coordinates.
 
 The garage uses the disc sine table for the lateral slide and the transposed SDK vehicle matrix for the spinning preview. A test runs screenSpinVehicle for each of the twelve cards across both slide directions, including a locked adjacent card. It checks the submitted car identities, positions, headings and rotation matrices over the 22-field slide and its settled frames.
 

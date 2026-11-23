@@ -8,6 +8,12 @@ pub struct TextureKey {
     pub clut: u16,
     pub window: u32,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct OccupantPortrait {
+    pub texture: TextureKey,
+    pub xy: [[i32; 2]; 4],
+    pub uv: [[i32; 2]; 4],
+}
 #[derive(Clone, Debug)]
 pub struct Vertex {
     pub local: [i16; 3],
@@ -524,9 +530,10 @@ impl<'a> Dmd<'a> {
             .map_err(|_| anyhow::anyhow!("invalid sprite frames"))
     }
     /// SCREEN.c screenInitCarOccupants uses 64 × 90 portraits in card order.
-    pub fn occupant_portraits(&self, textures: &crate::texture::Vram) -> Result<Vec<Vec<u8>>> {
+    pub fn occupant_portraits(&self) -> Result<Vec<OccupantPortrait>> {
         let p = self.sprite_node(0, 1300)?;
         ensure!(u32le(self.data, p + 16)? == 12, "invalid occupant count");
+        let verts = self.offset(u32le(self.data, p + 4)?)?;
         let mut poly = self.offset(u32le(self.data, p + 12)?)?;
         let mut portraits = Vec::new();
         for _ in 0..12 {
@@ -542,22 +549,21 @@ impl<'a> Dmd<'a> {
                 clut: u16le(uv, 2)?,
                 window: 0,
             };
-            let (u, v) = (uv[8], uv[1]);
-            ensure!(
-                uv[0].checked_sub(u) == Some(63) && uv[5].checked_sub(v) == Some(89),
-                "unexpected occupant rectangle"
-            );
-            let mut portrait = Vec::with_capacity(64 * 90 * 4);
-            for y in 0..90 {
-                for x in 0..64 {
-                    let mut color = textures.sample_primitive(key, u + x, v + y, true)?;
-                    for c in &mut color[..3] {
-                        *c = (u16::from(*c) * 191 / 128).min(255) as u8;
-                    }
-                    portrait.extend(color);
-                }
+            let mut xy = [[0; 2]; 4];
+            for (i, point) in xy.iter_mut().enumerate() {
+                let at = verts + 8 * usize::from(u16le(record, 4 + 2 * i)?);
+                *point = [
+                    i32::from(u16le(self.data, at)? as i16) >> 8,
+                    i32::from(u16le(self.data, at + 4)? as i16) >> 8,
+                ];
             }
-            portraits.push(portrait);
+            portraits.push(OccupantPortrait {
+                texture: key,
+                xy,
+                uv: std::array::from_fn(|i| {
+                    [i32::from(uv[4 * i]), i32::from(uv[4 * ((i + 1) % 4) + 1])]
+                }),
+            });
             poly += len;
         }
         Ok(portraits)

@@ -186,6 +186,47 @@ fn raster_triangle(
     polygon: &Polygon,
     vertices: [PacketCorner; 3],
 ) {
+    raster_packet(
+        out,
+        textures,
+        polygon.texture,
+        polygon.semi_transparent,
+        polygon.dither,
+        vertices,
+    );
+}
+
+pub(crate) fn draw_portrait(
+    out: &mut [u8],
+    textures: &Vram,
+    portrait: &tm1_assets::scene::OccupantPortrait,
+    xy: [[i32; 2]; 4],
+) {
+    let corners: [PacketCorner; 4] = std::array::from_fn(|i| PacketCorner {
+        xy: xy[i],
+        uv: portrait.uv[i],
+        rgb: [191; 3],
+    });
+    for tri in [[0, 1, 2], [2, 1, 3]] {
+        raster_packet(
+            out,
+            textures,
+            Some(portrait.texture),
+            true,
+            false,
+            tri.map(|i| corners[i]),
+        );
+    }
+}
+
+fn raster_packet(
+    out: &mut [u8],
+    textures: &Vram,
+    texture: Option<TextureKey>,
+    semi: bool,
+    dither: bool,
+    vertices: [PacketCorner; 3],
+) {
     let xy = vertices.map(|v| v.xy);
     if !triangle_fits_gpu(xy) {
         return;
@@ -241,10 +282,9 @@ fn raster_triangle(
                 ((start + dx * i64::from(delta.x) + dy * i64::from(delta.y)) >> 12) as u8
             });
             let mut texel = [255; 4];
-            if let Some(key) = polygon.texture {
+            if let Some(key) = texture {
                 let [u, v] = [attributes[3], attributes[4]];
-                let Ok(sample) = textures.sample_primitive(key, u, v, polygon.semi_transparent)
-                else {
+                let Ok(sample) = textures.sample_primitive(key, u, v, semi) else {
                     continue;
                 };
                 if sample[3] == 0 {
@@ -253,23 +293,17 @@ fn raster_triangle(
                 texel = sample;
             }
             let at = 4 * (y as usize * WIDTH + x as usize);
-            let blend = (polygon.semi_transparent
-                && (polygon.texture.is_none() || texel[3] == 128))
-                .then(|| polygon.texture.map_or(0, |t| (t.page >> 5) & 3));
-            let offset = if polygon.dither {
+            let blend = (semi && (texture.is_none() || texel[3] == 128))
+                .then(|| texture.map_or(0, |t| (t.page >> 5) & 3));
+            let offset = if dither {
                 DITHER[y as usize & 3][x as usize & 3]
             } else {
                 0
             };
             for k in 0..3 {
                 let shade = attributes[k];
-                out[at + k] = pixel_channel(
-                    shade,
-                    polygon.texture.map(|_| texel[k]),
-                    offset,
-                    out[at + k],
-                    blend,
-                );
+                out[at + k] =
+                    pixel_channel(shade, texture.map(|_| texel[k]), offset, out[at + k], blend);
             }
             out[at + 3] = 255;
         }

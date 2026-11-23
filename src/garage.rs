@@ -25,7 +25,7 @@ pub struct Garage {
     voices: Option<(GarageSound, Vec<Entity>)>,
     cars: Vec<Scene>,
     bios: Vec<Vec<u8>>,
-    portraits: Vec<Vec<u8>>,
+    portraits: Vec<tm1_assets::scene::OccupantPortrait>,
     textures: Vram,
     trig: tm1_core::math::TrigTables,
     pub row: usize,
@@ -71,7 +71,7 @@ impl Garage {
             boss_engine: crate::sfx::EngineSample::load(&bank, Vehicle::Minion)?,
             voices: None,
             bios,
-            portraits: dmd.occupant_portraits(&textures)?,
+            portraits: dmd.occupant_portraits()?,
             textures,
             trig: tm1_core::math::TrigTables::from_executable(&disc.read("SIPS_600.07")?)
                 .ok_or_else(|| anyhow::anyhow!("invalid showroom rotation tables"))?,
@@ -214,34 +214,26 @@ impl Garage {
                 8,
             );
         }
-        table.draw(&mut frame, &self.textures);
         let centers = [42, 277];
-        let mut portrait = |car: usize, slot: usize, w: usize, h: usize| {
-            for y in 0..h {
-                for x in 0..w {
-                    let at = 4 * ((35 + y) * 320 + centers[slot] - w / 2 + x);
-                    let pixel = &self.portraits[car][4 * (64 * (y * 90 / h) + x * 64 / w)..][..4];
-                    match pixel[3] {
-                        0 => {}
-                        128 => {
-                            for c in 0..3 {
-                                frame[at + c] =
-                                    (u16::from(frame[at + c]) / 2 + u16::from(pixel[c]) / 2) as u8;
-                            }
-                        }
-                        _ => frame[at..at + 4].copy_from_slice(pixel),
+        let mut portrait = |car: usize, slot: usize, fields: u32| {
+            let portrait = &self.portraits[car];
+            let xy = std::array::from_fn(|i| {
+                let [mut x, mut y] = portrait.xy[i];
+                for _ in 0..fields {
+                    x = (x + if i < 2 { 24 } else { -24 }) / 2;
+                    if i == 0 || i == 2 {
+                        y = (y + 22) / 2;
                     }
                 }
-            }
+                [x + centers[slot], y + 80]
+            });
+            crate::render::menu::draw_portrait(&mut frame, &self.textures, portrait, xy);
         };
-        portrait(i, slot, 64, 90);
+        portrait(i, slot, 0);
         if let Some(other) = locked {
-            let fields = self.portrait_fields;
-            let w = 48 + 2 * (8 >> fields);
-            // Only the lower two Y coordinates approach +22; the upper edge stays at -45.
-            let h = 45 + 22 + (23 >> fields);
-            portrait(other, 1 - slot, w as usize, h as usize);
+            portrait(other, 1 - slot, self.portrait_fields);
         }
+        table.draw(&mut frame, &self.textures);
         if !demo {
             for (row, label) in ["SELECT", "CAR INFO", "EXIT"].into_iter().enumerate() {
                 fonts.sprite_at(
