@@ -24,14 +24,14 @@ impl VabVolume {
             tone: tone.volume,
         }
     }
-    // SOUND.c soundProcessIds truncates after each scale. soundPlaySound caps the SDK value.
+    // SsUtSetVVol writes 129 times the seven-bit level as a signed Q14 gain.
     pub fn gain(self, channel: u8, percent: u8) -> f32 {
         f32::from(tm1_core::sound::voice_volume(
             self.program,
             self.tone,
             channel,
             percent,
-        )) / 33.
+        )) * (129. / 16384.)
     }
 }
 
@@ -137,13 +137,11 @@ impl StereoPcm {
 
     #[cfg(test)]
     pub(super) fn unscaled_decoder(&self) -> Playback {
-        let mut clip = self.clone();
-        clip.levels = None;
-        clip.volume = VabVolume {
-            program: 99,
-            tone: 99,
-        };
-        clip.decoder()
+        let mut playback = self.decoder();
+        playback.clip.levels = None;
+        playback.last_levels = 33 | (33 << 8) | (99 << 16);
+        playback.frame_gain = [1.; 2];
+        playback
     }
 
     pub(crate) fn with_levels(&self, levels: Levels) -> Self {
@@ -279,16 +277,16 @@ mod tests {
         let levels = Levels::new([16, 47], 99);
         let mut a = clip.with_levels(levels.clone()).decoder();
         let mut b = clip.with_levels(Levels::new([47, 16], 50)).decoder();
-        assert_eq!(a.next(), Some(0.25 * (16. / 33.)));
+        assert_eq!(a.next(), Some(0.25 * (16. * 129. / 16384.)));
         levels.set([39, 21], 25);
-        assert_eq!(a.next(), Some(0.125 * (47. / 33.)));
-        assert_eq!(a.next(), Some(0.25 * (9. / 33.)));
-        assert_eq!(a.next(), Some(0.125 * (5. / 33.)));
-        assert_eq!(b.next(), Some(0.25 * (23. / 33.)));
-        assert_eq!(b.next(), Some(0.125 * (8. / 33.)));
+        assert_eq!(a.next(), Some(0.125 * (47. * 129. / 16384.)));
+        assert_eq!(a.next(), Some(0.25 * (9. * 129. / 16384.)));
+        assert_eq!(a.next(), Some(0.125 * (5. * 129. / 16384.)));
+        assert_eq!(b.next(), Some(0.25 * (23. * 129. / 16384.)));
+        assert_eq!(b.next(), Some(0.125 * (8. * 129. / 16384.)));
         levels.set([50, 33], 109);
-        assert_eq!(a.next(), Some(0.25 * (55. / 33.)));
-        assert_eq!(a.next(), Some(0.125 * (36. / 33.)));
+        assert_eq!(a.next(), Some(0.25 * (55. * 129. / 16384.)));
+        assert_eq!(a.next(), Some(0.125 * (36. * 129. / 16384.)));
         assert_eq!(a.next(), None);
         assert_eq!(b.count(), 4);
     }

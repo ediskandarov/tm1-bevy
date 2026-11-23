@@ -30,7 +30,7 @@ pub(crate) fn play_menu_button(
         .spawn((
             MenuButtonVoice(select),
             player,
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44 * gain)),
+            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
         ))
         .id()
 }
@@ -200,12 +200,7 @@ impl Sounds {
     pub fn ending_engine(&self) -> Vec<(AudioPlayer<pcm::StereoPcm>, PlaybackSettings)> {
         self.screen_engine
             .iter()
-            .map(|source| {
-                (
-                    AudioPlayer(source.clone()),
-                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28)),
-                )
-            })
+            .map(|source| (AudioPlayer(source.clone()), PlaybackSettings::ONCE))
             .collect()
     }
 
@@ -411,11 +406,7 @@ pub fn start(
                 sounds
                     .screen_engine
                     .push(clips.add(tone.voice(30).with_levels(screen_levels.clone())));
-                entity.insert((
-                    Engine,
-                    AudioPlayer(source),
-                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28)),
-                ));
+                entity.insert((Engine, AudioPlayer(source), PlaybackSettings::ONCE));
             }
         }
     }
@@ -540,7 +531,7 @@ pub fn update(
                 sink.play();
             }
         } else if !playing || restart_engine {
-            let mut settings = PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28));
+            let mut settings = PlaybackSettings::ONCE;
             settings.paused = pause;
             commands
                 .entity(entity)
@@ -647,7 +638,7 @@ pub fn update(
                         priority: tone.priority,
                     },
                     AudioPlayer(clips.add(clip)),
-                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44)),
+                    PlaybackSettings::DESPAWN,
                 ))
                 .id();
             ranked.push(Candidate {
@@ -822,7 +813,7 @@ mod tests {
         let increment = 2453;
         let frames = 4 + ((tone.pcm.len() - 3) * 4096).div_ceil(increment);
         assert_eq!(tone.program_volume, 75);
-        let gain = f32::from(25 * u16::from(tone.volume) / 99) / 33.;
+        let gain = f32::from(25 * u16::from(tone.volume) / 99) * (129. / 16384.);
         // Independent decoder and four-tap interpolation at pitch register 2453.
         let samples = [
             (0, 0),
@@ -1265,7 +1256,7 @@ mod tests {
         crate::ending::begin(&mut world).unwrap();
         let reward_handles = &world.resource::<Sounds>().screen_engine.clone();
         let reward = world.query_filtered::<(&PlaybackSettings,&AudioPlayer<pcm::StereoPcm>), With<crate::ending::EndingEngine>>()
-            .iter(&world).map(|(setting,player)| { assert_eq!(setting.speed,1.); assert_eq!(setting.volume, Volume::Linear(0.28)); player.0.clone() }).collect::<Vec<_>>();
+            .iter(&world).map(|(setting,player)| { assert_eq!(setting.speed,1.); assert_eq!(setting.volume, Volume::Linear(1.)); player.0.clone() }).collect::<Vec<_>>();
         assert_eq!(battle.len(), 2);
         assert_eq!(reward.len(), 2);
         let clips = world.resource::<Assets<pcm::StereoPcm>>();
@@ -1658,7 +1649,7 @@ mod tests {
             .iter(&world)
             .filter(|(voice, _, _)| voice.key == Some(Turbo))
             .map(|(voice, player, settings)| {
-                assert_eq!(settings.volume, Volume::Linear(0.44));
+                assert_eq!(settings.volume, Volume::Linear(1.));
                 (
                     voice.order,
                     world

@@ -327,9 +327,8 @@ impl Contest {
         }
         world.spawn((
             AudioPlayer::new(voice),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(
-                0.44 * self.settings.effects_gain(),
-            )),
+            PlaybackSettings::DESPAWN
+                .with_volume(bevy::audio::Volume::Linear(self.settings.effects_gain())),
         ));
     }
     fn play(&mut self, world: &mut World, mut clip: Option<Clip>) {
@@ -2484,7 +2483,7 @@ mod tests {
                 StereoPcm::one_shot(&tone).with_levels(Levels::new([i32::from(volume); 2], 99));
             assert_eq!(
                 world.get::<PlaybackSettings>(entity).unwrap().volume,
-                Volume::Linear(0.44)
+                Volume::Linear(1.)
             );
             assert!(actual.decoder().eq(clip.decoder()));
         }

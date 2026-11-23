@@ -112,9 +112,8 @@ impl Garage {
                 GarageSound::Engine(vehicle) => &self.audio[vehicle.card_index()].0,
                 GarageSound::Vehicle(index) => &self.audio[index].0,
             };
-            use bevy::audio::Volume;
             world.init_resource::<Assets<crate::sfx::pcm::StereoPcm>>();
-            let mut spawn = |clip: StereoPcm, gain| {
+            let mut spawn = |clip: StereoPcm| {
                 let handle = world
                     .resource_mut::<Assets<StereoPcm>>()
                     .add(clip.with_levels(self.levels.clone()));
@@ -122,21 +121,13 @@ impl Garage {
                     .spawn((
                         crate::campaign::StageEntity,
                         AudioPlayer(handle),
-                        PlaybackSettings::ONCE.with_volume(Volume::Linear(gain)),
+                        PlaybackSettings::ONCE,
                     ))
                     .id()
             };
-            let mut voices: Vec<_> = engine
-                .iter()
-                .map(|tone| spawn(tone.voice(30), 0.28))
-                .collect();
+            let mut voices: Vec<_> = engine.iter().map(|tone| spawn(tone.voice(30))).collect();
             if let GarageSound::Vehicle(index) = sound {
-                voices.extend(
-                    self.audio[index]
-                        .1
-                        .iter()
-                        .map(|tone| spawn(tone.clone(), 0.44)),
-                );
+                voices.extend(self.audio[index].1.iter().map(|tone| spawn(tone.clone())));
             }
             self.voices = Some((sound, voices));
         }

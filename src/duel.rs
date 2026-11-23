@@ -450,7 +450,7 @@ pub fn pause_menu(
             playback.volume = bevy::audio::Volume::Linear(if music.is_some() {
                 duel.settings.cd_gain()
             } else {
-                0.28
+                1.
             });
             if matches!(duel.pause, Some(Page::Audio(_)))
                 && let Some(track) = music.and_then(|p| tracks.get(&p.0))

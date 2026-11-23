@@ -409,7 +409,7 @@ pub fn update(world: &mut World) {
                 StageEntity,
                 CardThrow,
                 AudioPlayer(tone),
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44)),
+                PlaybackSettings::DESPAWN,
             ));
         }
     }
@@ -611,7 +611,7 @@ mod tests {
             assert!(previous.iter().all(|&e| world.get_entity(e).is_err()));
             assert_eq!(playing.len(), tones.len());
             for ((_, player, playback), tone) in playing.into_iter().zip(&tones) {
-                assert_eq!(playback.volume, bevy::audio::Volume::Linear(0.44));
+                assert_eq!(playback.volume, bevy::audio::Volume::Linear(1.));
                 let expected = StereoPcm::one_shot(tone)
                     .with_levels(Levels::new([settings.effects_volume().into(); 2], 99));
                 let clip = world

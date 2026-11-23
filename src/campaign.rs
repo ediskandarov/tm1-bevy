@@ -346,11 +346,7 @@ fn defeat(world: &mut World, volume: u8) -> Result<()> {
     }
     world.spawn((StageEntity, LostGame { load_remaining }));
     for tone in signature {
-        world.spawn((
-            StageEntity,
-            AudioPlayer(tone),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(0.44)),
-        ));
+        world.spawn((StageEntity, AudioPlayer(tone), PlaybackSettings::DESPAWN));
     }
     Ok(())
 }

@@ -9,7 +9,7 @@ use crate::{
     duel::{Duel, DuelEffect},
 };
 use anyhow::Result;
-use bevy::{audio::Volume, prelude::*};
+use bevy::prelude::*;
 use tm1_core::drive::Vehicle;
 
 #[derive(Resource)]
@@ -105,7 +105,7 @@ impl DuelBank {
                         group: None,
                     },
                     AudioPlayer(source.clone()),
-                    PlaybackSettings::ONCE.with_volume(Volume::Linear(0.28)),
+                    PlaybackSettings::ONCE,
                 ));
             }
         }
@@ -123,7 +123,7 @@ impl DuelBank {
                 StageEntity,
                 crate::duel::ScoreEngine,
                 AudioPlayer(clip.clone()),
-                PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.28)),
+                PlaybackSettings::DESPAWN,
             ));
         }
     }
@@ -260,7 +260,7 @@ pub fn mix(
                         group: key.map(|key| (key, levels.clone())),
                     },
                     AudioPlayer(clips.add(tone.clip.with_levels(levels.clone()))),
-                    PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.44)),
+                    PlaybackSettings::DESPAWN,
                 ))
                 .id();
             ranked.push(Candidate {
@@ -405,7 +405,7 @@ mod tests {
             let mut clips: Vec<_> = engines
                 .iter(world)
                 .map(|(engine, settings)| {
-                    assert_eq!(settings.volume, Volume::Linear(0.28));
+                    assert_eq!(settings.volume, bevy::audio::Volume::Linear(1.));
                     engine.source.clone()
                 })
                 .collect();
