@@ -1340,13 +1340,29 @@ fn draw_view(
         batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::Opaque);
     }
     let white = arena.uv(0, Vec2::ZERO);
-    let quad = |batch: &mut Batch, points: [Vec2; 4], depth: f32, colors: [[f32; 4]; 2]| {
-        for &i in indices(4) {
-            let xy = points[i] * (depth / focal);
-            batch.push(
-                eye + forward * depth + right * xy.x + up * xy.y,
-                white,
-                colors[i / 2],
+    let draw_line = |batch: &mut Batch, points, colors, bucket| {
+        let start = batch.positions.len();
+        let depth = bucket_depth(bucket);
+        line_pixels(points, colors, center, |[x, y], rgb| {
+            let color = packet_rgb(rgb);
+            for &corner in indices(4) {
+                let u = x + (corner & 1) as i32;
+                let v = y + (corner >> 1) as i32;
+                let offset = right * u as f32 - up * v as f32;
+                batch.push(
+                    eye + forward * depth + offset * (depth / lens as f32),
+                    white,
+                    color,
+                );
+            }
+        });
+        let count = batch.positions.len() - start;
+        if count != 0 {
+            batch.order_packet(
+                count,
+                bucket,
+                DrawPass::Bullets,
+                PacketMode::UntexturedOpaque,
             );
         }
     };
@@ -1437,24 +1453,17 @@ fn draw_view(
             let camera = camera_point(p);
             let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
             let (bucket, [x, y]) = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
-            Some((Vec2::new(x as f32, -y as f32) * pixel_scale, bucket))
+            Some(([x, y], bucket))
         });
         for (j, segment) in points.windows(2).enumerate() {
             let (Some((a, _)), Some((b, bucket))) = (segment[0], segment[1]) else {
                 continue;
             };
-            let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
             let colors = [j, j + 1].map(|i| {
                 let level = (250 - 12 * i) as u8;
-                packet_rgb([level, level, 255])
+                [level, level, 255]
             });
-            quad(
-                &mut batch,
-                [a - normal, a + normal, b - normal, b + normal],
-                bucket_depth(bucket),
-                colors,
-            );
-            batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
+            draw_line(&mut batch, [a, b], colors, bucket);
         }
     }
     for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
@@ -1475,15 +1484,7 @@ fn draw_view(
         use tm1_core::bullet::Primitive;
         match primitive {
             Primitive::Line { points, colors } => {
-                let [a, b] = points.map(screen);
-                let normal = (b - a).normalize_or_zero().perp() * (0.5 * pixel_scale);
-                quad(
-                    &mut batch,
-                    [a - normal, a + normal, b - normal, b + normal],
-                    depth,
-                    colors.map(packet_rgb),
-                );
-                batch.order_packet(6, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
+                draw_line(&mut batch, points, colors, bucket);
             }
             Primitive::Triangle { points, colors } => {
                 for (point, color) in points.into_iter().zip(colors) {
@@ -1840,6 +1841,47 @@ fn draw_radar(batch: &mut Batch, arena: &Arena, radar: &tm1_core::drive::RadarFr
 // The PS1 screen Y axis points down. geomProc keeps clockwise faces in the normal view.
 fn back_facing([a, b, c]: [Vec3; 3], eye: Vec3) -> bool {
     (b - a).cross(c - a).dot(eye - a) > 0.
+}
+
+// A LINE_G2 includes both endpoints, even when both project onto the same pixel.
+fn line_pixels(
+    mut points: [[i32; 2]; 2],
+    mut colors: [[u8; 3]; 2],
+    center: [i32; 2],
+    mut emit: impl FnMut([i32; 2], [u8; 3]),
+) {
+    // GPU command coordinates are signed eleven-bit framebuffer coordinates.
+    for point in &mut points {
+        for axis in 0..2 {
+            point[axis] = ((point[axis] + center[axis]) << 21 >> 21) - center[axis];
+        }
+    }
+    let width = points[0][0].abs_diff(points[1][0]);
+    let height = points[0][1].abs_diff(points[1][1]);
+    if width >= 1024 || height >= 512 {
+        return;
+    }
+    let steps = width.max(height) as i32;
+    if steps > 0 && points[0][0] >= points[1][0] {
+        points.swap(0, 1);
+        colors.swap(0, 1);
+    }
+    let divisor = steps.max(1);
+    let color_step: [i32; 3] = std::array::from_fn(|c| {
+        ((i32::from(colors[1][c]) - i32::from(colors[0][c])) << 12) / divisor
+    });
+    for i in 0..=steps {
+        let point = std::array::from_fn(|axis| {
+            let delta = points[1][axis] - points[0][axis];
+            // X ties round down. Y ties follow the direction of travel.
+            let bias = divisor - i32::from(axis == 0 || delta < 0);
+            points[0][axis] + (2 * i * delta + bias).div_euclid(2 * divisor)
+        });
+        let color = std::array::from_fn(|c| {
+            (i32::from(colors[0][c]) + ((2048 + i * color_step[c]) >> 12)) as u8
+        });
+        emit(point, color);
+    }
 }
 
 fn indices(n: usize) -> &'static [usize] {
@@ -2210,6 +2252,24 @@ pub fn duel_view(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gouraud_line_coverage_and_color() {
+        let pixels = |points, colors| {
+            let mut result = Vec::new();
+            super::line_pixels(points, colors, [160, 120], |p, c| result.push((p, c)));
+            result
+        };
+        let colors = [[24; 3], [223; 3]];
+        assert_eq!(pixels([[1, 2]; 2], colors), [([1, 2], colors[0])]);
+        for (end, middle) in [([2, 1], [1, 1]), ([2, -1], [1, -1]), ([1, 2], [0, 1])] {
+            let expected = [([0, 0], colors[0]), (middle, [124; 3]), (end, colors[1])];
+            assert_eq!(pixels([[0, 0], end], colors), expected);
+            assert_eq!(pixels([end, [0, 0]], [colors[1], colors[0]]), expected);
+        }
+        assert!(pixels([[-512, 0], [512, 0]], colors).is_empty());
+        assert!(pixels([[0, -256], [0, 256]], colors).is_empty());
+    }
+
     #[test]
     fn sprite_axis_preserves_every_texel_across_page_wrap() {
         for origin in 0..=255u8 {
