@@ -2647,7 +2647,9 @@ mod tests {
         app.world_mut()
             .resource_mut::<ButtonInput<KeyCode>>()
             .press(KeyCode::KeyB);
-        tick(&mut app, 200);
+        for _ in 0..4 {
+            tick(&mut app, 50);
+        }
         assert!(app.world().resource::<crate::driving::Drive>().mirror);
         let snapshot = |app: &App| {
             let arena = app.world().resource::<Arena>();

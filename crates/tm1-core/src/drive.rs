@@ -756,6 +756,9 @@ impl PlayerVehicle {
             })
         })
     }
+    pub fn last_fields(&self) -> u8 {
+        self.last_fields
+    }
     pub fn frame(&self) -> u32 {
         self.frame
     }

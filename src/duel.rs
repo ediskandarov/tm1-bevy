@@ -37,7 +37,7 @@ pub struct Duel {
     pub cars: [PlayerVehicle; 2],
     pub cameras: [VehicleCamera; 2],
     pub scene: CollisionScene,
-    remainder: Duration,
+    clock: crate::driving::BattleClock,
     focus: DuelFocus,
     score: [i16; 2],
     pub(crate) settings: crate::pause::Settings,
@@ -104,7 +104,7 @@ fn update_focus(
                 }
             }
             duel.focus = DuelFocus::Background(resume);
-            duel.remainder = Duration::ZERO;
+            duel.clock = Default::default();
         }
         return;
     }
@@ -232,7 +232,7 @@ pub fn start(
         cars,
         cameras,
         scene,
-        remainder: Duration::ZERO,
+        clock: Default::default(),
         focus: DuelFocus::Playing,
         score,
         winner: None,
@@ -541,9 +541,7 @@ pub fn advance(
             previous_weapon,
         }
     });
-    duel.remainder += time.delta().min(Duration::from_millis(250));
-    while duel.remainder >= Duration::from_millis(50) && duel.winner.is_none() {
-        duel.remainder -= Duration::from_millis(50);
+    if let Some(fields) = duel.clock.advance(time.delta()) {
         for (car, camera) in duel.cars.iter_mut().zip(&duel.cameras) {
             car.set_battle_view(
                 tm1_core::drive::PlayerView::Car(camera.mode),
@@ -556,7 +554,7 @@ pub fn advance(
         duel.primary_hidden = !duel.cameras[0].show_body;
         let previous_view =
             tm1_core::drive::SoundListener::new(&duel.cars[1], &duel.cameras[1], None);
-        duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
+        duel.winner = duel.scene.step_duel(&mut duel.cars, input, fields);
         crate::driving::battle_audio(
             duel.cars[0].frame(),
             &duel.scene,
@@ -840,6 +838,16 @@ mod tests {
         assert_eq!(voices(&mut world), playing);
         tick(&mut world, true, 50, &[]);
         assert_eq!(clocks(&world), frame.map(|f| f + 1));
+        tick(&mut world, true, 200, &[]);
+        assert_eq!(clocks(&world), frame.map(|f| f + 2));
+        assert_eq!(
+            world
+                .resource::<Duel>()
+                .cars
+                .each_ref()
+                .map(PlayerVehicle::last_fields),
+            [5; 2]
+        );
         for key in [KeyP, ArrowDown, ArrowDown] {
             tick(&mut world, true, 50, &[key]);
             tick(&mut world, true, 0, &[]);

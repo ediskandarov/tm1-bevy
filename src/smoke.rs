@@ -16,6 +16,7 @@ pub struct Capture {
     pub realtime: bool,
     pub elapsed: std::time::Duration,
     pub steps: u64,
+    pub fields: u64,
 }
 impl Capture {
     pub fn holding_battle_frame(&self) -> bool {
@@ -30,6 +31,7 @@ impl Capture {
             realtime,
             elapsed: Default::default(),
             steps: 0,
+            fields: 0,
             frames: 0,
             requested: None,
             attempts: 0,
@@ -89,10 +91,10 @@ pub fn capture(
             }
             if capture.realtime {
                 eprintln!(
-                    "Wall-clock playback: {:.4}s, {} simulation steps, remainder {:.4}ms",
+                    "Wall-clock playback: {:.4}s, {} simulation steps, {} video fields",
                     capture.elapsed.as_secs_f64(),
                     capture.steps,
-                    capture.elapsed.as_secs_f64() * 1000. - capture.steps as f64 * 50.
+                    capture.fields
                 );
             }
             for d in diagnostics.iter() {

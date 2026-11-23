@@ -167,8 +167,7 @@ impl BattleQueue {
     }
 }
 
-// Deliver requests as they were emitted by the simulation. A rendering frame can
-// contain several steps, so each call finishes the pending hover motor request.
+// Deliver requests in simulation order, including the final hover motor request.
 pub(crate) fn battle_audio(
     frame: u32,
     scene: &CollisionScene,
@@ -364,6 +363,25 @@ pub(crate) fn battle_audio(
 }
 use crate::pause::PauseInput;
 
+/// Accumulate 60 Hz video fields. RT waits for three before presenting another
+/// battle update. SetFrameStart passes at most five to the simulation.
+#[derive(Default)]
+pub(crate) struct BattleClock {
+    field_nanos: u128,
+}
+
+impl BattleClock {
+    pub fn advance(&mut self, elapsed: Duration) -> Option<u8> {
+        self.field_nanos += elapsed.as_nanos() * 60;
+        let fields = self.field_nanos / 1_000_000_000;
+        if fields < 3 {
+            return None;
+        }
+        self.field_nanos %= 1_000_000_000;
+        Some(fields.min(5) as u8)
+    }
+}
+
 #[derive(Resource)]
 pub struct Drive {
     battle_seed: u32,
@@ -390,7 +408,7 @@ pub struct Drive {
     pub opponents: Vec<Opponent>,
     pub contacts: CollisionScene,
     pub sounds: Vec<BattleRequest>,
-    remainder: Duration,
+    clock: BattleClock,
     pub pause: Option<crate::pause::Page>,
     pub settings: crate::pause::Settings,
     pub pause_sound: Option<bool>,
@@ -534,7 +552,7 @@ impl Drive {
         if self.helicopter_active {
             self.mirror = false;
             let heli = self.helicopter.as_mut().unwrap();
-            heli.update(&self.player, 3, true);
+            heli.update(&self.player, self.player.last_fields(), true);
         } else {
             self.camera.update(&self.player, true);
         }
@@ -606,7 +624,7 @@ impl Drive {
             if self.helicopter_active
                 && let Some(heli) = &mut self.helicopter
             {
-                heli.update(&self.player, 3, true);
+                heli.update(&self.player, self.player.last_fields(), true);
             }
             self.camera.update(&self.player, true);
             self.capture_primary_view();
@@ -667,7 +685,7 @@ impl Drive {
             camera,
             player,
             sounds: Vec::new(),
-            remainder: Duration::ZERO,
+            clock: BattleClock::default(),
             pause: None,
             pause_sound: None,
             settings: Default::default(),
@@ -779,7 +797,7 @@ pub fn advance(
             arena.reset_animation();
         }
         drive.audio_restart_count = drive.audio_restart_count.wrapping_add(1);
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     use crate::pause::{Action, Page};
@@ -793,7 +811,7 @@ pub fn advance(
             }
             drive.pause_input = PauseInput::Ready;
         }
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     if let Some(page) = drive.pause {
@@ -848,13 +866,13 @@ pub fn advance(
                 }
             }
         }
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     if window.focused && start && !drive.showing_boss_intro() && drive.lost_life.is_none() {
         drive.pause = Some(Page::Choices(0));
         drive.pause_input = PauseInput::WaitRelease;
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     let status = if drive.player.health().0 <= 0 {
@@ -879,11 +897,11 @@ pub fn advance(
         window.title = title;
     }
     if drive.stage_finished() {
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     if !capture.demo && (!window.focused || regained) {
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     if drive.showing_boss_intro() || drive.lost_life.is_some() {
@@ -913,7 +931,7 @@ pub fn advance(
                 crate::campaign::timer_ticks(&time, strategy.as_deref(), capture.demo)
             });
         }
-        drive.remainder = Duration::ZERO;
+        drive.clock = BattleClock::default();
         return;
     }
     let input = Input {
@@ -955,14 +973,15 @@ pub fn advance(
     if capture.realtime {
         capture.elapsed += time.delta();
     }
-    drive.remainder += if capture.demo && !capture.realtime {
+    let elapsed = if capture.demo && !capture.realtime {
         STEP
     } else {
         time.delta()
     };
-    while drive.remainder >= STEP {
+    if let Some(fields) = drive.clock.advance(elapsed) {
         if capture.realtime {
             capture.steps += 1;
+            capture.fields += u64::from(fields);
         }
         let started = capture.demo.then(std::time::Instant::now);
         let state = &mut *drive;
@@ -1006,9 +1025,10 @@ pub fn advance(
         }
         state.capture_primary_view();
         state.contacts.radar.display(state.radar);
-        let prepared = state
-            .contacts
-            .begin_bout_step(&mut state.player, &mut state.opponents, 3);
+        let prepared =
+            state
+                .contacts
+                .begin_bout_step(&mut state.player, &mut state.opponents, fields);
         let update_player = prepared.updates_player();
         if update_player {
             let before = state.selected_view();
@@ -1045,7 +1065,7 @@ pub fn advance(
         if state.helicopter_active
             && let Some(heli) = &mut state.helicopter
         {
-            heli.update(&state.player, 3, false);
+            heli.update(&state.player, fields, false);
         } else {
             state.camera.after_step(&state.player, update_player);
         }
@@ -1083,17 +1103,9 @@ pub fn advance(
             crate::smoke::sample("Simulation step", &mut timings, start);
         }
         if state.contacts.level_won() {
-            state.advance_victory_delay(3);
+            state.advance_victory_delay(fields.into());
         } else if state.player.health().0 <= 0 {
-            state.advance_death(3);
-        }
-        drive.remainder -= STEP;
-        if drive.lives == 0
-            || drive.stage_finished()
-            || drive.showing_boss_intro()
-            || drive.lost_life.is_some()
-        {
-            break;
+            state.advance_death(fields.into());
         }
     }
 }
@@ -2011,6 +2023,26 @@ mod tests {
                 .resource_mut::<ButtonInput<KeyCode>>()
                 .release(key);
             tick(&mut app, 50);
+        }
+        // A late presentation advances one actor update using the elapsed fields.
+        // Run the retail timer with the same field intervals and a zero hardware counter.
+        let (mut slow, _) = build();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        cpu.put(0x80198a94, &60u32.to_le_bytes());
+        cpu.put(0x80162f40, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
+        for (ms, elapsed_fields) in [(50, 3), (67, 4), (83, 5), (200, 12)] {
+            let ticks = elapsed_fields * tm1_core::TICKS_PER_FIELD;
+            assert!(cpu.call(0x80109dac, &[ticks]) <= 20);
+            cpu.put(0x80170248, &0u32.wrapping_sub(ticks).to_le_bytes());
+            cpu.call(0x80109c08, &[]);
+            let fields = cpu.call(0x80109d00, &[]) as u8;
+            let before = slow.world().resource::<Drive>().player.frame();
+            tick(&mut slow, ms);
+            let player = &slow.world().resource::<Drive>().player;
+            assert_eq!(player.frame(), before + 1);
+            assert_eq!(player.last_fields(), fields);
+            tick(&mut slow, 0);
+            assert_eq!(slow.world().resource::<Drive>().player.frame(), before + 1);
         }
         let (mut app, window) = build();
         let start = snapshot(&app);
