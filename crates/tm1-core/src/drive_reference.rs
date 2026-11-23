@@ -4546,7 +4546,7 @@ fn compare_battle_skill(
     boss: bool,
     difficulty: Difficulty,
 ) {
-    compare_battle_controls(vehicle, charge, level, boss, difficulty, false);
+    compare_battle_controls(vehicle, charge, level, boss, difficulty, false, None);
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
@@ -4558,8 +4558,24 @@ fn god_mode_pad_sequences_original() {
         false,
         Difficulty::Medium,
         true,
+        None,
     );
 }
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn hammerhead_second_opponent_original() {
+    compare_battle_controls(
+        Vehicle::Hammerhead,
+        20,
+        Level::Warehouse,
+        false,
+        Difficulty::Medium,
+        false,
+        Some(1),
+    );
+}
+
 fn compare_battle_controls(
     vehicle: Vehicle,
     charge: i16,
@@ -4567,14 +4583,15 @@ fn compare_battle_controls(
     boss: bool,
     difficulty: Difficulty,
     cheats: bool,
+    crush_target: Option<usize>,
 ) {
     let mut r = Reference::on_difficulty(vehicle, true, level, difficulty);
     r.cpu.call(0x80137268, &[]);
-    let crush = level == Level::Arena && vehicle == Vehicle::Hammerhead;
+    let crush = (level == Level::Arena && vehicle == Vehicle::Hammerhead) || crush_target.is_some();
     let mut engaged = false;
     put(&mut r.cpu, 0x8019edd8, vehicle as u32);
     put(&mut r.cpu, 0x8019eddc, r.police.vehicle as u32);
-    if crush {
+    if crush && crush_target.is_none() {
         r.player.state[0x47a..0x47c].copy_from_slice(&charge.to_le_bytes());
         let [x, y, _] = r.player.position();
         vec3(&mut r.police.state, 0x444, [x + 380, y + 380, 16]);
@@ -4658,6 +4675,13 @@ fn compare_battle_controls(
         let mut kinds = level.opponents(vehicle, &mut ArenaDeck::default(), &mut 1);
         r.player.reset();
         lineup = Opponent::spawn_bout(&mut r.player, &kinds);
+        if let Some(slot) = crush_target {
+            let [x, y, z] = r.player.position();
+            let victim = &mut lineup[slot];
+            vec3(&mut victim.state, 0x444, [x + 160, y + 540, z]);
+            victim.state[0x66 + 16] = 1;
+            victim.state[0x224..0x226].copy_from_slice(&1000i16.to_le_bytes());
+        }
         if boss {
             for rival in &mut lineup {
                 rival.state[0x24c..0x250].copy_from_slice(&0i32.to_le_bytes());
@@ -4808,6 +4832,7 @@ fn compare_battle_controls(
         assert!(engine.is_some());
         (sounds, engine)
     };
+    let initial_health: Vec<_> = lineup.iter().map(|car| car.health().0).collect();
     let ticks = if vehicle == Vehicle::YellowJacket {
         1200
     } else {
@@ -5075,8 +5100,17 @@ fn compare_battle_controls(
             }
             if !engaged && active {
                 assert_eq!(r.player.weapon().1, 14);
+                if let Some(slot) = crush_target {
+                    assert!(lineup[slot].health().0 < initial_health[slot]);
+                    assert_eq!(lineup[0].health().0, initial_health[0]);
+                    assert_eq!(lineup[slot].state[0x66 + 28], 1);
+                    assert_eq!(lineup[0].state[0x66 + 28], 0);
+                }
                 engaged = true;
             } else if engaged && !active {
+                if let Some(slot) = crush_target {
+                    assert_eq!(lineup[slot].state[0x66 + 28], 0);
+                }
                 println!("Hammerhead completed the crush at step {tick}");
                 return;
             }
