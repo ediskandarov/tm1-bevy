@@ -39,6 +39,9 @@ pub struct MirrorDisplay;
 const MIRROR_WIDTH: u32 = 101;
 const MIRROR_HEIGHT: u32 = 30;
 const MIRROR_FOCAL: f32 = 91.;
+const BATTLE_FOCAL: f32 = 228.;
+// VIEW scales the forward and vertical axes by 3690 and the horizontal axis by 4096.
+const VIEW_SCALE_X: f32 = 3690. / 4096.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -393,7 +396,7 @@ pub fn setup(
                 ..default()
             },
             Projection::Perspective(PerspectiveProjection {
-                fov: 2. * (0.5_f32 / 0.85).atan(),
+                fov: 2. * (120. / BATTLE_FOCAL).atan(),
                 near: 1.,
                 far: 100000.,
                 ..default()
@@ -468,7 +471,7 @@ pub fn setup(
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {
-            fov: 2. * (0.5_f32 / 0.85).atan(),
+            fov: 2. * (120. / BATTLE_FOCAL).atan(),
             near: arena.radius * 0.005,
             far: arena.radius * 10.,
             ..default()
@@ -886,9 +889,12 @@ pub fn update(
                 continue;
             }
             *camera = Transform::from_translation(eye).looking_to(rear_forward, rear_up);
-            camera.scale.x = 3690. / 4096.;
+            camera.scale.x = VIEW_SCALE_X;
         } else {
             *camera = Transform::from_translation(eye).looking_at(target, camera_up);
+            if !arena.overview {
+                camera.scale.x = VIEW_SCALE_X;
+            }
         }
         if sky {
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
@@ -912,7 +918,6 @@ pub fn update(
         eye,
         (target - eye).normalize(),
         camera_up,
-        window.height() * 0.85,
     );
     renderer.submit(&mut arena, false, packets);
     if mirror {
@@ -928,7 +933,6 @@ pub fn update(
             eye,
             rear_forward,
             rear_up,
-            MIRROR_FOCAL,
         );
         renderer.submit(&mut arena, true, packets);
     }
@@ -991,8 +995,9 @@ fn draw_view(
     eye: Vec3,
     forward: Vec3,
     camera_up: Vec3,
-    focal: f32,
 ) -> Batch {
+    let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
+    let depth_axis = forward * axis_scale;
     let wheel_steps = contacts.wheel_steps();
     let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
@@ -1172,7 +1177,7 @@ fn draw_view(
         batch.order_geometry(
             indices.len(),
             eye,
-            forward,
+            depth_axis,
             p.fixed_ot,
             PacketMode::polygon(p),
         );
@@ -1205,7 +1210,7 @@ fn draw_view(
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
-        batch.order_geometry(6, eye, forward, 0, PacketMode::texture(frame.texture));
+        batch.order_geometry(6, eye, depth_axis, 0, PacketMode::texture(frame.texture));
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(&mut poses);
@@ -1272,41 +1277,41 @@ fn draw_view(
             batch.order_geometry(
                 indices(p.vertices.len()).len(),
                 eye,
-                forward,
+                depth_axis,
                 p.fixed_ot,
                 PacketMode::polygon(p),
             );
         }
     }
-    let camera_point = |p: [i32; 3]| {
-        let d = world(p.map(|n| n as f32)) - eye;
-        Vec3::new(d.dot(right), d.dot(up), d.dot(forward))
+    let camera_coords = |point: Vec3| {
+        let d = point - eye;
+        [
+            d.dot(right) as i32,
+            (-d.dot(up) * axis_scale) as i32,
+            (d.dot(forward) * axis_scale) as i32,
+        ]
     };
+    let coords = |p: [i32; 3]| camera_coords(world(p.map(|v| v as f32)));
     let (lens, center) = if split_screen {
-        (228, [160, 60])
+        (BATTLE_FOCAL as i32, [160, 60])
     } else if secondary {
         (
             MIRROR_FOCAL as i32,
             [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
         )
     } else {
-        (204, [160, 120])
+        (BATTLE_FOCAL as i32, [160, 120])
     };
-    let pixel_scale = focal / lens as f32;
-    let bucket_depth = |bucket: u32| ((bucket * 8) as f32).max(near + 0.01);
-    let drop_camera = |p: Vec3| {
-        let d = p - eye;
-        [
-            d.dot(right) as i32,
-            -d.dot(up) as i32,
-            d.dot(forward) as i32,
-        ]
+    let bucket_depth = |bucket: u32| (bucket as f32 * 8. / axis_scale).max(near + 0.01);
+    let vertex = |[x, y]: [i32; 2], depth: f32| {
+        let offset = right * (x as f32 * axis_scale) - up * y as f32;
+        eye + forward * depth + offset * (depth / lens as f32)
     };
     let mut drops = [[0; 4]; 12];
     let drop_count = contacts.drawn_drops(secondary, &mut drops);
     for &[x, y, z, weapon] in &drops[..drop_count] {
         let center = world([x as f32, y as f32, z as f32]);
-        let camera = drop_camera(center);
+        let camera = camera_coords(center);
         let Some(bucket) = tm1_core::drive::drop_bucket(camera, weapon) else {
             continue;
         };
@@ -1326,15 +1331,12 @@ fn draw_view(
                 let dx = if i & 1 == 0 { -48. } else { 48. };
                 let dy = if i < 2 { -48. } else { 48. };
                 let corner = center + world([dx, dy, 0.]);
-                tm1_core::drive::drop_screen_point(drop_camera(corner), [lens; 2])
+                tm1_core::drive::drop_screen_point(camera_coords(corner), [lens; 2])
             } else {
                 billboard[i]
             };
-            let point = eye
-                + forward * depth
-                + (right * xy[0] as f32 - up * xy[1] as f32) * (depth / lens as f32);
             batch.push(
-                point,
+                vertex(xy, depth),
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                 [1.; 4],
             );
@@ -1350,12 +1352,7 @@ fn draw_view(
             for &corner in indices(4) {
                 let u = x + (corner & 1) as i32;
                 let v = y + (corner >> 1) as i32;
-                let offset = right * u as f32 - up * v as f32;
-                batch.push(
-                    eye + forward * depth + offset * (depth / lens as f32),
-                    white,
-                    color,
-                );
+                batch.push(vertex([u, v], depth), white, color);
             }
         });
         let count = batch.positions.len() - start;
@@ -1387,10 +1384,6 @@ fn draw_view(
             Burn => &arena.burn_frames[..],
             Fire => &arena.flame_frames[..],
         };
-        let coords = |p| {
-            let q = camera_point(p);
-            [q.x as i32, -q.y as i32, q.z as i32]
-        };
         let base = coords([x, y, z]);
         let top = (kind == 35).then(|| coords([x, y, z + 80]));
         let Some(corners) = player.particle_quad(
@@ -1412,10 +1405,8 @@ fn draw_view(
             [1.; 4]
         };
         for &i in indices(4) {
-            let [u, v] = corners[i];
-            let offset = right * u as f32 - up * v as f32;
             batch.push(
-                eye + forward * depth + offset * (depth * pixel_scale / focal),
+                vertex(corners[i], depth),
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                 tint,
             );
@@ -1430,8 +1421,7 @@ fn draw_view(
     let mut fragments = [[0; 5]; 20];
     let fragment_count = contacts.fragment_poses(secondary, &mut fragments);
     for &[x, y, z, variant, phase] in &fragments[..fragment_count] {
-        let camera = camera_point([x, y, z]);
-        let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
+        let coords = coords([x, y, z]);
         let Some((bucket, corners)) = tm1_core::drive::project_fragment(coords, [lens; 2], center)
         else {
             continue;
@@ -1440,10 +1430,8 @@ fn draw_view(
         let tile = arena.tiles[&(Some(sprite.texture), false)];
         let draw_depth = bucket_depth(bucket);
         for &i in indices(4) {
-            let [u, v] = corners[i];
-            let offset = right * u as f32 - up * v as f32;
             batch.push(
-                eye + forward * draw_depth + offset * (draw_depth * pixel_scale / focal),
+                vertex(corners[i], draw_depth),
                 arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                 [1.; 4],
             );
@@ -1452,8 +1440,7 @@ fn draw_view(
     }
     for arc in &arcs[..arc_count] {
         let points = arc.map(|p| {
-            let camera = camera_point(p);
-            let coords = [camera.x as i32, -camera.y as i32, camera.z as i32];
+            let coords = coords(p);
             let (bucket, [x, y]) = tm1_core::drive::project_taser_point(coords, [lens; 2], center)?;
             Some(([x, y], bucket))
         });
@@ -1469,20 +1456,17 @@ fn draw_view(
         }
     }
     for &[x, y, z, px, py, pz, kind, life] in &bullets[..bullet_count] {
-        let head = camera_point([x, y, z]);
-        let tail = camera_point([px, py, pz]);
-        let camera_coords = |p: Vec3| [p.x as i32, -p.y as i32, p.z as i32];
-        let head = camera_coords(head);
-        let Some((bucket, primitive)) =
-            tm1_core::bullet::project(kind, life, head, camera_coords(tail), [lens; 2], center)
-        else {
+        let Some((bucket, primitive)) = tm1_core::bullet::project(
+            kind,
+            life,
+            coords([x, y, z]),
+            coords([px, py, pz]),
+            [lens; 2],
+            center,
+        ) else {
             continue;
         };
-        let screen = |[x, y]: [i32; 2]| Vec2::new(x as f32, -y as f32) * pixel_scale;
         let depth = bucket_depth(bucket);
-        let vertex = |point: Vec2| {
-            eye + forward * depth + (right * point.x + up * point.y) * (depth / focal)
-        };
         use tm1_core::bullet::Primitive;
         match primitive {
             Primitive::Line { points, colors } => {
@@ -1490,7 +1474,7 @@ fn draw_view(
             }
             Primitive::Triangle { points, colors } => {
                 for (point, color) in points.into_iter().zip(colors) {
-                    batch.push(vertex(screen(point)), white, packet_rgb(color));
+                    batch.push(vertex(point, depth), white, packet_rgb(color));
                 }
                 batch.order_packet(3, bucket, DrawPass::Bullets, PacketMode::UntexturedOpaque);
             }
@@ -1513,7 +1497,7 @@ fn draw_view(
                         center[1] + if i < 2 { -radius } else { radius },
                     ];
                     batch.push(
-                        vertex(screen(point)),
+                        vertex(point, depth),
                         arena.uv(tile, Vec2::from(sprite.uv[i].map(f32::from))),
                         [r, g, b, 1.],
                     );
@@ -2225,7 +2209,7 @@ pub fn duel_view(
         };
         let top = if slot == 0 { 0 } else { height / 2 };
         let h = if slot == 0 { height / 2 } else { height - top };
-        let focal = window.height() * 228. / 240.;
+        let focal = window.height() * BATTLE_FOCAL / 240.;
         for (mut transform, mut cam, mut projection, sky, second) in &mut cameras {
             if usize::from(second) != slot {
                 continue;
@@ -2240,6 +2224,7 @@ pub fn duel_view(
                 p.fov = 2. * ((h as f32 / window.scale_factor()) / (2. * focal)).atan();
             }
             *transform = Transform::from_translation(eye).looking_to(forward, up);
+            transform.scale.x = VIEW_SCALE_X;
             if sky {
                 transform.translation -= poses[slot].origin * Vec3::new(1., 0., 1.);
             }
@@ -2256,7 +2241,6 @@ pub fn duel_view(
             eye,
             forward,
             up,
-            focal,
         );
         renderer.submit(&mut arena, slot != 0, packets);
     }
@@ -2264,6 +2248,26 @@ pub fn duel_view(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_projection_matches_jp_view_table() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        for (entry, focal, width, height) in [
+            (6, BATTLE_FOCAL, 320, 240),
+            (11, BATTLE_FOCAL, 320, 120),
+            (12, BATTLE_FOCAL, 320, 120),
+            (13, MIRROR_FOCAL, MIRROR_WIDTH, MIRROR_HEIGHT),
+        ] {
+            let at = 0x80170270 + 96 * entry;
+            assert_eq!([cpu.word(at + 8), cpu.word(at + 12)], [focal as u32; 2]);
+            assert_eq!([cpu.word(at + 24), cpu.word(at + 28)], [width, height]);
+            let axes = cpu.word(at + 40);
+            let horizontal = (axes as i16).unsigned_abs();
+            assert_eq!(VIEW_SCALE_X, (axes >> 16) as f32 / f32::from(horizontal));
+        }
+    }
+
     #[test]
     fn gouraud_line_coverage_and_color() {
         let pixels = |points, colors| {
