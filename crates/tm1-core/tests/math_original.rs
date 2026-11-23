@@ -60,11 +60,15 @@ fn native_math_matches_original_instructions() {
             assert_eq!(actual, expected, "function {address:#x}, case {case}");
         }
     }
-    for case in 0..4096 {
-        let input = if case == 0 {
-            [0; 3]
-        } else {
-            std::array::from_fn(|_| (rng(&mut seed) % 50_001) as i32 - 25_000)
+    for case in 0..8192 {
+        let input = match case {
+            0 => [0; 3],
+            1..4096 => std::array::from_fn(|_| (rng(&mut seed) % 50_001) as i32 - 25_000),
+            4096 => [46341, 0, 0],
+            4097 => [65536, 0, 0],
+            4098 => [i32::MAX; 3],
+            4099 => [i32::MIN; 3],
+            _ => std::array::from_fn(|_| rng(&mut seed) as i32),
         };
         for (i, v) in input.iter().enumerate() {
             cpu.put(0x8002_0040 + i as u32 * 4, &v.to_le_bytes());
@@ -85,6 +89,20 @@ fn native_math_matches_original_instructions() {
     }
     values.extend((0..4096).map(|_| rng(&mut seed) & 0x7fff_ffff));
     values.push(i32::MAX as u32);
+    // Across the largest positive and negative bands every reachable coefficient
+    // occurs; the adjacent values exercise boundaries within the smaller bands.
+    for n in 64..256u32 {
+        for shift in (0..=22).step_by(2) {
+            values.extend([
+                n << shift,
+                !(n << shift),
+                (n << shift) - 1,
+                0u32.wrapping_sub(n << shift),
+            ]);
+        }
+    }
+    values.extend([0x8000_0000, 0xffff_ffff, 0xffff_fffe]);
+    values.extend((0..4096).map(|_| rng(&mut seed)));
     for value in &values {
         assert_eq!(
             cpu.call(0x8015_bf74, &[*value]),
@@ -92,9 +110,8 @@ fn native_math_matches_original_instructions() {
             "sqrt {value}"
         );
     }
-    assert!(math::normalize([i32::MAX; 3]).is_none());
     eprintln!(
-        "Original MIPS vs native C: 8192 matrix cases, 4096 normalization cases, {} square-root cases; seed 0x544d3101",
+        "Original MIPS vs native C: 8192 matrix cases, 8192 normalization cases, {} square-root cases; seed 0x544d3101",
         values.len()
     );
 }

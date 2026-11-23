@@ -96,16 +96,8 @@ pub fn multiply_short_transpose(matrix: &Matrix, input: [i16; 3]) -> [i32; 3] {
     out
 }
 
-/// The SDK's negative-square-root path reads before its lookup table. Until
-/// that behavior is captured, reject vectors whose squared norm overflows.
+/// Run the original vector routine, including its signed 32-bit sum of squares.
 pub fn normalize(input: [i32; 3]) -> Option<[i32; 3]> {
-    let squared: u64 = input
-        .iter()
-        .map(|&v| (i64::from(v) * i64::from(v)) as u64)
-        .sum();
-    if squared > i32::MAX as u64 {
-        return None;
-    }
     let mut out = [0; 3];
     unsafe {
         mathNormalizeVec(&input, &mut out);
@@ -113,27 +105,45 @@ pub fn normalize(input: [i32; 3]) -> Option<[i32; 3]> {
     Some(out)
 }
 
-/// Reconstruct the PsyQ table mathematically; no executable data is embedded.
-pub fn square_root(value: u32) -> Option<u32> {
-    if value > i32::MAX as u32 {
-        return None;
+const ROOT_TABLE: [u32; 192] = {
+    let mut table = [0; 192];
+    let mut index = 0;
+    while index < table.len() {
+        table[index] = ((index as u32 + 64) << 18).isqrt();
+        index += 1;
     }
-    if value == 0 {
-        return Some(0);
+    table
+};
+
+/// The SDK counts leading sign bits. Negative inputs occur when a game's
+/// wrapping sum of squares crosses the signed 32-bit boundary.
+fn sdk_square_root(value: i32) -> u32 {
+    let magnitude = if value < 0 { !value } else { value };
+    if magnitude == 0 {
+        return 0;
     }
-    let even = value.leading_zeros() & !1;
-    let exponent = (31 - even) / 2;
+    let even = magnitude.leading_zeros() & !1;
     let normalized = if even >= 24 {
         value << (even - 24)
     } else {
         value >> (24 - even)
     };
-    let table_value = (normalized << 18).isqrt();
-    Some((table_value << exponent) >> 12)
+    let coefficient = if normalized < 0 {
+        // An index before the root table lands in the SDK's quarter-wave sine table.
+        let phase = ((0x80184728u32 - 0x80183f14) / 2) as i32 + normalized - 64;
+        (4096.0 * (f64::from(phase) * std::f64::consts::PI / 2048.0).sin()).round() as u32
+    } else {
+        ROOT_TABLE[(normalized - 64) as usize]
+    };
+    (coefficient << ((31 - even) / 2)) >> 12
+}
+
+/// Interpret all 32 bits as the input register of the JP SquareRoot0 routine.
+pub fn square_root(value: u32) -> Option<u32> {
+    Some(sdk_square_root(value as i32))
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn SquareRoot0(value: i32) -> i32 {
-    // Only reached through normalize(), which checks the complete input domain.
-    square_root(value as u32).expect("unvalidated negative SquareRoot0 input") as i32
+    sdk_square_root(value) as i32
 }

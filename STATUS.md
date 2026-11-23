@@ -304,7 +304,7 @@ The test interpreter executes instructions loaded from the verified retail execu
 | Missile specials | Warthog launches three swarm missiles, Spectre a ghost missile and Road Kill a Deathspear. For each vehicle, tests compared locked and unlocked launches for 93 steps, including the random draws after impact. Compared both car records, missile poses and visible trail vertices, frame indices and colors against retail. |
 | Weapons | A machine-gun round and all six regular missile types were fired at the police car. Compared missile movement through impact, car state, ammo and RNG. Fire, homing, power, singing and rear missiles dealt 7, 15, 25, 3 and 7 damage respectively. Freeze applied its status without HP loss. |
 | Input and round | Keyboard and virtual gamepad reach identical sampled state at different presentation rates. Focus loss, twenty seconds paused, gamepad removal/reconnection and restart checked. In a simulation run the police destroyed the unattended taxi after 741 idle steps; the round froze and restarted cleanly. |
-| Arithmetic | 8,192 matrix, 4,096 normalization and 4,444 square-root cases compared with the original executable. |
+| Arithmetic | 8,192 matrix, 8,192 normalization and 17,759 square-root cases compared with the original executable, including signed overflow in the sum of squares. |
 
 Reproduce from the port root with the supported absolute CUE path exported as `TM1_CUE`.
 
