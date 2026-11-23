@@ -115,6 +115,7 @@ pub(crate) fn arena_art(
         .map(|root| dmd.actor_frames(root))
         .collect::<Result<Vec<_>>>()?;
     render::Arena::new(
+        dmd,
         tm1_assets::screen::Fonts::load(disc)?,
         crate::pause::Art::load(disc)?,
         load_cockpit(disc, dmd, vehicle)?,

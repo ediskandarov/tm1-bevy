@@ -1828,6 +1828,32 @@ impl PreparedBout {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContrailFace {
+    pub frame: i32,
+    pub vertices: [[i16; 3]; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ContrailModel {
+    active: i32,
+    pub origin: [i32; 3],
+    pub color: i32,
+    face_count: u32,
+    faces: [ContrailFace; 18],
+}
+
+impl ContrailModel {
+    pub fn active(&self) -> bool {
+        self.active != 0
+    }
+    pub fn faces(&self) -> &[ContrailFace] {
+        &self.faces[..self.face_count as usize]
+    }
+}
+
 pub struct CollisionScene {
     pub radar: Radar,
     duel_updated: [u8; 2],
@@ -2415,15 +2441,13 @@ impl CollisionScene {
         }
         unsafe { tm1_flame_particles(self.native.as_ptr(), particles.as_mut_ptr()) }
     }
-    pub fn contrail_faces(&self, secondary: bool, out: &mut [[i32; 14]; 180]) -> usize {
+    pub fn contrails(&self, secondary: bool) -> [ContrailModel; 10] {
         unsafe extern "C" {
-            fn tm1_contrail_faces(
-                scene: *mut std::ffi::c_void,
-                secondary: i32,
-                out: *mut [i32; 14],
-            ) -> usize;
+            fn tm1_contrails(scene: *mut std::ffi::c_void, secondary: i32, out: *mut ContrailModel);
         }
-        unsafe { tm1_contrail_faces(self.native.as_ptr(), secondary.into(), out.as_mut_ptr()) }
+        let mut models = [ContrailModel::default(); 10];
+        unsafe { tm1_contrails(self.native.as_ptr(), secondary.into(), models.as_mut_ptr()) };
+        models
     }
     pub fn missile_poses(&self, secondary: bool, out: &mut [[i32; 13]; 10]) -> usize {
         unsafe extern "C" {

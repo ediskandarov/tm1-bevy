@@ -32,6 +32,17 @@ typedef struct BattleMusic {
     bool requested, playing;
 } BattleMusic;
 
+typedef struct ContrailFace {
+    s32 frame;
+    s16 vertices[4][3];
+} ContrailFace;
+
+typedef struct ContrailModel {
+    s32 active, origin[3], color;
+    u32 face_count;
+    ContrailFace faces[18];
+} ContrailModel;
+
 typedef struct CollisionScene {
     BattleMusic music, initial_music;
     int carry_notice_frames;
@@ -83,8 +94,7 @@ typedef struct CollisionScene {
     Missile missiles[10];
     s32 primary_missiles[10][13];
     size_t primary_missile_count;
-    s32 primary_contrails[180][14];
-    size_t primary_contrail_count;
+    ContrailModel primary_contrails[10];
     DropWeap drops[12];
     ArenaTaser tasers[3];
     struct {
@@ -762,7 +772,7 @@ void tm1_reset_projectiles(CollisionScene* s)
     s->drawn_bullet_count = 0;
     s->primary_targets_ready = false;
     s->primary_missile_count = 0;
-    s->primary_contrail_count = 0;
+    memset(s->primary_contrails, 0, sizeof s->primary_contrails);
     memset(s->effects, 0, sizeof s->effects);
     s->primary_particle_count = 0;
     s->has_temporary_hole = false;
@@ -1963,32 +1973,36 @@ size_t tm1_flame_particles(CollisionScene* s, s32 (*out)[4])
     }
     return n;
 }
-static size_t copy_contrail_faces(CollisionScene* s, s32 (*out)[14])
+static void copy_contrails(const CollisionScene* s, ContrailModel out[10])
 {
-    size_t count = 0;
+    memset(out, 0, sizeof(s->primary_contrails));
     for (int i = 0; i < 10; i++) {
-        Missile* m = &s->missiles[i];
+        const Missile* m = &s->missiles[i];
         if (!m->trail.visible)
             continue;
+        ContrailModel* model = &out[i];
+        model->active = 1;
+        model->origin[0] = m->pos.vx;
+        model->origin[1] = m->pos.vy;
+        model->origin[2] = m->pos.vz;
+        model->color = m->trail.color;
         for (int h = 0; h < 6; h++) {
             int age = (m->trail.head + 6 - h) % 6;
             int old = m->trail.ends[h][0], next = m->trail.ends[h][1];
             if (old == next)
                 continue;
             for (int side = 0; side < 3; side++) {
-                s32* row = out[count++];
-                row[0] = (age * 8 + 3) / 6;
-                row[1] = m->trail.color;
+                ContrailFace* face = &model->faces[model->face_count++];
+                face->frame = (age * 8 + 3) / 6;
                 for (int v = 0; v < 4; v++) {
                     SVECTOR local = m->trail.ring[v & 1 ? old : next][(side + (v >= 2)) % 3];
-                    row[2 + 3 * v] = m->pos.vx + local.vx;
-                    row[3 + 3 * v] = m->pos.vy + local.vy;
-                    row[4 + 3 * v] = m->pos.vz + local.vz;
+                    face->vertices[v][0] = local.vx;
+                    face->vertices[v][1] = local.vy;
+                    face->vertices[v][2] = local.vz;
                 }
             }
         }
     }
-    return count;
 }
 static size_t copy_missile_poses(CollisionScene* s, s32 (*out)[13])
 {
@@ -2009,12 +2023,12 @@ static size_t copy_missile_poses(CollisionScene* s, s32 (*out)[13])
     }
     return count;
 }
-size_t tm1_contrail_faces(CollisionScene* s, int secondary, s32 (*out)[14])
+void tm1_contrails(const CollisionScene* s, int secondary, ContrailModel out[10])
 {
     if (secondary)
-        return copy_contrail_faces(s, out);
-    memcpy(out, s->primary_contrails, s->primary_contrail_count * sizeof(*out));
-    return s->primary_contrail_count;
+        copy_contrails(s, out);
+    else
+        memcpy(out, s->primary_contrails, sizeof s->primary_contrails);
 }
 
 size_t tm1_missile_poses(CollisionScene* s, int secondary, s32 (*out)[13])
@@ -2052,7 +2066,7 @@ void arena_capture_primary_models(void)
     tm1_capture_car_lights();
     memcpy(current->primary_wheel_steps, current->wheel_steps, sizeof current->wheel_steps);
     current->primary_missile_count = copy_missile_poses(current, current->primary_missiles);
-    current->primary_contrail_count = copy_contrail_faces(current, current->primary_contrails);
+    copy_contrails(current, current->primary_contrails);
 }
 
 size_t tm1_taser_arcs(CollisionScene* s, int view, VECTOR3 (*out)[16])

@@ -3351,24 +3351,26 @@ fn special_missiles_original() {
                         );
                     }
                 }
-                let mut faces = [[0; 14]; 180];
-                let count = r.scene.contrail_faces(true, &mut faces);
-                let mut primary = [[0; 14]; 180];
-                let before_actors = r.scene.contrail_faces(false, &mut primary);
+                let trails = r.scene.contrails(true);
+                let primary = r.scene.contrails(false);
                 if tick == 0 {
-                    assert_eq!(
-                        before_actors, 0,
-                        "launch followed the primary hierarchy pass"
-                    );
+                    assert!(primary.iter().all(|trail| !trail.active()));
                 } else {
-                    assert_eq!(primary[..before_actors], faces[..count]);
+                    assert_eq!(primary, trails);
                 }
-                let mut expected = Vec::new();
-                for i in 0..10 {
+                for (i, trail) in trails.iter().enumerate() {
+                    let i = i as u32;
                     let m = missile(i);
-                    if r.cpu.word(MISSILE_AUX + 0x110 * i + 8) == 0 {
+                    let aux = MISSILE_AUX + 0x110 * i;
+                    assert_eq!(trail.active(), r.cpu.word(aux + 8) != 0);
+                    if !trail.active() {
                         continue;
                     }
+                    assert_eq!(
+                        trail.origin,
+                        [0, 4, 8].map(|d| r.cpu.word(aux + 0x5c + d) as i32)
+                    );
+                    let mut expected = Vec::new();
                     let half = |addr: u32| {
                         let a = addr as usize & 0x1fffff;
                         i16::from_le_bytes(r.cpu.ram[a..a + 2].try_into().unwrap()) as i32
@@ -3378,23 +3380,24 @@ fn special_missiles_original() {
                         if half(poly + 4) == half(poly + 6) {
                             continue;
                         }
-                        let mut face = [0; 14];
-                        face[0] = (r.cpu.word(poly + 0x14) & 255) as i32;
+                        let mut face = ContrailFace::default();
+                        face.frame = (r.cpu.word(poly + 0x14) & 255) as i32;
                         let rgb = r.cpu.word(poly + 0x10);
-                        face[1] =
-                            (((rgb & 255) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 255)) as i32;
+                        assert_eq!(
+                            trail.color,
+                            (((rgb & 255) << 16) | (rgb & 0xff00) | ((rgb >> 16) & 255)) as i32
+                        );
                         for v in 0..4 {
                             let vi = half(poly + 4 + 2 * v) as u32;
                             for k in 0..3 {
-                                face[(2 + 3 * v + k) as usize] = r.cpu.word(m + 0x18 + 4 * k)
-                                    as i32
-                                    + half(m + 0x58 + 8 * vi + 2 * k);
+                                face.vertices[v as usize][k as usize] =
+                                    half(m + 0x58 + 8 * vi + 2 * k) as i16;
                             }
                         }
                         expected.push(face);
                     }
+                    assert_eq!(trail.faces(), expected, "{vehicle:?} {tick} trail {i}");
                 }
-                assert_eq!(faces[..count], expected, "{vehicle:?} {tick} trail");
                 r.compare();
                 let mut position = [0; 3];
                 let mut flight = Vec::new();

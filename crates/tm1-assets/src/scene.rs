@@ -270,6 +270,21 @@ impl<'a> Dmd<'a> {
     pub fn extract_kind(&self, kind: u16) -> Result<Scene> {
         self.extract(kind, None, false)
     }
+    /// Battle CS models are directory roots, or pedestrian groups inside untagged directory roots.
+    /// dbScanForInteractiveStuff visits children last-first. csAddToCsList prepends each CS.
+    pub fn battle_model_order(&self) -> Result<Vec<u32>> {
+        let mut order = Vec::new();
+        for &(root, kind) in self.roots.iter().rev() {
+            let p = self.offset(root)?;
+            if kind == 0 && self.data[p] == 1 {
+                for i in 0..usize::from(bytes(self.data, p + 20, 1)?[0]) {
+                    order.push(u32le(self.data, p + 24 + 4 * i)?);
+                }
+            }
+            order.push(root);
+        }
+        Ok(order)
+    }
     pub fn battle_sky(&self) -> Result<Scene> {
         self.extract(2, None, true)
     }
