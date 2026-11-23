@@ -3546,6 +3546,76 @@ fn warehouse_encounter_original() {
 }
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn pothole_wheel_contacts_match_retail() {
+    unsafe extern "C" {
+        fn CheckPotHoles(car: *mut u8, is_player: u8);
+    }
+    #[repr(align(4))]
+    struct Record([u8; 0x560]);
+
+    let mut r = Reference::new();
+    let _guard = crate::TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    for (level, init) in [
+        (Level::Arena, 0x80130680),
+        (Level::Warehouse, 0x801307a4),
+        (Level::Freeway, 0x80130884),
+        (Level::CityPark, 0x80130938),
+        (Level::Cyburbia, 0x801309c8),
+        (Level::Rooftops, 0x80130a7c),
+        (Level::Arena5, 0x80130680),
+    ] {
+        r.cpu.call(init, &[]);
+        unsafe { tm1_bind_level(level as i32) };
+        let count = r.cpu.word(0x8018bfdc) >> 16;
+        // Rooftops clears the count while old rectangle data remains in RAM.
+        assert_eq!(count == 0, level == Level::Rooftops);
+        for index in 0..count.max(1) {
+            let hole = 0x801b23ac + 16 * index;
+            let x = r.cpu.word(hole + 8) as i32;
+            let z = r.cpu.word(hole + 12) as i32;
+            let w = (r.cpu.word(hole) >> 16) as i16 as i32;
+            let h = r.cpu.word(hole + 4) as i16 as i32;
+            let offsets = [-1, 0, 1, 2, w - 1, w, w + 1];
+            for (player, tires, collision) in [(1, 0x270, 0x258), (0, 0x32c, 0x148)] {
+                let mut car = Record([0; 0x560]);
+                let start = (PLAYER & 0x1fffff) as usize;
+                r.cpu.put(PLAYER, &car.0);
+                for dz in [-1, 0, 1, 2, h - 1, h, h + 1] {
+                    for (step, dx) in offsets.into_iter().enumerate() {
+                        car.0[collision + 0x12] = 0;
+                        r.cpu.put(PLAYER + collision as u32 + 0x12, &[0]);
+                        for wheel in 0..4 {
+                            let tire = tires + 0x44 * wheel;
+                            let skip = u8::from((step + wheel) % 4 == 0);
+                            let wx = if wheel < 2 { dx } else { w - dx };
+                            let wz = if wheel % 2 == 0 { dz } else { h - dz };
+                            car.0[tire + 3] = skip;
+                            car.0[tire + 0x38..tire + 0x3c]
+                                .copy_from_slice(&(x + wx).to_le_bytes());
+                            car.0[tire + 0x3c..tire + 0x40]
+                                .copy_from_slice(&(z + wz).to_le_bytes());
+                            r.cpu.put(PLAYER + tire as u32 + 3, &[skip]);
+                            r.cpu.put(
+                                PLAYER + tire as u32 + 0x38,
+                                &car.0[tire + 0x38..tire + 0x40],
+                            );
+                        }
+                        r.cpu.call(0x8011e944, &[PLAYER, player]);
+                        unsafe { CheckPotHoles(car.0.as_mut_ptr(), player as u8) };
+                        assert_eq!(
+                            car.0[..],
+                            r.cpu.ram[start..start + car.0.len()],
+                            "{level:?} hole {index} player {player} at {dx},{dz}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn temporary_pothole_matches_retail_clock() {
     let mut r = Reference::on_level(Vehicle::YellowJacket, false, Level::CityPark);
     r.cpu.call(0x80130938, &[]);
