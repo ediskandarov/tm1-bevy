@@ -40,6 +40,17 @@ const MIRROR_WIDTH: u32 = 101;
 const MIRROR_HEIGHT: u32 = 30;
 const MIRROR_FOCAL: f32 = 91.;
 const BATTLE_FOCAL: f32 = 228.;
+
+fn mirror_subview() -> bevy::camera::SubCameraView {
+    let size = UVec2::new(MIRROR_WIDTH, MIRROR_HEIGHT);
+    // The target is displayed flipped. Its optical axis must land at x=51
+    // before reflection so the final 101-pixel view has the JP center x=50.
+    bevy::camera::SubCameraView {
+        full_size: UVec2::new(MIRROR_WIDTH.next_multiple_of(2), MIRROR_HEIGHT),
+        size,
+        offset: Vec2::ZERO,
+    }
+}
 // VIEW scales the forward and vertical axes by 3690 and the horizontal axis by 4096.
 const VIEW_SCALE_X: f32 = 3690. / 4096.;
 
@@ -434,6 +445,7 @@ pub fn setup(
                 Camera2d,
                 Camera {
                     order: if sky { -3 } else { -2 },
+                    sub_camera_view: duel.is_none().then(mirror_subview),
                     is_active: false,
                     clear_color: if !sky && arena.sky.is_some() {
                         ClearColorConfig::None
@@ -2224,6 +2236,38 @@ mod tests {
             let axes = cpu.word(at + 40);
             let horizontal = (axes as i16).unsigned_abs();
             assert_eq!(VIEW_SCALE_X, (axes >> 16) as f32 / f32::from(horizontal));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn reflected_mirror_projection_matches_jp_pixel_edges() {
+        use bevy::camera::CameraProjection;
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(0x8018c520, &13u32.to_le_bytes());
+        cpu.call(0x8010aed4, &[1, 0x80007000, 0x80007004]);
+        let cx = cpu.word(0x80007000) as f32;
+        let cy = cpu.word(0x80007004) as f32;
+        let size = mirror_subview().size.as_vec2();
+        let proj = PerspectiveProjection {
+            fov: 2. * (size.y / (2. * MIRROR_FOCAL)).atan(),
+            ..default()
+        }
+        .get_clip_from_view_for_sub(&mirror_subview());
+        for depth in [128., 4096.] {
+            for x in 0..=MIRROR_WIDTH {
+                for y in [0., cy, size.y] {
+                    let px = x as f32;
+                    let view = Vec3::new(cx - px, cy - y, -MIRROR_FOCAL) * (depth / MIRROR_FOCAL);
+                    let ndc = proj.project_point3(view);
+                    let displayed = (Vec2::ONE - ndc.truncate()) * 0.5 * size;
+                    assert!(
+                        displayed.abs_diff_eq(Vec2::new(px, y), 0.001),
+                        "{displayed:?}"
+                    );
+                }
+            }
         }
     }
 
