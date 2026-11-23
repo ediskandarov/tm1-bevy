@@ -4763,6 +4763,16 @@ fn compare_battle_controls(
         } else {
             &lineup
         };
+        // Read the dashboard's choice after both sides finish this simulation update.
+        let target = r.player.hud_opponent(rivals);
+        let slot = rivals
+            .iter()
+            .position(|ai| target.is_some_and(|t| std::ptr::eq(t, ai)));
+        assert_eq!(
+            r.cpu.call(0x8011c174, &[0, 0x80007000]),
+            slot.map_or(0, |i| POLICE + 0x560 * i as u32),
+            "{level:?} tick {tick} closest opponent"
+        );
         for (kind, on) in std::iter::once((vehicle, r.player.shadow_visible())).chain(
             rivals
                 .iter()

@@ -1570,26 +1570,26 @@ struct Instruments<'a> {
     size: Vec2,
 }
 impl Instruments<'_> {
-    fn quad(&mut self, [x, y, w, h]: [i32; 4], uv: [[f32; 2]; 4], colors: [[f32; 4]; 2]) {
+    fn quad(&mut self, [x, y, w, h]: [i32; 4], uv: [[f32; 2]; 4], color: [f32; 4]) {
         for &i in indices(4) {
             let px = x + if i % 2 == 1 { w } else { 0 };
             let py = y + if i >= 2 { h } else { 0 };
             let pos = Vec2::new(px as f32 / 320. - 0.5, 0.5 - py as f32 / 240.) * self.size;
-            self.batch.push(pos.extend(0.), uv[i], colors[i % 2]);
+            self.batch.push(pos.extend(0.), uv[i], color);
         }
     }
     fn bar(&mut self, rect: [i32; 4], colors: [[u8; 3]; 2]) {
-        let colors = colors.map(|rgb| flat_color(rgb, 128).to_linear().to_f32_array());
-        self.quad(rect, [self.arena.uv(0, Vec2::ZERO); 4], colors);
+        let [x, y, width, height] = rect;
+        let uv = [self.arena.uv(0, Vec2::ZERO); 4];
+        for (offset, length, rgb) in bar_spans(width, colors) {
+            let color = flat_color(rgb, 128).to_linear().to_f32_array();
+            self.quad([x + offset, y, length, height], uv, color);
+        }
     }
     fn sprite(&mut self, x: i32, y: i32, f: SpriteFrame, tint: [u8; 3], semi: bool) {
         let tint = tint.map(|v| v as f32 / 128.);
         self.arena.sprite_rects(f, 0, semi, |[dx, dy, w, h], uv| {
-            self.quad(
-                [x + dx, y + dy, w, h],
-                uv,
-                [[tint[0], tint[1], tint[2], 1.]; 2],
-            );
+            self.quad([x + dx, y + dy, w, h], uv, [tint[0], tint[1], tint[2], 1.]);
         });
     }
     fn number(&mut self, x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
@@ -1611,6 +1611,35 @@ fn counter_digits(
     });
     tens.into_iter()
         .chain(std::iter::once((x, digits[(n % 10) as usize])))
+}
+// Interpolate command RGB across logical framebuffer pixels before RGB555 truncation.
+fn bar_spans(width: i32, [left, right]: [[u8; 3]; 2]) -> impl Iterator<Item = (i32, i32, [u8; 3])> {
+    let step: [i32; 3] =
+        std::array::from_fn(|i| ((i32::from(right[i]) - i32::from(left[i])) << 12) / width.max(1));
+    let color_at = move |x: i32| {
+        std::array::from_fn(|i| {
+            let channel = (i32::from(left[i]) << 12) + 2048 + step[i] * x;
+            (channel >> 12) as u8 & 0xf8
+        })
+    };
+    let mut start = 0;
+    std::iter::from_fn(move || {
+        if start >= width {
+            return None;
+        }
+        let color = color_at(start);
+        let mut end = if left == right { width } else { start + 1 };
+        while end < width && color_at(end) == color {
+            end += 1;
+        }
+        let span = (start, end - start, color);
+        start = end;
+        Some(span)
+    })
+}
+
+fn rival_health_width(hp: i32, maximum: i32) -> i32 {
+    (hp.wrapping_mul(86) / maximum.max(1)).clamp(1, 86)
 }
 fn health_colors(tier: u8) -> [[u8; 3]; 2] {
     match tier {
@@ -1645,7 +1674,7 @@ fn draw_instruments(
         hud.quad(
             [209, 18, 105, 34],
             [arena.uv(0, Vec2::ZERO); 4],
-            [[0., 0., 0., 1.]; 2],
+            [0., 0., 0., 1.],
         );
     }
     let white = [128; 3];
@@ -1671,7 +1700,7 @@ fn draw_instruments(
     if let Some(target) = drive.player.hud_opponent(&drive.opponents) {
         let (hp, max) = target.health();
         hud.bar(
-            [103, 22, (hp * 86 / max.max(1)).clamp(1, 86), 13],
+            [103, 22, rival_health_width(hp, max), 13],
             health_colors(target.health_tier()),
         );
     }
@@ -2074,7 +2103,7 @@ pub fn duel_view(
     hud.quad(
         [0, 116, 320, 6],
         [arena.uv(0, Vec2::ZERO); 4],
-        [[0., 0., 0., 1.]; 2],
+        [0., 0., 0., 1.],
     );
     for (slot, car) in duel.cars.iter().enumerate() {
         let bias = if slot == 0 { -120 } else { 0 };
@@ -2263,6 +2292,68 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn rival_health_bar_matches_jp_dashboard_packets() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let ai = 0x8019f7a8;
+        let bar = 0x8019d578;
+        let ot = 0x80007000u32;
+        cpu.put(0x8018c5f4, &ot.to_le_bytes());
+        cpu.put(0x8018c334, &1u16.to_le_bytes());
+        cpu.put(0x8018c338, &1u16.to_le_bytes());
+        cpu.put(ai + 0x250, &130i32.to_le_bytes());
+        cpu.put(bar + 8, &103u16.to_le_bytes());
+        cpu.put(bar + 24, &103u16.to_le_bytes());
+        // Skip font endpoints while retaining target selection, bar calculation and AddPrim.
+        for entry in [0x8010bf60, 0x8010b4f4, 0x8010bf8c] {
+            cpu.put(entry, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        for hp in [-1, 0, 1, 13, 39, 65, 129, 130, 131, i32::MAX] {
+            for tier in 0..=3 {
+                for active in [false, true] {
+                    cpu.put(ai + 2, &[tier]);
+                    cpu.put(ai + 0x41, &[u8::from(active)]);
+                    cpu.put(ai + 0x24c, &hp.to_le_bytes());
+                    cpu.put(ot, &0xffffffu32.to_le_bytes());
+                    cpu.call_until(0x80142ea4, &[0], 0x80143068);
+                    let head = cpu.word(ot) & 0xffffff;
+                    if !active {
+                        assert_eq!(head, 0xffffff);
+                        continue;
+                    }
+                    assert_eq!(head, bar & 0xffffff);
+                    let right = 103 + rival_health_width(hp, 130);
+                    for (corner, color) in [0, 1, 0, 1].into_iter().enumerate() {
+                        let vertex = bar + 8 * corner as u32;
+                        assert_eq!(
+                            cpu.word(vertex + 4).to_le_bytes()[..3],
+                            health_colors(tier)[color]
+                        );
+                        assert_eq!(
+                            i32::from(cpu.word(vertex + 8) as u16),
+                            if color == 0 { 103 } else { right }
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn dashboard_gouraud_rounds_command_color_before_rgb555_conversion() {
+        let ramp = [[0, 31, 112], [31, 0, 112]];
+        assert_eq!(
+            bar_spans(2, ramp).collect::<Vec<_>>(),
+            [(0, 1, [0, 24, 112]), (1, 1, [16, 16, 112])]
+        );
+        assert_eq!(
+            bar_spans(88, [[10; 3]; 2]).collect::<Vec<_>>(),
+            [(0, 88, [8; 3])]
+        );
     }
 
     #[test]
