@@ -1853,6 +1853,33 @@ fn positional_sound_matches_retail() {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn speedometer_velocity_limits_match_original() {
+    let mut r = Reference::new();
+    for velocity in [
+        i32::MIN,
+        -687194784,
+        -32,
+        -31,
+        0,
+        31,
+        32,
+        687194784,
+        i32::MAX,
+    ] {
+        r.player.state[0x398..0x39c].copy_from_slice(&velocity.to_le_bytes());
+        r.cpu.put(PLAYER + 0x398, &velocity.to_le_bytes());
+        for fields in 1..=5 {
+            r.cpu.put(0x80170238, &u16::from(fields).to_le_bytes());
+            assert_eq!(
+                r.player.speed_mph(fields),
+                r.cpu.call(0x8014f794, &[0]) as i32
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn turbo_reserve_matches_original_dashboard() {
     let mut r = Reference::new();
     // Supply the player pointer in s6 before entering the retail fuel calculation.

@@ -43,6 +43,8 @@ The pause menu waits for the mapped controls to be released on entry, between ch
 
 ## Camera and HUD controls
 
+Disc-backed tests compare the speed display against the JP font request for all values from 0 through 2010 and three larger inputs. Above 999 the original fills all three places, including leading zeroes. Tests also compare the glyphs, positions and submission order of ammunition and turbo counters against the original sprite packets. The speed conversion preserves 32-bit multiplication overflow at the limits of the velocity field.
+
 Single-player battle samples C, Z, V, L and B on simulation updates. The JP CheckVRMode routine gives priority to forward camera, reverse camera, radar, remaining cars and mirror, in that order. Holding any of the five controls keeps the group latched until an update sees all five released. A 128-update comparison executes the JP input branches for all 32 key combinations, including holds and overlapping changes. It checks camera mode, radar, remaining cars, mirror and latch state on every update. A separate keyboard integration test cycles the camera with the helicopter unlocked. Radar and remaining-car visibility carry into the next campaign stage. Cycling past either end of the view list with the selected special trigger held updates the original camera-combination flags and timer. A JP comparison checks all two-button pad combinations in four control layouts. It also follows the special-trigger timer for 33 car updates, including the exact controller word that clears the secondary flag.
 
 ## Repair stands and camera timing

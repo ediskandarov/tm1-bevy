@@ -815,7 +815,7 @@ impl PlayerVehicle {
     /// UA.c GetPlayerSpeed, in displayed MPH.
     pub fn speed_mph(&self, fields: u8) -> i32 {
         assert!((1..=5).contains(&fields));
-        (self.word(0x398) / 32) * 100 / (i32::from(fields) * 19)
+        (self.word(0x398) / 32).wrapping_mul(100) / (i32::from(fields) * 19)
     }
 
     pub fn rotation_yxz(&self, angles: [i16; 3]) -> crate::math::Matrix {

@@ -621,6 +621,13 @@ pub fn cockpit(
 pub struct HudLetters {
     last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16, bool)>,
 }
+fn speed_text(speed: i32) -> String {
+    if speed >= 1000 {
+        format!("{:03}", speed % 1000)
+    } else {
+        format!("{speed:3}")
+    }
+}
 pub fn hud_letters(
     window: Single<&Window>,
     drive: Res<crate::driving::Drive>,
@@ -631,7 +638,7 @@ pub fn hud_letters(
     use tm1_assets::screen::Face;
     let (state, sprite) = &mut *overlay;
     sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
-    let speed = drive.player.speed_mph(3).abs() % 1000;
+    let speed = drive.player.speed_mph(3).abs();
     let sign = drive
         .player
         .hud_opponent(&drive.opponents)
@@ -658,7 +665,7 @@ pub fn hud_letters(
         pixels.fill(0);
         arena
             .fonts
-            .sprite_at(pixels, Face::Speed, 102, 214, &format!("{speed:3}"));
+            .sprite_at(pixels, Face::Speed, 102, 214, &speed_text(speed));
         if at_capacity {
             arena.fonts.sprite_centered_at(
                 pixels,
@@ -1585,14 +1592,25 @@ impl Instruments<'_> {
             );
         });
     }
-    fn number(&mut self, mut x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
-        if n >= 10 {
-            let tens = digits[(n / 10 % 10) as usize];
-            self.sprite(x, y, tens, tint, false);
-            x += i32::from(tens.width) + 2;
+    fn number(&mut self, x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
+        for (x, digit) in counter_digits(x, n, digits) {
+            self.sprite(x, y, digit, tint, false);
         }
-        self.sprite(x, y, digits[(n % 10) as usize], tint, false);
     }
+}
+fn counter_digits(
+    mut x: i32,
+    n: i32,
+    digits: &[SpriteFrame; 10],
+) -> impl Iterator<Item = (i32, SpriteFrame)> {
+    let tens = (n >= 10).then(|| {
+        let digit = digits[(n / 10 % 10) as usize];
+        let left = x;
+        x += i32::from(digit.width.wrapping_add(1)) + 1;
+        (left, digit)
+    });
+    tens.into_iter()
+        .chain(std::iter::once((x, digits[(n % 10) as usize])))
 }
 fn health_colors(tier: u8) -> [[u8; 3]; 2] {
     match tier {
@@ -2183,6 +2201,69 @@ mod tests {
 
     use super::*;
     use tm1_core::drive::Vehicle;
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn speed_digits_match_jp_font_request() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        // Enter after the four-byte string copy, using the template from the executable.
+        let template = cpu.word(0x8018c2b0).to_le_bytes();
+        for speed in (0..=2010).chain([9999, 10000, i32::MAX]) {
+            cpu.put(0x801ff020, &template);
+            cpu.call_until(0x80145a70, &[0, 0, speed as u32], 0x8010b4b8);
+            assert_eq!(&cpu.r[4..7], &[4, 102, 214]);
+            let text = cpu.word(cpu.word(cpu.r[29] + 0x14)).to_le_bytes();
+            assert_eq!(&text[..3], speed_text(speed).as_bytes(), "{speed}");
+            assert_eq!(text[3], 0);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn counter_digits_match_jp_sprite_packets() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+        let icons = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .dashboard_icons()
+            .unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let (sprites, table, ot) = (0x80010000, 0x80011000, 0x80012000);
+        for (x, digits) in [(290, icons.digits), (243, icons.turbo_digits)] {
+            for (i, f) in digits.iter().enumerate() {
+                let [u, v] = f.uv[0];
+                cpu.put(
+                    table + 8 * i as u32,
+                    &[
+                        u,
+                        v,
+                        f.width.wrapping_add(1),
+                        f.uv[2][1].wrapping_sub(v).wrapping_add(1),
+                    ],
+                );
+            }
+            for n in (0..=220).chain([999, 1000, 32767]) {
+                cpu.put(ot, &u32::MAX.to_le_bytes());
+                cpu.put(sprites + 8, &(x as u16).to_le_bytes());
+                cpu.call(0x80138790, &[n as u32, sprites, table, ot]);
+                let mut link = cpu.word(ot) & 0xffffff;
+                let mut packets = Vec::new();
+                while link != 0xffffff {
+                    packets.push((cpu.word(link + 8) as u16 as i32, cpu.word(link + 12) as u16));
+                    link = cpu.word(link) & 0xffffff;
+                }
+                packets.reverse();
+                assert_eq!(
+                    counter_digits(x, n, &digits)
+                        .map(|(x, f)| (x, u16::from_le_bytes(f.uv[0])))
+                        .collect::<Vec<_>>(),
+                    packets,
+                    "{n}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn battle_face_winding_matches_projected_screen_area() {
