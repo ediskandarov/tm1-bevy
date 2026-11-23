@@ -1104,14 +1104,38 @@ fn draw_view(
             hidden_geometry[polygons.clone()].fill(true);
         }
     }
-    let billboard_point = |center: Vec3, extent: Option<[f32; 2]>, corner: usize| {
-        if let Some([w, h]) = extent {
-            center
-                + right * if corner & 1 == 0 { -w } else { w }
-                + up * if corner < 2 { h } else { -h }
+    let (lens, center) = if split_screen {
+        (BATTLE_FOCAL as i32, [160, 60])
+    } else if secondary {
+        (
+            MIRROR_FOCAL as i32,
+            [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
+        )
+    } else {
+        (BATTLE_FOCAL as i32, [160, 120])
+    };
+    let billboard_point = |center: Vec3, extent: Option<[i16; 2]>, corner: usize, z: u32| {
+        let Some(extent) = extent else {
+            return center;
+        };
+        let [width, height] = if view.is_some() {
+            let [w, h] = sprite_half_size(extent, lens, z);
+            let units_per_pixel = (center - eye).dot(forward) / lens as f32;
+            let horizontal = if secondary && !split_screen {
+                -axis_scale
+            } else {
+                axis_scale
+            };
+            [
+                w as f32 * units_per_pixel * horizontal,
+                h as f32 * units_per_pixel,
+            ]
         } else {
-            center
-        }
+            extent.map(f32::from)
+        };
+        center
+            + right * if corner & 1 == 0 { -width } else { width }
+            + up * if corner < 2 { height } else { -height }
     };
     for i in visible {
         if hidden_geometry[i] {
@@ -1173,12 +1197,12 @@ fn draw_view(
             } else {
                 world(local)
             };
-            points[corner] = billboard_point(center, p.billboard, corner);
             depths[corner] = if let Some(transform) = node_depth {
                 transform.vertex(world(vertex.local.map(f32::from)).to_array())
             } else {
-                depth.vertex(points[corner].to_array())
+                depth.vertex(center.to_array())
             };
+            points[corner] = billboard_point(center, p.billboard, corner, depths[corner]);
         }
         if !p.double_sided
             && p.billboard.is_none()
@@ -1288,12 +1312,13 @@ fn draw_view(
                         .map(|j| pose[4 + 3 * j + k] as f32 * vertex.position[j] / 4096.)
                         .sum()
                 });
-                points[corner] = billboard_point(origin + world(rotated), p.billboard, corner);
+                let center = origin + world(rotated);
                 depths[corner] = if let Some(table) = &model_depth {
                     table[p.transform_index].vertex(world(vertex.local.map(f32::from)).to_array())
                 } else {
-                    depth.vertex(points[corner].to_array())
+                    depth.vertex(center.to_array())
                 };
+                points[corner] = billboard_point(center, p.billboard, corner, depths[corner]);
             }
             if !p.double_sided
                 && p.billboard.is_none()
@@ -1324,16 +1349,6 @@ fn draw_view(
             -d.dot(up) as i32,
             d.dot(forward) as i32,
         ]
-    };
-    let (lens, center) = if split_screen {
-        (BATTLE_FOCAL as i32, [160, 60])
-    } else if secondary {
-        (
-            MIRROR_FOCAL as i32,
-            [MIRROR_WIDTH as i32 / 2, MIRROR_HEIGHT as i32 / 2],
-        )
-    } else {
-        (BATTLE_FOCAL as i32, [160, 120])
     };
     let bucket_depth = |bucket: u32| (bucket as f32 * 8. / axis_scale).max(near + 0.01);
     // Mirror packets already contain reflected X. Its display sprite flips the render target.
@@ -1915,6 +1930,11 @@ fn line_pixels(
         });
         emit(point, color);
     }
+}
+
+// geomSprite divides signed DMD extents by SZ and clamps each half-size independently.
+fn sprite_half_size(extent: [i16; 2], lens: i32, depth: u32) -> [i32; 2] {
+    extent.map(|v| (i32::from(v) * lens / depth.max(1) as i32).clamp(1, 500))
 }
 
 fn indices(n: usize) -> &'static [usize] {
@@ -2796,6 +2816,41 @@ mod tests {
                     assert_eq!(
                         depth.vertex(world(p.map(f32::from)).to_array()),
                         z.max(0) as u32
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn sprite_half_sizes_match_jp_geom_sprite() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let record = 0x80010000;
+        // Restore t1 (polygon), s2 (lens), s3 (SZ) and the signed width loaded in the branch delay slot.
+        let jump = 0x08000000 | ((0x800f7d90u32 >> 2) & 0x03ffffff);
+        cpu.put(
+            0x80011000,
+            &[0x00804821, 0x00a09021, 0x00c09821, jump, 0x85340006]
+                .map(u32::to_le_bytes)
+                .concat(),
+        );
+        for extent in [
+            [-21i16, 0],
+            [1, 2],
+            [61, 97],
+            [499, 501],
+            [500, 500],
+            [32767, -32768],
+        ] {
+            cpu.put(record + 6, &extent.map(i16::to_le_bytes).concat());
+            for lens in [91, 228] {
+                for depth in [16, 17, 90, 91, 92, 227, 228, 229, 1000, 32767] {
+                    cpu.call_until(0x80011000, &[record, lens, depth], 0x800f7dfc);
+                    assert_eq!(
+                        sprite_half_size(extent, lens as i32, depth),
+                        [cpu.r[22] as i32, cpu.r[23] as i32]
                     );
                 }
             }

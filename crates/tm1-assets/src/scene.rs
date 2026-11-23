@@ -85,7 +85,7 @@ pub struct Polygon {
     pub lod_dependent: bool,
     pub wheel: Option<Wheel>,
     pub car_shadow: bool,
-    pub billboard: Option<[f32; 2]>,
+    pub billboard: Option<[i16; 2]>,
     pub pickup: Option<u8>,
     pub arena_switches: Vec<(u8, u8)>,
     pub health_stand: Option<(u8, u8)>,
@@ -1023,10 +1023,7 @@ impl<'a> Dmd<'a> {
             let billboard = if n == 3 || n == 4 {
                 None
             } else {
-                Some([
-                    u16le(record, 6)? as i16 as f32,
-                    u16le(record, 8)? as i16 as f32,
-                ])
+                Some([u16le(record, 6)? as i16, u16le(record, 8)? as i16])
             };
             let n = if billboard.is_some() { 4 } else { n };
             let colors = header[1] as usize;
