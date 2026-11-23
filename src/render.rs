@@ -351,13 +351,6 @@ pub fn setup(
         Visibility::Hidden,
         Transform::from_xyz(0., 0., -1.),
     ));
-    commands.spawn((
-        crate::campaign::StageEntity,
-        HitSheet,
-        Sprite::default(),
-        Visibility::Hidden,
-        Transform::from_xyz(0., 0., -2.),
-    ));
     let texture = images.add(image);
     arena.atlas = texture.clone();
     let masked = materials.add(ColorMaterial {
@@ -624,25 +617,6 @@ pub fn cockpit(
         }
     }
 }
-#[derive(Component)]
-pub struct HitSheet;
-
-pub fn hit_sheet(
-    window: Single<&Window>,
-    drive: Res<crate::driving::Drive>,
-    mut sheet: Single<(&mut Sprite, &mut Visibility), With<HitSheet>>,
-) {
-    let [r, g, b, a] = drive.contacts.hit_sheet();
-    let (sprite, visibility) = &mut *sheet;
-    **visibility = if a == 0 {
-        Visibility::Hidden
-    } else {
-        Visibility::Visible
-    };
-    sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
-    sprite.color = flat_color([r, g, b], a);
-}
-
 #[derive(Component, Default)]
 pub struct HudLetters {
     last: Option<(i32, Option<tm1_core::drive::Vehicle>, u16, bool)>,
@@ -916,9 +890,6 @@ pub fn update(
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
     windshield.write(&mut renderer.meshes, &arena.windshield_mesh);
-    if let Some(radar) = drive.contacts.radar.frame() {
-        draw_radar(&mut screen_batch, &arena, radar, &window);
-    }
     screen_batch.write(&mut renderer.meshes, &arena.mesh);
     let packets = draw_view(
         &arena,
@@ -1054,6 +1025,27 @@ fn draw_view(
     let switches = contacts.arena_switch_branches();
     let (_, stand_branches) = contacts.health_stands();
     let mut batch = Batch::default();
+    if !secondary {
+        let [r, g, b, a] = contacts.hit_sheet();
+        if a != 0 {
+            let white = arena.uv(0, Vec2::ZERO);
+            let height = if split_screen { 120. } else { 240. };
+            for &corner in indices(4) {
+                let x = if corner & 1 == 0 { -1. } else { 1. };
+                let y = if corner < 2 { 1. } else { 1. - 480. / height };
+                batch.push(Vec3::new(x, y, 0.5), white, packet_rgb([r, g, b]));
+            }
+            let mode = if a == 255 {
+                PacketMode::UntexturedOpaque
+            } else {
+                PacketMode::UntexturedAverage
+            };
+            batch.order_packet(6, 0, DrawPass::HitSheet, mode);
+        }
+        if !split_screen && let Some(radar) = contacts.radar.frame() {
+            draw_radar(&mut batch, arena, radar);
+        }
+    }
     let visible = (0..arena.vehicle_start).chain(
         arena
             .body_ranges
@@ -1685,55 +1677,22 @@ fn draw_instruments(
         [120, 36, 36],
     );
 }
-fn draw_radar(
-    batch: &mut Batch,
-    arena: &Arena,
-    radar: &tm1_core::drive::RadarFrame,
-    window: &Window,
-) {
+fn draw_radar(batch: &mut Batch, arena: &Arena, radar: &tm1_core::drive::RadarFrame) {
     use tm1_core::drive::RadarSignal;
-    let scale = Vec2::new(window.width() / 320., window.height() / 240.);
-    let origin = Vec2::new(-window.width() / 2., window.height() / 2.);
     let white = arena.uv(0, Vec2::ZERO);
-    let mut rect = |x: i32, y: i32, w: i32, h: i32, uv: [[f32; 2]; 4], color: [f32; 4]| {
+    let mut rect = |x: i32, y: i32, w: i32, h: i32, uv: [[f32; 2]; 4], color: [f32; 4], mode| {
         let points = [[x, y], [x + w, y], [x, y + h], [x + w, y + h]];
         for &i in indices(4) {
             let [px, py] = points[i];
             batch.push(
-                (origin + scale * Vec2::new(px as f32, -(py as f32))).extend(0.),
+                Vec3::new(px as f32 / 160. - 1., 1. - py as f32 / 120., 0.5),
                 uv[i],
                 color,
             );
         }
+        batch.order_packet(6, 0, DrawPass::Radar, mode);
     };
-    let color = |rgb, alpha| flat_color(rgb, alpha).to_linear().to_f32_array();
-    rect(16, 32, 73, 45, [white; 4], color([52, 113, 17], 128));
-    rect(51, 55, 5, 1, [white; 4], color([0, 48, 0], 255));
-    rect(53, 54, 1, 3, [white; 4], color([0, 48, 0], 255));
-    // Radar signals are prepended to the PS1 ordering table.
-    for &mark in radar.marks.iter().rev() {
-        match mark {
-            RadarSignal::Contact { x, y, rgb } => {
-                rect(53 + x, 55 + y, 2, 2, [white; 4], color(rgb, 255))
-            }
-            RadarSignal::Stand { x, y } => {
-                for (dx, dy) in [(-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)] {
-                    rect(
-                        53 + x + dx,
-                        55 + y + dy,
-                        1,
-                        1,
-                        [white; 4],
-                        color([255, 200, 255], 255),
-                    );
-                }
-            }
-        }
-    }
-    for (i, (x, y)) in [(47, 26), (47, 77), (89, 49), (10, 49)]
-        .into_iter()
-        .enumerate()
-    {
+    for (i, x, y) in [(0, 47, 26), (1, 47, 77), (3, 10, 49), (2, 89, 49)] {
         if radar.edges[i] {
             let f = arena.arrows[i];
             let [u, v] = f.uv[0];
@@ -1749,9 +1708,63 @@ fn draw_radar(
                 [u + w - 1, v + h - 1],
             ]
             .map(|[u, v]| arena.uv(slot, Vec2::new((u as u8) as f32, (v as u8) as f32)));
-            rect(x, y, w, h, uv, [1.; 4]);
+            rect(x, y, w, h, uv, [1.; 4], PacketMode::texture(f.texture));
         }
     }
+    // Radar signals are prepended to the PS1 ordering table.
+    for &mark in &radar.marks {
+        match mark {
+            RadarSignal::Contact { x, y, rgb } => rect(
+                53 + x,
+                55 + y,
+                2,
+                2,
+                [white; 4],
+                packet_rgb(rgb),
+                PacketMode::UntexturedOpaque,
+            ),
+            RadarSignal::Stand { x, y } => {
+                for (dx, dy) in [(-1, -1), (1, -1), (0, 0), (-1, 1), (1, 1)] {
+                    rect(
+                        53 + x + dx,
+                        55 + y + dy,
+                        1,
+                        1,
+                        [white; 4],
+                        packet_rgb([255, 200, 255]),
+                        PacketMode::UntexturedOpaque,
+                    );
+                }
+            }
+        }
+    }
+    rect(
+        51,
+        55,
+        5,
+        1,
+        [white; 4],
+        packet_rgb([0, 48, 0]),
+        PacketMode::UntexturedOpaque,
+    );
+    rect(
+        53,
+        54,
+        1,
+        3,
+        [white; 4],
+        packet_rgb([0, 48, 0]),
+        PacketMode::UntexturedOpaque,
+    );
+    rect(
+        16,
+        32,
+        73,
+        45,
+        [white; 4],
+        packet_rgb([52, 113, 17]),
+        PacketMode::UntexturedAverage,
+    );
 }
 // The PS1 screen Y axis points down. geomProc keeps clockwise faces in the normal view.
 fn back_facing([a, b, c]: [Vec3; 3], eye: Vec3) -> bool {
@@ -1768,8 +1781,10 @@ fn indices(n: usize) -> &'static [usize] {
 // RT submits these passes in this order. AddPrim prepends within each bucket.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum DrawPass {
+    HitSheet,
     Bullets,
     Explosions,
+    Radar,
     Hierarchy,
 }
 
@@ -1861,10 +1876,12 @@ impl Batch {
                 run.positions
                     .extend_from_slice(&self.positions[range.clone()]);
                 run.uvs.extend_from_slice(&self.uvs[range.clone()]);
+                let screen = matches!(packet.pass, DrawPass::HitSheet | DrawPass::Radar);
+                let flags = mode as u8 | if screen { 0x10 } else { 0 };
                 run.colors.extend(
                     self.colors[range]
                         .iter()
-                        .map(|&[r, g, b, _]| [r, g, b, mode as u8 as f32]),
+                        .map(|&[r, g, b, _]| [r, g, b, f32::from(flags)]),
                 );
             }
         }
@@ -2164,6 +2181,9 @@ mod tests {
             (Explosions, 8, 4, Average),
             (Bullets, 12, 4, Opaque),
             (Bullets, 8, 4, Subtract),
+            (Radar, 0, 4, UntexturedAverage),
+            (HitSheet, 0, 4, UntexturedOpaque),
+            (Bullets, 0, 3, Opaque),
         ];
         for (pass, bucket, n, mode) in faces {
             let start = batch.positions.len() as u32;
@@ -2187,7 +2207,7 @@ mod tests {
             }
             ranges.push(start..start + len as u32);
         }
-        for pass in [Bullets, Explosions, Hierarchy] {
+        for pass in [HitSheet, Bullets, Explosions, Radar, Hierarchy] {
             for (i, &(source, bucket, _, _)) in faces.iter().enumerate() {
                 if source == pass {
                     cpu.call(0x80161a60, &[ot + 4 * bucket, packets + 4 * i as u32]);
@@ -2200,7 +2220,11 @@ mod tests {
             while next != 0xffffff {
                 let i = (next - (packets & 0xffffff)) / 4;
                 let mode = faces[i as usize].3;
-                expected.extend(ranges[i as usize].clone().map(|v| (v, mode as u8)));
+                let flags = match faces[i as usize].0 {
+                    Radar | HitSheet => 0x10 | mode as u8,
+                    _ => mode as u8,
+                };
+                expected.extend(ranges[i as usize].clone().map(|v| (v, flags)));
                 if mode == Subtract {
                     expected.extend(
                         ranges[i as usize]

@@ -1099,6 +1099,33 @@ fn retail_hit_sheet(cpu: &mut Cpu) -> Option<[u8; 4]> {
 
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
+fn cockpit_flash_follows_radar_in_retail_draw_order() {
+    let mut r = Reference::new();
+    let cpu = &mut r.cpu;
+    cpu.call(0x8014728c, &[]); // hudInitRadar
+    cpu.put(0x8018c30c, &[1]); // radarOn
+    put(cpu, RENDER_SCRATCH, 0xffffff);
+    cpu.call(0x80110d90, &[10, 255, 255, 255]);
+    cpu.call(0x80110ea8, &[RENDER_SCRATCH]); // DisplayFXSheet
+    let flash = cpu.word(RENDER_SCRATCH) & 0xffffff;
+    cpu.call(0x80146c18, &[RENDER_SCRATCH]); // hudDisplayRadar
+    let mut packet = cpu.word(RENDER_SCRATCH) & 0xffffff;
+    // The radar mode, green background and both center lines precede the flash.
+    for rgb in [None, Some(0x117134), Some(0x003000), Some(0x003000)] {
+        assert_ne!(packet, flash);
+        let command = cpu.word(packet + 4);
+        if let Some(rgb) = rgb {
+            assert_eq!(command & 0xffffff, rgb);
+        } else {
+            assert_eq!(command >> 24, 0xe1);
+        }
+        packet = cpu.word(packet) & 0xffffff;
+    }
+    assert_eq!(packet, flash);
+    assert_eq!(cpu.word(flash) & 0xffffff, 0xffffff);
+}
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
 fn cockpit_damage_sheet_original() {
     unsafe extern "C" {
         fn SetFXSheet(count: i32, r: i32, g: i32, b: i32);

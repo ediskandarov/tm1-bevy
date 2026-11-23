@@ -18,10 +18,14 @@ struct PacketVertex {
 @vertex
 fn vertex(input: Vertex) -> PacketVertex {
     let v = decompress_vertex(input, input.instance_index);
+    let flags = u32(round(v.color.a));
+    if (flags & 16u) != 0u {
+        return PacketVertex(vec4(v.position, 1.0), v.uv, v.color.rgb, flags & 15u);
+    }
     let transform = mesh_functions::get_world_from_local(input.instance_index);
     let world = mesh_functions::mesh2d_position_local_to_world(transform, vec4(v.position, 1.0));
     return PacketVertex(mesh_functions::mesh2d_position_world_to_clip(world),
-                        v.uv, v.color.rgb, u32(round(v.color.a)));
+                        v.uv, v.color.rgb, flags);
 }
 
 // Vertex alpha identifies the packet's PS1 blend mode. Atlas alpha encodes STP.
@@ -46,7 +50,7 @@ fn fragment(in: PacketVertex) -> @location(0) vec4<f32> {
     }
     let light = srgb_to_linear((source * 8.0 + floor(source / 4.0)) / 255.0);
     if mode == 0u || mode == 7u {
-        let coverage = select(0.5, 1.0, ordinary);
+        let coverage = select(0.5, 1.0, mode == 0u && ordinary);
         return vec4(light * coverage, coverage);
     }
     return vec4(light, select(0.0, 1.0, ordinary || mode == 4u || mode == 6u));
