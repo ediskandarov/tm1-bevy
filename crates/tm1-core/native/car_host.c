@@ -1049,6 +1049,8 @@ static size_t contact_phase(PlayerCar* player, AICar* ai, u8 is_player, s16 fiel
         tm1_tick_carry_notice();
         arena_move_missiles();
         size_t before_primary_view = step_audio ? tm1_event_count(step_audio) : 0;
+        if (shellGetCurrentLevel() > LEVEL1_ARENA)
+            tm1_update_stand_lightning();
         tm1_update_hit_lights();
         tm1_display_hit_sheet();
         display_weapon_pass(0);

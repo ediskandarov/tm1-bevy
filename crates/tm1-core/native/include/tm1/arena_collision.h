@@ -44,6 +44,7 @@ void UAeffectActHitLights(Cs*,s32,u8*);
 void UAeffectSetFreezeLight(Cs*);
 void tm1_clear_freeze_light(u8, s16);
 void tm1_update_car_speed(int car_id, int speed);
+void tm1_update_stand_lightning(void);
 void tm1_update_hit_lights(void);
 void tm1_capture_car_lights(void);
 void CheckCatapults(Car*,u8);

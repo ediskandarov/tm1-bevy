@@ -1323,7 +1323,8 @@ fn draw_view(
                            screen: [[i32; 2]; 4],
                            slot: usize,
                            light: LightMatrix,
-                           env: u8| {
+                           env: u8,
+                           lightning_uv: Option<[[u8; 2]; 4]>| {
         let n = p.vertices.len();
         let Some((raw, bucket)) = hierarchy_bucket(n, depths, p.fixed_ot) else {
             return;
@@ -1334,7 +1335,7 @@ fn draw_view(
             let v = &p.vertices[i.min(n - 1)];
             PacketCorner {
                 xy: screen[i],
-                uv: v.uv.map(|u| u as i32),
+                uv: lightning_uv.map_or_else(|| v.uv.map(|u| u as i32), |uv| uv[i].map(i32::from)),
                 rgb: LightEnvironment::battle(env).vertex_rgb(v, scale, light),
             }
         });
@@ -1394,6 +1395,7 @@ fn draw_view(
         &trails,
         arena.view_start_visits[usize::from(secondary)].clone(),
     );
+    let lightning = contacts.stand_lightning();
     for object in &pass.objects {
         let node_depth = root.map(|_| pass.frame(object.slot, object.position));
         match object.source {
@@ -1427,6 +1429,10 @@ fn draw_view(
                         slot,
                         pass.lights[object.slot],
                         env,
+                        lightning
+                            .as_ref()
+                            .filter(|(id, _)| *id == p.object_id)
+                            .map(|(_, uv)| uv[i - object.polygons.start]),
                     );
                 }
             }
@@ -1513,6 +1519,7 @@ fn draw_view(
                         slot,
                         pass.lights[object.slot],
                         0,
+                        None,
                     );
                 }
             }

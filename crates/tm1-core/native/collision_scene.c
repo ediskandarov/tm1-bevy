@@ -32,6 +32,11 @@ typedef struct BattleMusic {
     bool requested, playing;
 } BattleMusic;
 
+typedef struct LightningClock {
+    int tick, period;
+    bool on;
+} LightningClock;
+
 typedef struct ContrailFace {
     s32 frame;
     s16 vertices[4][3];
@@ -54,7 +59,7 @@ typedef struct CollisionScene {
     uint64_t primary_switches, primary_hidden_pickups;
     u32 primary_stands;
     StaticCop cops[25];
-    int cop_cycle;
+    int cop_cycle, initial_cop_cycle;
     ArenaTarget targets[50];
     DamageNode damage_nodes[2][30];
     int num_targets, num_damage_nodes[2];
@@ -88,6 +93,10 @@ typedef struct CollisionScene {
     size_t radar_count;
     u16 stand_slots, active_stands;
     int regen_timer;
+    LightningClock lightning_clock, initial_lightning_clock;
+    u32 lightning_object;
+    u8 lightning_origin[2], lightning_uv[4][4][2];
+    bool lightning_updated;
     Bullet bullets[40];
     s32 drawn_bullets[40][8];
     size_t drawn_bullet_count;
@@ -168,6 +177,16 @@ static DbNode* decode(CollisionScene* s, u32 addr, unsigned depth)
     case DB_OP_OBJECT:
         if (!load(s, addr, 16, &n->obj.nPoly, 28) || !load(s, addr, 44, &n->obj.box, sizeof(HdBox)))
             return NULL;
+        if (n->h.kind == UA_HEALTH_STAND_LIGHTNING && n->obj.nPoly == 4) {
+            u32 primitive;
+            u8 flags;
+            if (!load(s, addr, 12, &primitive, 4))
+                return NULL;
+            if (primitive && (!load(s, primitive, 15, &flags, 1)
+                || !load(s, primitive, 16 + ((flags >> 2) & 0x1c), s->lightning_origin, 2)))
+                return NULL;
+            s->lightning_object = primitive ? addr : 0;
+        }
         break;
     case DB_OP_GROUP:
         if (!load(s, addr, 4, &n->grp.center, 20)
@@ -781,6 +800,9 @@ void tm1_reset_projectiles(CollisionScene* s)
     memset(s->fragments, 0, sizeof s->fragments);
     s->drawn_fragment_count = 0;
     tm1_new_life(s);
+    s->lightning_clock = s->initial_lightning_clock;
+    s->lightning_updated = false;
+    s->cop_cycle = s->initial_cop_cycle;
     s->music = s->initial_music;
     memset(s->bursts, 0, sizeof s->bursts);
     s->battle_wait = 0;
@@ -1453,9 +1475,15 @@ int tm1_battle_music_playing(const CollisionScene* scene)
     return scene->music.playing;
 }
 
+void tm1_continue_lightning(CollisionScene* scene, const CollisionScene* previous)
+{
+    scene->lightning_clock = scene->initial_lightning_clock = previous->lightning_clock;
+}
+
 void tm1_continue_stage_state(CollisionScene* scene, const CollisionScene* previous)
 {
-    scene->cop_cycle = previous->cop_cycle;
+    tm1_continue_lightning(scene, previous);
+    scene->cop_cycle = scene->initial_cop_cycle = previous->cop_cycle;
     scene->music = previous->music;
     scene->music.playing = false;
     scene->initial_music = scene->music;
@@ -1795,6 +1823,44 @@ void UAeffectActHitLights(Cs* cs, s32 n, u8* rgb)
             return;
         }
     }
+}
+
+void tm1_update_stand_lightning(void)
+{
+    CollisionScene* s = current;
+    if (!s || !s->lightning_object)
+        return;
+    if (++s->lightning_clock.tick >= s->lightning_clock.period) {
+        s->lightning_clock.tick = 0;
+        s->lightning_clock.on = !s->lightning_clock.on;
+        s->lightning_clock.period = arena_rand() / 2184 + 4;
+        if (!s->lightning_clock.on)
+            s->lightning_clock.period >>= 1;
+    }
+    for (int face = 0; face < 4; face++) {
+        int frame = 0;
+        if (s->lightning_clock.on) {
+            frame = arena_rand() / 1560;
+            if (frame > 20)
+                frame = 20;
+        }
+        // The disc table has seven strips in normal, U-flipped and V-flipped order.
+        for (int corner = 0; corner < 4; corner++) {
+            int u = ((corner >= 2) != (frame / 7 == 1)) ? 63 : 0;
+            int v = 8 * (frame % 7) + (((corner & 1) != (frame / 7 == 2)) ? 7 : 0);
+            s->lightning_uv[face][corner][0] = s->lightning_origin[0] + (s->lightning_clock.on ? u : 0);
+            s->lightning_uv[face][corner][1] = s->lightning_origin[1] - (s->lightning_clock.on ? v : 0);
+        }
+    }
+    s->lightning_updated = true;
+}
+
+u32 tm1_stand_lightning(const CollisionScene* s, u8 uv[4][4][2])
+{
+    if (!s->lightning_updated)
+        return 0;
+    memcpy(uv, s->lightning_uv, sizeof s->lightning_uv);
+    return s->lightning_object;
 }
 
 void tm1_update_hit_lights(void)

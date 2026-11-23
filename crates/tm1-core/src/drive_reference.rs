@@ -119,12 +119,13 @@ impl Reference {
         cpu.call(0x80102b48, &[HD_STACK]);
         cpu.call(0x80103a4c, &[HDP_STACK]);
         // Isolated physics runs skip display/audio request endpoints on both sides.
-        for at in [
-            0x801369b0, 0x8013721c, 0x8010461c, 0x8010767c, 0x80107524, 0x80106d60,
-        ] {
+        for at in [0x8010461c, 0x8010767c, 0x80107524, 0x80106d60] {
             cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         if !retail_particles {
+            for at in [0x801369b0, 0x8013721c] {
+                cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
+            }
             // An exhausted explosion pool returns NULL to its callers.
             cpu.put(0x80135f90, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]);
         }
@@ -2490,6 +2491,9 @@ fn outlaw_taser_original() {
         r.cpu.put(0x8010af54, &[8, 0, 224, 3, 0x0b, 0x80, 2, 0x3c]);
         r.cpu.put(0x800b0000, &[0; 12]);
         for frame in 1..=11 {
+            if level != Level::Arena {
+                r.cpu.call(0x80146a28, &[]);
+            }
             let mut points = Vec::new();
             let mut effects = Vec::new();
             r.cpu
@@ -4498,6 +4502,67 @@ fn duel_repair_only_holds_the_occupants_camera() {
     }
 }
 
+fn compare_stand_lightning(cpu: &Cpu, scene: &CollisionScene) {
+    let first_uv = cpu.word(0x80171314);
+    if first_uv == 0 {
+        assert!(scene.stand_lightning().is_none());
+    } else {
+        let (object, faces) = scene.stand_lightning().unwrap();
+        let primitive = cpu.word(object + 12);
+        let uv_offset = 16 + ((cpu.word(primitive + 12) >> 26) & 0x1c);
+        assert_eq!(primitive + uv_offset, first_uv);
+        for (face, corners) in faces.iter().enumerate() {
+            let base = cpu.word(0x80171314 + 4 * face as u32);
+            for (corner, uv) in corners.iter().enumerate() {
+                let expected = cpu.word(base + 4 * corner as u32).to_le_bytes();
+                assert_eq!(
+                    uv[..],
+                    expected[..2],
+                    "lightning face {face} corner {corner}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires the supported TM1_CUE"]
+fn split_screen_stand_lightning_matches_retail_across_rounds() {
+    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+    let exe = disc.read("SIPS_600.07").unwrap();
+    let mut cpu = Cpu::new(&exe);
+    let mut previous = None;
+    for level in [Level::Warehouse, Level::Arena, Level::Rooftops] {
+        let data = disc
+            .read(&format!("UA2PLAY/{}.DMD", level.duel_database().unwrap()))
+            .unwrap();
+        let dmd = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let root = |kind| dmd.roots.iter().find(|r| r.1 == kind).unwrap().0;
+        let vehicles = [Vehicle::YellowJacket, Vehicle::Outlaw];
+        let mut scene =
+            CollisionScene::for_duel(&data, root(1), vehicles.map(|v| root(v as u16))).unwrap();
+        if let Some(prev) = &previous {
+            scene.continue_lightning(prev);
+        }
+        cpu.put(0x800188b8, &data);
+        // UAeffectInit drops the old polygon pointers but retains the effect clock.
+        cpu.put(0x80171314, &[0; 16]);
+        register_retail_targets(&mut cpu, &dmd.roots);
+        assert_eq!(cpu.word(0x80171314) != 0, level != Level::Arena);
+        let mut cars =
+            PlayerVehicle::duel_players(&exe, vehicles, level, 7, Difficulty::Medium).unwrap();
+        for _ in 0..53 {
+            cpu.random_state = cars[0].rng_state();
+            if level != Level::Arena {
+                cpu.call(0x80146a28, &[]);
+            }
+            scene.step_duel(&mut cars, [Input::default(); 2], 3);
+            compare_stand_lightning(&cpu, &scene);
+        }
+        previous = Some(scene);
+    }
+}
+
 fn compare_encounter(vehicle: Vehicle, charge: i16, level: Level) {
     compare_battle(vehicle, charge, level, false);
 }
@@ -4612,8 +4677,8 @@ fn compare_battle_controls(
         r.cpu.call(entry, &[]);
     }
     for at in [
-        0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84, 0x801371cc, 0x80137190,
-        0x8014eff4, 0x801370d0, 0x80108378, 0x801083b0,
+        0x80146930, 0x801073cc, 0x80108604, 0x80116bcc, 0x80107f84, 0x8014eff4, 0x80108378,
+        0x801083b0,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -4643,7 +4708,6 @@ fn compare_battle_controls(
     // fixture has no packet space, but those passes still advance game state.
     for at in [
         0x80107c6c, 0x80107d18, 0x80107dbc, 0x8010e6e8, 0x8010e738, 0x8010e924, 0x8010ee7c,
-        0x80136a28, 0x80136c00, 0x80137140,
     ] {
         r.cpu.put(at, &[8, 0, 224, 3, 0, 0, 0, 0]);
     }
@@ -4870,6 +4934,9 @@ fn compare_battle_controls(
         };
         r.cpu.call(0x800ffb98, &[2, pads]);
         r.cpu.call(0x80110810, &[]);
+        if level != Level::Arena {
+            r.cpu.call(0x80146a28, &[]);
+        }
         r.cpu.call(0x801344e0, &[RENDER_SCRATCH, 0]);
         r.cpu.call(0x801351b0, &[]);
         r.cpu.call(0x801333d0, &[RENDER_SCRATCH, 0]);
@@ -4989,6 +5056,7 @@ fn compare_battle_controls(
             }
             assert_eq!(r.player.seed, r.cpu.random_state, "tick {tick} RNG");
         }
+        compare_stand_lightning(&r.cpu, &r.scene);
         let mut fragments = [[0; 5]; 20];
         for (secondary, expected) in [(false, primary_fragments), (true, read_fragments(&r.cpu))] {
             let count = r.scene.fragment_poses(secondary, &mut fragments);
@@ -5499,6 +5567,7 @@ fn compare_rooftop_switches(
                 tm1_use_scene(std::ptr::null_mut());
             }
         }
+        r.cpu.call(0x80146a28, &[]);
         r.cpu.call(0x8010d03c, &[]);
         r.scene.phase(&mut r.player, &mut r.police, 2, 3);
         assert_eq!(r.cpu.ram[0x188b8 + records[0]], 1, "retail shot at {pos:?}");
@@ -5799,22 +5868,13 @@ fn compare_target_impacts(r: &mut Reference, count: i32, db: &str) {
 #[test]
 #[ignore = "requires the supported TM1_CUE"]
 fn rooftop_pyramid_bullet_matches_retail_clouds() {
-    let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
-    let original = Cpu::new(&disc.read("SIPS_600.07").unwrap());
     for prefill in [0, 40, 72, 80] {
-        verify_pyramid_clouds(prefill, &original);
+        verify_pyramid_clouds(prefill);
     }
 }
 
-fn verify_pyramid_clouds(prefill: usize, original: &Cpu) {
+fn verify_pyramid_clouds(prefill: usize) {
     let mut r = Reference::on_level(Vehicle::YellowJacket, true, Level::Rooftops);
-    // Ordinary contact tests stub sparks and puffs. Here they must compete
-    // with the destruction cloud for the same 80 slots.
-    for address in [0x801369b0, 0x8013721c] {
-        for pc in [address, address + 4] {
-            put(&mut r.cpu, pc, original.word(pc));
-        }
-    }
     let (slot, record) = (0..50)
         .filter_map(|i| target_record(&r.scene, i).map(|v| (i, v)))
         .find(|(_, v)| v[0] == 1000 && v[1] < 30)
@@ -5853,6 +5913,7 @@ fn verify_pyramid_clouds(prefill: usize, original: &Cpu) {
             tm1_use_scene(std::ptr::null_mut());
         }
     }
+    r.cpu.call(0x80146a28, &[]);
     let mut clouds = Vec::new();
     // Observe particle creation at the original call boundary. Audio output
     // is external to the collision and RNG comparison.

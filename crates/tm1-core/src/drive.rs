@@ -1922,6 +1922,15 @@ impl CollisionScene {
             turbo_requests: [0; 2],
         })
     }
+    pub fn continue_lightning(&mut self, previous: &Self) {
+        unsafe extern "C" {
+            fn tm1_continue_lightning(
+                scene: *mut std::ffi::c_void,
+                previous: *const std::ffi::c_void,
+            );
+        }
+        unsafe { tm1_continue_lightning(self.native.as_ptr(), previous.native.as_ptr()) }
+    }
     pub fn continue_stage_state(&mut self, previous: &Self) {
         unsafe extern "C" {
             fn tm1_continue_stage_state(
@@ -2057,6 +2066,17 @@ impl CollisionScene {
         }
         let state = unsafe { tm1_stand_state(self.native.as_ptr(), secondary.into()) };
         (state as u16, (state >> 16) as u16)
+    }
+    pub fn stand_lightning(&self) -> Option<(u32, [[[u8; 2]; 4]; 4])> {
+        unsafe extern "C" {
+            fn tm1_stand_lightning(
+                scene: *const std::ffi::c_void,
+                uv: *mut [[[u8; 2]; 4]; 4],
+            ) -> u32;
+        }
+        let mut uv = [[[0; 2]; 4]; 4];
+        let object = unsafe { tm1_stand_lightning(self.native.as_ptr(), &mut uv) };
+        (object != 0).then_some((object, uv))
     }
     pub fn respawn_player(&mut self, player: &mut PlayerVehicle) {
         let _guard = super::TIMER.lock().unwrap_or_else(|e| e.into_inner());

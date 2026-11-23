@@ -159,6 +159,9 @@ pub fn start(
         [first[0].root_id, second[0].root_id],
     )
     .ok_or_else(|| anyhow::anyhow!("unsupported duel collision graph"))?;
+    if let Some(previous) = world.get_resource::<Duel>() {
+        scene.continue_lightning(&previous.scene);
+    }
     let pedestrian_seed = world
         .get_resource::<Duel>()
         .map(|previous| previous.cars[0].rng_state())

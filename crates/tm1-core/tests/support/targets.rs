@@ -39,7 +39,7 @@ pub fn register_retail_targets(cpu: &mut Cpu, roots: &[(u32, u16)]) -> Vec<(u32,
             let tracked = matches!(
                 kind,
                 600 | 601 | 610..=613 | 715 | 716 | 720 | 721 | 730 | 753..=755 | 770 | 902 | 920
-                    | 930 | 931 | 1000..=1005 | 1008..=1010 | 1015 | 1017
+                    | 921 | 930 | 931 | 1000..=1005 | 1008..=1010 | 1015 | 1017
             );
             if tracked {
                 let pos = [0, 4, 8].map(|off| cpu.word(cpu.r[6] + off));
