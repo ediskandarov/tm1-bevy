@@ -1794,7 +1794,11 @@ fn positional_sound_matches_retail() {
                 &([pitch as i16, 0, 0].map(i16::to_le_bytes)).concat(),
             );
             vec3_cpu(&mut cpu, node + 0x5c, offset);
-            cpu.call_until(0x8010a774, &[view], 0x8010a9f4);
+            cpu.call_until(0x8010a774, &[view], 0x8010a9fc);
+            assert_eq!(
+                listener.world_depth_transform().1,
+                cpu.word(WORLD + 0x50) as i32
+            );
             let matrix = ((WORLD + 0x34) & 0x1fffff) as usize;
             for (j, value) in listener.matrix.iter().flatten().enumerate() {
                 let at = matrix + 2 * j;

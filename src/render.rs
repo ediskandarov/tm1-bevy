@@ -5,6 +5,7 @@ use bevy::{
     camera::visibility::NoFrustumCulling,
     ecs::system::SystemParam,
     image::ImageSampler,
+    math::DVec3,
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
@@ -984,7 +985,16 @@ fn draw_view(
     view: Option<tm1_core::drive::SoundListener>,
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
-    let depth_axis = forward * axis_scale;
+    let depth = if let Some(view) = view {
+        let (row, translation) = view.world_depth_transform();
+        GeometryDepth::from_world_matrix(row, translation)
+    } else {
+        let axis = (forward * axis_scale).as_dvec3();
+        GeometryDepth {
+            axis,
+            translation: -eye.as_dvec3().dot(axis),
+        }
+    };
     let wheel_steps = contacts.wheel_steps(secondary);
     let lights = contacts.car_lights(secondary);
     let [sin, cos] = player
@@ -1162,13 +1172,7 @@ fn draw_view(
                 [r * tint[0], g * tint[1], b * tint[2], a],
             );
         }
-        batch.order_geometry(
-            indices.len(),
-            eye,
-            depth_axis,
-            p.fixed_ot,
-            PacketMode::polygon(p),
-        );
+        batch.order_geometry(indices.len(), depth, p.fixed_ot, PacketMode::polygon(p));
     }
     let mut faces = [[0; 14]; 180];
     let count = contacts.contrail_faces(secondary, &mut faces);
@@ -1198,7 +1202,7 @@ fn draw_view(
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
-        batch.order_geometry(6, eye, depth_axis, 0, PacketMode::texture(frame.texture));
+        batch.order_geometry(6, depth, 0, PacketMode::texture(frame.texture));
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(secondary, &mut poses);
@@ -1264,8 +1268,7 @@ fn draw_view(
             }
             batch.order_geometry(
                 indices(p.vertices.len()).len(),
-                eye,
-                depth_axis,
+                depth,
                 p.fixed_ot,
                 PacketMode::polygon(p),
             );
@@ -1905,6 +1908,26 @@ struct Batch {
     colors: Vec<[f32; 4]>,
     packets: Vec<DrawPacket>,
 }
+#[derive(Clone, Copy)]
+struct GeometryDepth {
+    axis: DVec3,
+    translation: f64,
+}
+
+impl GeometryDepth {
+    fn from_world_matrix(row: [i32; 3], translation: i32) -> Self {
+        Self {
+            axis: world(row.map(|v| v as f32)).as_dvec3() / 4096.,
+            translation: f64::from(translation),
+        }
+    }
+
+    fn vertex(self, point: [f32; 3]) -> u32 {
+        let z = self.axis.dot(Vec3::from_array(point).as_dvec3()) + self.translation;
+        z.clamp(0., 65535.) as u32
+    }
+}
+
 impl Batch {
     fn push(&mut self, pos: Vec3, uv: [f32; 2], color: [f32; 4]) {
         self.positions.push(pos.to_array());
@@ -1924,13 +1947,12 @@ impl Batch {
     fn geometry_bucket(
         &mut self,
         vertex_count: usize,
-        eye: Vec3,
-        forward: Vec3,
+        transform: GeometryDepth,
         fixed_ot: u32,
     ) -> Option<u32> {
         let start = self.positions.len() - vertex_count;
         let vertices = &self.positions[start..];
-        let depth = |i: usize| (Vec3::from_array(vertices[i]) - eye).dot(forward) as u32;
+        let depth = |i: usize| transform.vertex(vertices[i]);
         // geomProc's triangle path compares SZ1 and SZ3, then SZ3 again.
         // The quad path includes all four GTE depths (expanded indices 0,1,2,2,1,3).
         let mut farthest = depth(0).max(depth(2));
@@ -1950,12 +1972,11 @@ impl Batch {
     fn order_geometry(
         &mut self,
         count: usize,
-        eye: Vec3,
-        forward: Vec3,
+        transform: GeometryDepth,
         fixed: u32,
         mode: PacketMode,
     ) {
-        if let Some(bucket) = self.geometry_bucket(count, eye, forward, fixed) {
+        if let Some(bucket) = self.geometry_bucket(count, transform, fixed) {
             self.order_packet(count, bucket, DrawPass::Hierarchy, mode);
         }
     }
@@ -2569,7 +2590,15 @@ mod tests {
             }
             let len = indices(n).len();
             if pass == Hierarchy {
-                batch.order_geometry(len, Vec3::ZERO, Vec3::Z, 0, mode);
+                batch.order_geometry(
+                    len,
+                    GeometryDepth {
+                        axis: DVec3::Z,
+                        translation: 0.,
+                    },
+                    0,
+                    mode,
+                );
             } else {
                 batch.order_packet(len, bucket, pass, mode);
             }
@@ -2667,8 +2696,10 @@ mod tests {
                     }
                     batch.order_geometry(
                         indices(n).len(),
-                        Vec3::ZERO,
-                        Vec3::Z,
+                        GeometryDepth {
+                            axis: DVec3::Z,
+                            translation: 0.,
+                        },
                         fixed,
                         PacketMode::Opaque,
                     );
@@ -2677,6 +2708,36 @@ mod tests {
                         batch.packets.first().map_or(0, |p| p.bucket),
                         expected,
                         "{n} corners, depths {depths:?}, fixed {fixed}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn world_vertex_depth_matches_jp_rot_trans() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let matrix = 0x80010000;
+        let input = matrix + 32;
+        let output = input + 8;
+        cpu.put(matrix, &[0; 32]);
+        for row in [[0i16, 3690, 0], [1513, -3097, 947], [-3671, 113, -284]] {
+            cpu.put(matrix + 12, &row.map(i16::to_le_bytes).concat());
+            cpu.call(0x8015c740, &[matrix]);
+            for translation in [-1033i32, 17, 6017] {
+                cpu.put(matrix + 28, &translation.to_le_bytes());
+                cpu.call(0x8015c7d0, &[matrix]);
+                let depth = GeometryDepth::from_world_matrix(row.map(i32::from), translation);
+                for x in -64i16..=64 {
+                    let p = [x * 9, 193 - x * 5, x - 701];
+                    cpu.put(input, &p.map(i16::to_le_bytes).concat());
+                    cpu.call(0x8015d414, &[input, output, output + 12]);
+                    let z = cpu.word(output + 8) as i32;
+                    assert_eq!(
+                        depth.vertex(world(p.map(f32::from)).to_array()),
+                        z.max(0) as u32
                     );
                 }
             }

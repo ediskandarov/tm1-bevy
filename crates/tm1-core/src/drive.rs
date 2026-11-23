@@ -1067,6 +1067,11 @@ impl SoundListener {
         (self.eye, self.matrix[2], self.matrix[1])
     }
 
+    /// Depth row and integer translation installed by viewProc for the world hierarchy.
+    pub fn world_depth_transform(&self) -> ([i32; 3], i32) {
+        (self.matrix[2], self.effect_coordinates([0; 3])[2])
+    }
+
     /// WEAPON and EXPLODE transform each point with mathMulVec before perspective division.
     pub fn effect_coordinates(&self, point: [i32; 3]) -> [i32; 3] {
         let delta: [i32; 3] = std::array::from_fn(|i| point[i].wrapping_sub(self.eye[i]));
