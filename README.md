@@ -159,6 +159,16 @@ The driving comparison runs in release mode against verified player-owned bytes.
 TM1_CUE=/absolute/path/to/disc.cue cargo test --release --locked --manifest-path crates/tm1-core/Cargo.toml -- --include-ignored --nocapture
 ```
 
+## CI and GitHub Releases
+
+Each push to `main` runs the application, asset reader and game core tests in
+release mode. Tests marked as requiring the original disc are skipped on CI.
+
+Pushing any Git tag runs the same tests and, on success, publishes a GitHub
+Release for that tag. Download `tm1-bevy-macos-arm64.tar.gz` for Apple Silicon
+or `tm1-bevy-windows-x64.zip` for 64-bit Intel or AMD Windows PCs. Each archive
+contains the executable. Supply your own supported BIN/CUE files when playing.
+
 ## Experiment sequence
 
 1. Verify the original matching build; identify the disc and reference scenarios.

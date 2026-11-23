@@ -1,0 +1,54 @@
+name: Tests and releases
+
+on:
+  push:
+    branches: [main]
+    tags: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: ${{ !github.event.deleted }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Test the asset reader
+        run: cargo test --locked --release --manifest-path crates/tm1-assets/Cargo.toml
+      - name: Test the game core
+        run: cargo test --locked --release --manifest-path crates/tm1-core/Cargo.toml
+      - name: Test the application
+        run: cargo test --locked --release
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: test
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Windows cross-compiler
+        run: |
+          brew install mingw-w64
+          rustup target add x86_64-pc-windows-gnu
+      - name: Build macOS arm64 and Windows x64
+        run: |
+          cargo build --release --locked --bin tm1-bevy
+          cargo build --release --locked --bin tm1-bevy --target x86_64-pc-windows-gnu
+      - name: Package executables
+        run: |
+          COPYFILE_DISABLE=1 tar -C target/release -czf tm1-bevy-macos-arm64.tar.gz tm1-bevy
+          zip -j tm1-bevy-windows-x64.zip target/x86_64-pc-windows-gnu/release/tm1-bevy.exe
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create --verify-tag --generate-notes --repo "$GITHUB_REPOSITORY" -- "$TAG" \
+            tm1-bevy-macos-arm64.tar.gz tm1-bevy-windows-x64.zip
