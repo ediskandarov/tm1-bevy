@@ -46,7 +46,7 @@ cargo run --locked --offline -- "$TM1_CUE" --level warehouse --car yellow-jacket
 
 ## Single-player contest
 
-The opening sequence plays the three JP presentation cards, Sony logo and title movie from the disc. The Rust decoder handles the interleaved XA soundtrack at its native 37,800 Hz. STR video playback requires `ffmpeg` on the application’s PATH. The game skips an unavailable movie and continues to the menu. Enter skips the title movie or the Sony logo after its first two seconds.
+The opening sequence plays the three JP presentation cards, Sony logo and title movie from the disc. Built-in stable Rust decoders stream the STR video frames and play the interleaved XA soundtrack at its native 37,800 Hz. The video decoder includes [host-adapted PSoXide components](src/cinema/video/NOTICE.md). Enter skips the title movie or the Sony logo after its first two seconds.
 
 Leaving the title idle cycles through the battle movie, contest history and vehicle showcase. During the history, Up and Down adjust the scrolling speed. Enter skips history or a showcase and returns through the title movie.
 

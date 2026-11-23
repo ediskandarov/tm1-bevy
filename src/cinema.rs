@@ -1,11 +1,10 @@
 //! SCREEN.c startup cards and STR movies from raw Mode 2 sectors.
+mod video;
 mod xa;
 use anyhow::{Context, Result, ensure};
 use bevy::prelude::{Assets, AudioSource, Entity, Handle, Image};
 use std::{
-    ffi::OsString,
     io::{BufReader, Read, Seek, SeekFrom},
-    process::{Child, Command, Stdio},
     time::Duration,
 };
 use tm1_assets::{disc::Disc, screen};
@@ -31,14 +30,6 @@ impl Clip {
     }
 }
 
-struct Decoder(Child);
-impl Drop for Decoder {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
-
 #[derive(PartialEq, Eq)]
 pub enum CinemaStep {
     Playing,
@@ -50,7 +41,7 @@ pub struct Cinema {
     pub clip: Clip,
     elapsed: Duration,
     first_tick: bool,
-    decoder: Option<Decoder>,
+    decoder: Option<video::Decoder>,
     frame: u32,
     frames: u32,
     last_callback_frame: Option<u32>,
@@ -86,36 +77,14 @@ impl Cinema {
         let start = u64::from(entry.sector) * 2352;
         let end = start + u64::from(entry.size.div_ceil(2048)) * 2352;
         ensure!(end <= disc.tracks[0].size, "invalid cinema extent");
-        let mut input = OsString::from("subfile:");
-        input.push(&disc.tracks[0].path);
         let mut track = BufReader::new(std::fs::File::open(&disc.tracks[0].path)?);
         track.seek(SeekFrom::Start(start))?;
-        let audio = xa::decode(track, (end - start) / 2352)?;
+        let audio = xa::decode(&mut track, (end - start) / 2352)?;
         let sound = crate::music::stereo_wave_at_rate(&audio, xa::RATE)?;
         // MOVIE.c's one-frame lookahead stops before displaying the limit frame.
         movie.frames = limit - 1;
-        movie.decoder = Some(Decoder(
-            Command::new("ffmpeg")
-                .args([
-                    "-nostdin",
-                    "-hide_banner",
-                    "-loglevel",
-                    "error",
-                    "-f",
-                    "psxstr",
-                    "-start",
-                ])
-                .arg(start.to_string())
-                .arg("-end")
-                .arg(end.to_string())
-                .arg("-i")
-                .arg(&input)
-                .args(["-map", "0:v:0", "-frames:v"])
-                .arg(movie.frames.to_string())
-                .args(["-pix_fmt", "rgba", "-f", "rawvideo", "pipe:1"])
-                .stdout(Stdio::piped())
-                .spawn()?,
-        ));
+        track.seek(SeekFrom::Start(start))?;
+        movie.decoder = Some(video::Decoder::new(track.take(end - start)));
         let mut pixels = vec![0; screen::WIDTH * screen::HEIGHT * 4];
         movie.read_frame(&mut pixels)?;
         Ok((movie, pixels, Some(sound)))
@@ -123,13 +92,8 @@ impl Cinema {
     fn read_frame(&mut self, pixels: &mut [u8]) -> Result<()> {
         self.decoder
             .as_mut()
-            .unwrap()
-            .0
-            .stdout
-            .as_mut()
-            .unwrap()
-            .read_exact(pixels)
-            .context("incomplete disc cinema frame")
+            .context("missing STR decoder")?
+            .read_frame(pixels)
     }
     pub fn advance(
         &mut self,

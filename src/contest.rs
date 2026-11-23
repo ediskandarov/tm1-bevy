@@ -2468,7 +2468,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
+    #[ignore = "requires the supported TM1_CUE"]
     fn history_showcase_and_attract_rotation() {
         let mut world = menu_world();
         world.insert_resource(AttractCycle(1));
@@ -2768,7 +2768,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
+    #[ignore = "requires the supported TM1_CUE"]
     fn opening_movies_attract_and_title_theme() {
         let mut world = menu_world();
         world
@@ -3093,7 +3093,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires the supported TM1_CUE and FFmpeg"]
+    #[ignore = "requires the supported TM1_CUE"]
     fn last_life_returns_to_title_and_allows_a_fresh_contest() {
         let mut world = menu_world();
         press(&mut world, KeyCode::Enter);
