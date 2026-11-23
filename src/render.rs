@@ -1194,7 +1194,8 @@ fn draw_view(
                 }),
             }
         });
-        let subdivide = view.is_some() && p.subdivide_near && raw < 100 && subdivision_count < 200;
+        let subdivide =
+            view.is_some() && queue_subdivision(&mut subdivision_count, p.subdivide_near, raw);
         let mut emit = |quad: [PacketCorner; 4], pass: DrawPass, child: bool| {
             let start = batch.positions.len();
             for tri in indices(n).chunks_exact(3) {
@@ -1221,7 +1222,6 @@ fn draw_view(
             }
         };
         if subdivide {
-            subdivision_count += 1;
             if p.billboard.is_none() {
                 let pass = if n == 3 {
                     DrawPass::SubTriangles
@@ -2024,6 +2024,15 @@ impl PacketCorner {
             uv: avg(self.uv, b.uv),
             rgb: avg(self.rgb, b.rgb),
         }
+    }
+}
+
+fn queue_subdivision(count: &mut usize, marked: bool, bucket: u32) -> bool {
+    if marked && bucket < 100 && *count < 200 {
+        *count += 1;
+        true
+    } else {
+        false
     }
 }
 
@@ -3220,6 +3229,119 @@ mod tests {
             }
             assert_eq!(pivots.len(), 4, "wheel {wheel:?}");
         }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn arena_object_order_follows_jp_hierarchy_stack() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        for name in ["XARENA1", "WH1", "XFWY1", "PARK1", "SUBURB1", "ROOF1"] {
+            let data = disc.read(&format!("UADMD/{name}.DMD")).unwrap();
+            let db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+            let scene = db.battle_world().unwrap();
+            let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+            cpu.put(u32::from_le_bytes(data[12..16].try_into().unwrap()), &data);
+            let cs = 0x80008000;
+            for offset in [0x34, 0x3c, 0x44] {
+                cpu.put(cs + offset, &4096i16.to_le_bytes());
+            }
+            cpu.call(0x800fe9a0, &[3]);
+            // Keep all frustum branches open to exercise the original 220-object list.
+            cpu.put(0x800fe034, &[8, 0, 224, 3, 1, 0, 2, 36]);
+            let mut total = 0;
+            for position in [[0i32; 3], [752, -246, 157], [-5056, 3145, 1600]] {
+                cpu.put(cs + 0x68, &position.map(i32::to_le_bytes).concat());
+                cpu.put(0x8018c484, &[0; 12]);
+                cpu.call(0x800fd914, &[cs, scene.root_id]);
+                let count = cpu.word(0x8018c484);
+                assert!(count <= 220);
+                total += count;
+                // Extraction retains mutually exclusive switch and LOD branches.
+                // Every active occurrence must appear in order, including repeated pointers.
+                let mut objects = scene.object_ids.iter().copied();
+                for i in 0..count {
+                    let id = cpu.word(0x801acfe8 + 32 * i);
+                    assert!(
+                        objects.any(|ptr| ptr == id),
+                        "{name} {position:?} object {i}/{count}: {id:#x}"
+                    );
+                }
+            }
+            assert!(total > 0, "{name} has no reference objects");
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn warehouse_subdivision_admission_matches_full_retail_queue() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        let scene = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .battle_world()
+            .unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(base, &data);
+        let scratch = 0x1f800000;
+        let list = 0x80008000u32;
+        cpu.put(scratch + 0x4c, &list.to_le_bytes());
+        let words = |code: &[u32]| {
+            code.iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>()
+        };
+        // Restore geomProc registers at the end of UV copying. Untextured faces enter geomAddPrim directly.
+        for (stub, target) in [(0x80006000, 0x800f7f60u32), (0x80006100, 0x800f7f68)] {
+            cpu.put(
+                stub,
+                &words(&[
+                    0x3c081f80,
+                    0x00807021,
+                    0x00a04821,
+                    0x00c07821,
+                    0x08000000 | ((target >> 2) & 0x03ffffff),
+                    0x00008821,
+                ]),
+            );
+        }
+        cpu.put(0x800f7fec, &words(&[0x03e00008, 0x00001021]));
+        cpu.put(0x800f8154, &words(&[0x03e00008, 0x24020001]));
+        let mut count = 0;
+        let mut overflow = 0;
+        for (i, p) in scene
+            .polygons
+            .iter()
+            .cycle()
+            .take(scene.polygons.len() * 8)
+            .enumerate()
+        {
+            let bucket = [99, 100, 101, 2, 87][i % 5];
+            let addr = base + p.source_offset as u32;
+            let stub = if data[p.source_offset] & 0x7f != 0 {
+                0x80006000
+            } else {
+                0x80006100
+            };
+            let queued = cpu.call(stub, &[p.object_id, addr, bucket]) != 0;
+            assert_eq!(
+                queue_subdivision(&mut count, p.subdivide_near, bucket),
+                queued
+            );
+            assert_eq!(count, cpu.word(scratch + 0x38) as usize);
+            if queued {
+                let record = list + (count as u32 - 1) * 20;
+                assert_eq!(cpu.word(record), addr);
+                assert_eq!(cpu.word(record + 4), bucket);
+            } else if count == 200 && p.subdivide_near && bucket < 100 {
+                overflow += 1;
+                if overflow == 20 {
+                    break;
+                }
+            }
+        }
+        assert_eq!((count, overflow), (200, 20));
     }
 
     #[test]

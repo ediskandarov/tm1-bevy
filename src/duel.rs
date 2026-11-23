@@ -149,10 +149,7 @@ pub fn start(
     let textures = Vram::from_tms(&texture_data)?;
     let dmd = Dmd::parse(&data)?;
     ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
-    let mut geometry = dmd.battle_world()?;
-    if level == Level::Arena {
-        geometry.polygons.extend(dmd.extract_kind(3)?.polygons);
-    }
+    let geometry = dmd.battle_geometry(level == Level::Arena)?;
     let lights = !matches!(level, Level::Cyburbia | Level::Rooftops);
     let [first, second] = kinds.map(|v| dmd.vehicle_bodies_with_lights(v as u16, lights));
     let (first, second) = (first?, second?);

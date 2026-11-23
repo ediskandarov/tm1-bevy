@@ -263,6 +263,28 @@ impl<'a> Dmd<'a> {
         self.extract(1, None, true)
     }
 
+    pub fn battle_geometry(&self, indoor: bool) -> Result<Scene> {
+        let mut scene = self.battle_world()?;
+        if indoor {
+            let backdrop = self.unique_root(3)?;
+            let first = scene.polygons.len();
+            self.visit(
+                backdrop,
+                Transform::IDENTITY,
+                None,
+                None,
+                &mut Vec::new(),
+                &mut scene,
+            )?;
+            ensure!(scene.polygons.len() > first, "empty indoor backdrop");
+            // dbProcessInteractives assigns a CS-wide override to kind 3.
+            for polygon in &mut scene.polygons[first..] {
+                polygon.fixed_ot = 0xffe;
+            }
+        }
+        Ok(scene)
+    }
+
     /// Read the 16 Aburst frames used by explodeStoreExplosionAnimation.
     pub fn explosion_frames(&self) -> Result<[SpriteFrame; 16]> {
         self.sprite_frames(654, true)
@@ -535,19 +557,22 @@ impl<'a> Dmd<'a> {
     pub fn ending_vehicle(&self, kind: u16) -> Result<Scene> {
         self.extract(kind, None, true)
     }
+    fn unique_root(&self, kind: u16) -> Result<u32> {
+        let mut matches = self.roots.iter().filter(|(_, k)| *k == kind);
+        let root = matches
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("missing root of kind {kind}"))?;
+        ensure!(matches.next().is_none(), "multiple roots of kind {kind}");
+        Ok(root.0)
+    }
+
     fn extract(
         &self,
         kind: u16,
         body: Option<(Option<u8>, bool)>,
         include_lods: bool,
     ) -> Result<Scene> {
-        let roots: Vec<_> = self.roots.iter().filter(|(_, k)| *k == kind).collect();
-        ensure!(
-            roots.len() == 1,
-            "expected exactly one root of kind {kind}, found {}",
-            roots.len()
-        );
-        let root_id = roots[0].0;
+        let root_id = self.unique_root(kind)?;
         let mut selection = None;
         if let Some((stage, headlights)) = body {
             // uaswInitCarSwitch follows child zero through two groups.
@@ -972,7 +997,8 @@ impl<'a> Dmd<'a> {
             }
             op => bail!("unsupported DMD opcode {op} at {ptr:#x}"),
         }
-        for child in children {
+        // HIER pushes siblings in directory order and pops the last one first.
+        for child in children.into_iter().rev() {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
         }
         if car_shadow {

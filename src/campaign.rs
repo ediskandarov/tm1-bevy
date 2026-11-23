@@ -182,10 +182,7 @@ impl Stage {
         let textures = Vram::from_tms(&disc.read(&format!("UADMD/{stage}.TMS"))?)?;
         let dmd = Dmd::parse(&data)?;
         ensure!(dmd.version == textures.version, "DMD/TMS version mismatch");
-        let mut scene = dmd.battle_world()?;
-        if matches!(level, Level::Arena | Level::Arena5) {
-            scene.polygons.extend(dmd.extract_kind(3)?.polygons);
-        }
+        let scene = dmd.battle_geometry(matches!(level, Level::Arena | Level::Arena5))?;
         for issue in &scene.omitted_nodes {
             eprintln!("Preview omission: {issue}");
         }
