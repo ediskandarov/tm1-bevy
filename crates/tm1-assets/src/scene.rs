@@ -180,7 +180,7 @@ impl LevelOfDetail {
         self.transform.index
     }
 
-    fn selected_index(&self, position: [i32; 3], lod_scale: u32) -> Option<usize> {
+    pub fn selected_index(&self, position: [i32; 3], lod_scale: u32) -> Option<usize> {
         let distance = position
             .into_iter()
             .zip(self.offset)
@@ -224,8 +224,35 @@ pub struct HierarchyBound {
     pub polygons: std::ops::Range<usize>,
 }
 
+/// One occurrence in HIER visit order. end skips the complete subtree.
+#[derive(Debug)]
+pub struct HierarchyNode {
+    pub address: u32,
+    pub end: usize,
+    pub branch: usize,
+    pub bound: Option<usize>,
+    pub kind: HierarchyKind,
+}
+
+#[derive(Debug)]
+pub enum HierarchyKind {
+    Group,
+    Shadow,
+    DamageGroup,
+    Object(std::ops::Range<usize>),
+    Transform { index: usize, pickup: Option<u8> },
+    Lod(usize),
+    Controller(usize),
+    Animation(AnimationFrame),
+    Tire { slot: usize, initial: u8, count: u8 },
+    ArenaSwitch(u8),
+    Stand(u8),
+    DamageSwitch,
+}
+
 #[derive(Debug)]
 pub struct Scene {
+    pub hierarchy: Vec<HierarchyNode>,
     pub bounds: Vec<HierarchyBound>,
     pub backdrop_start: Option<usize>,
     pub transforms: Vec<NodeTransform>,
@@ -326,12 +353,16 @@ impl<'a> Dmd<'a> {
         }
         Ok(order)
     }
+    pub fn battle_model(&self, kind: u16) -> Result<Scene> {
+        self.extract(kind, None, true)
+    }
+
     pub fn battle_sky(&self) -> Result<Scene> {
-        self.extract(2, None, true)
+        self.battle_model(2)
     }
 
     pub fn battle_world(&self) -> Result<Scene> {
-        self.extract(1, None, true)
+        self.battle_model(1)
     }
 
     pub fn battle_geometry(&self, indoor: bool) -> Result<Scene> {
@@ -708,7 +739,7 @@ impl<'a> Dmd<'a> {
                         vehicle_kind: None,
                         headlights: true,
                     }),
-                    false,
+                    true,
                 )
             })
             .collect()
@@ -720,6 +751,7 @@ impl<'a> Dmd<'a> {
         include_lods: bool,
     ) -> Result<Scene> {
         let mut scene = Scene {
+            hierarchy: Vec::new(),
             bounds: vec![],
             backdrop_start: None,
             transforms: Vec::new(),
@@ -778,8 +810,19 @@ impl<'a> Dmd<'a> {
             Ok(())
         };
         let start = scene.polygons.len();
+        let visit = scene.hierarchy.len();
+        scene.hierarchy.push(HierarchyNode {
+            address: ptr,
+            end: 0,
+            branch: 0,
+            bound: None,
+            kind: HierarchyKind::Group,
+        });
         match d[p] {
-            0 => self.object(ptr, p, transform, pickup, scene)?,
+            0 => {
+                self.object(ptr, p, transform, pickup, scene)?;
+                scene.hierarchy[visit].kind = HierarchyKind::Object(start..scene.polygons.len());
+            }
             1 => {
                 bytes(d, p, 24)?;
                 if d[p + 21] & 2 == 0 {
@@ -825,7 +868,9 @@ impl<'a> Dmd<'a> {
                     let child = u32le(d, r + 8)?;
                     if scene.lods.is_some() {
                         let first = scene.polygons.len();
+                        let entry = scene.hierarchy.len();
                         self.visit(child, transform, selection, pickup, ancestors, scene)?;
+                        scene.hierarchy[entry].branch = i;
                         for polygon in &mut scene.polygons[first..] {
                             polygon.lod_dependent = true;
                         }
@@ -840,6 +885,7 @@ impl<'a> Dmd<'a> {
                     }
                 }
                 if let Some(lods) = &mut scene.lods {
+                    scene.hierarchy[visit].kind = HierarchyKind::Lod(lods.len());
                     lods.push(LevelOfDetail {
                         node: ptr,
                         transform,
@@ -870,17 +916,21 @@ impl<'a> Dmd<'a> {
                     for child in lo..=hi {
                         let node = u32le(d, p + 16 + 4 * usize::from(child))?;
                         let start = scene.polygons.len();
+                        let entry = scene.hierarchy.len();
                         self.visit(node, transform, selection, pickup, ancestors, scene)?;
+                        scene.hierarchy[entry].branch = usize::from(child);
+                        let frame = AnimationFrame {
+                            node: ptr,
+                            child,
+                            lo,
+                            hi,
+                            initial,
+                            rate,
+                            timer,
+                        };
+                        scene.hierarchy[visit].kind = HierarchyKind::Animation(frame);
                         for polygon in &mut scene.polygons[start..] {
-                            polygon.animation.push(AnimationFrame {
-                                node: ptr,
-                                child,
-                                lo,
-                                hi,
-                                initial,
-                                rate,
-                                timer,
-                            });
+                            polygon.animation.push(frame);
                         }
                     }
                 }
@@ -904,6 +954,10 @@ impl<'a> Dmd<'a> {
                         truck_wheel: false,
                     });
                     transform.index = scene.transforms.len();
+                    scene.hierarchy[visit].kind = HierarchyKind::Transform {
+                        index: transform.index,
+                        pickup,
+                    };
                     transform.offset = transform.apply(offset.map(|v| v as f32));
                     list(d[p + 18] as usize, p + 20)?;
                 }
@@ -942,6 +996,10 @@ impl<'a> Dmd<'a> {
                         truck_wheel: wheel.is_some(),
                     });
                     transform.index = scene.transforms.len();
+                    scene.hierarchy[visit].kind = HierarchyKind::Transform {
+                        index: transform.index,
+                        pickup,
+                    };
                     list(d[p + 38] as usize, p + 40)?;
                 }
             }
@@ -959,8 +1017,14 @@ impl<'a> Dmd<'a> {
                     && kind != 42
                     && (1..=3).contains(&u16le(d, p + 4)?)
                 {
+                    scene.hierarchy[visit].kind = HierarchyKind::Tire {
+                        slot: usize::from(kind / 10),
+                        initial: child,
+                        count: d[p + 6],
+                    };
                     for branch in 0..d[p + 6] {
                         let start = scene.polygons.len();
+                        let entry = scene.hierarchy.len();
                         self.visit(
                             u32le(d, p + 8 + 4 * usize::from(branch))?,
                             transform,
@@ -969,6 +1033,7 @@ impl<'a> Dmd<'a> {
                             ancestors,
                             scene,
                         )?;
+                        scene.hierarchy[entry].branch = branch as usize;
                         for poly in &mut scene.polygons[start..] {
                             poly.wheel = Some(Wheel::Tire {
                                 slot: usize::from(kind / 10),
@@ -1000,8 +1065,14 @@ impl<'a> Dmd<'a> {
                             .health_stands
                             .push((slot, transform.offset.map(|x| x as i32)));
                     }
+                    scene.hierarchy[visit].kind = if kind == 920 {
+                        HierarchyKind::Stand(slot)
+                    } else {
+                        HierarchyKind::ArenaSwitch(slot)
+                    };
                     for branch in 0..usize::from(d[p + 6]) {
                         let start = scene.polygons.len();
+                        let entry = scene.hierarchy.len();
                         self.visit(
                             u32le(d, p + 8 + 4 * branch)?,
                             transform,
@@ -1010,6 +1081,7 @@ impl<'a> Dmd<'a> {
                             ancestors,
                             scene,
                         )?;
+                        scene.hierarchy[entry].branch = branch as usize;
                         for poly in &mut scene.polygons[start..] {
                             let state = (slot, branch as u8);
                             if kind != 920 {
@@ -1023,8 +1095,10 @@ impl<'a> Dmd<'a> {
                     kind,
                     600 | 601 | 610..=613 | 753..=755 | 770 | 902 | 1000 | 1002 | 1009 | 1010 | 1017
                 ) {
+                    scene.hierarchy[visit].kind = HierarchyKind::DamageSwitch;
                     for branch in 0..d[p + 6] {
                         let first = scene.polygons.len();
+                        let entry = scene.hierarchy.len();
                         self.visit(
                             u32le(d, p + 8 + 4 * usize::from(branch))?,
                             transform,
@@ -1033,6 +1107,7 @@ impl<'a> Dmd<'a> {
                             ancestors,
                             scene,
                         )?;
+                        scene.hierarchy[entry].branch = branch as usize;
                         scene
                             .damage_branches
                             .push((ptr, branch, first..scene.polygons.len()));
@@ -1063,10 +1138,13 @@ impl<'a> Dmd<'a> {
                         let child = u32le(d, p + 12 + i * 4)?;
                         let start = scene.polygons.len();
                         if child != 0 {
+                            let entry = scene.hierarchy.len();
                             self.visit(child, transform, selection, pickup, ancestors, scene)?;
+                            scene.hierarchy[entry].branch = i;
                         }
                         *range = start..scene.polygons.len();
                     }
+                    scene.hierarchy[visit].kind = HierarchyKind::Controller(scene.visibility.len());
                     scene.visibility.push(VisibilityController {
                         node: ptr,
                         transform,
@@ -1081,13 +1159,14 @@ impl<'a> Dmd<'a> {
         for child in children.into_iter().rev() {
             self.visit(child, transform, selection, pickup, ancestors, scene)?;
         }
-        if start < scene.polygons.len() {
+        {
             let ofs = match d[p] {
                 0 if u32le(d, p + 24)? & 0x2000 == 0 => Some(p + 28),
                 1 if d[p + 21] & 4 == 0 => Some(p + 4),
                 _ => None,
             };
             if let Some(ofs) = ofs {
+                scene.hierarchy[visit].bound = Some(scene.bounds.len());
                 scene.bounds.push(HierarchyBound {
                     transform: transform.index,
                     center: [
@@ -1101,6 +1180,7 @@ impl<'a> Dmd<'a> {
             }
         }
         if car_shadow {
+            scene.hierarchy[visit].kind = HierarchyKind::Shadow;
             for poly in &mut scene.polygons[start..] {
                 poly.car_shadow = true;
             }
@@ -1116,10 +1196,12 @@ impl<'a> Dmd<'a> {
                 715 | 716 | 720 | 721 | 730 | 1003..=1005 | 1008 | 1015
             )
         {
+            scene.hierarchy[visit].kind = HierarchyKind::DamageGroup;
             scene
                 .damage_branches
                 .push((ptr, 0, start..scene.polygons.len()));
         }
+        scene.hierarchy[visit].end = scene.hierarchy.len();
         ancestors.pop();
         Ok(())
     }

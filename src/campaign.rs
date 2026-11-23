@@ -126,11 +126,11 @@ pub(crate) fn arena_art(
         player_mesh,
         opponent_mesh,
         [
-            Some(dmd.extract_kind(201)?),
+            Some(dmd.battle_model(201)?),
             dmd.roots
                 .iter()
                 .any(|r| r.1 == 312)
-                .then(|| dmd.extract_kind(312))
+                .then(|| dmd.battle_model(312))
                 .transpose()?,
         ],
         [dmd.merc_frames(750)?, dmd.merc_frames(752)?],

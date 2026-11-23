@@ -1,4 +1,5 @@
 //! Arena presentation in PlayStation ordering-table traversal order.
+mod hierarchy;
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
@@ -26,10 +27,8 @@ enum RegisteredModel {
 }
 
 struct BodyGeometry {
-    bounds: Vec<tm1_assets::scene::HierarchyBound>,
-    transforms: Vec<tm1_assets::scene::NodeTransform>,
+    model: Scene,
     polygons: std::ops::Range<usize>,
-    lods: Vec<tm1_assets::scene::LevelOfDetail>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,7 +139,6 @@ pub struct Arena {
     flame_frames: [SpriteFrame; 10],
     burn_frames: [SpriteFrame; 8],
     smoke_frames: [[SpriteFrame; 16]; 2],
-    vehicle_start: usize,
     registered_models: Vec<RegisteredModel>,
     body_ranges: Vec<[BodyGeometry; 3]>,
     overview: bool,
@@ -218,14 +216,12 @@ impl Arena {
             "incomplete battle CS registration"
         );
         let world_end = scene.polygons.len();
-        let append = |scene: &mut Scene, model: Scene| {
+        let append = |scene: &mut Scene, mut model: Scene| {
             let start = scene.polygons.len();
-            scene.polygons.extend(model.polygons);
+            scene.polygons.append(&mut model.polygons);
             BodyGeometry {
-                transforms: model.transforms,
-                bounds: model.bounds,
+                model,
                 polygons: start..scene.polygons.len(),
-                lods: model.lods.unwrap_or_default(),
             }
         };
         let sky = sky.map(|mut model| {
@@ -235,7 +231,6 @@ impl Arena {
             }
             append(&mut scene, model)
         });
-        let vehicle_start = scene.polygons.len();
         let body_ranges = std::iter::once(vehicle)
             .chain(opponents)
             .map(|variants| variants.map(|model| append(&mut scene, model)))
@@ -319,7 +314,6 @@ impl Arena {
             missile_models,
             merc_models,
             pedestrians,
-            vehicle_start,
             registered_models,
             body_ranges,
             explosion_frames,
@@ -970,8 +964,6 @@ fn draw_view(
     let lights = contacts.car_lights(secondary);
     let wheel_rotation = player.wheel_sin_cos(wheel_steps[4]);
     let [sin, cos] = wheel_rotation.map(|n| f32::from(n) / 4096.);
-    let world_depths = root
-        .map(|root| GeometryTransform::hierarchy(root, &arena.scene.transforms, wheel_rotation));
     let wheel_vertex = |p, wheel| {
         if let Some(Wheel::Hammerhead { pivot, axis }) = wheel {
             let axis = Vec3::from_array(axis);
@@ -1011,112 +1003,7 @@ fn draw_view(
             draw_radar(&mut batch, arena, radar);
         }
     }
-    let mut hidden_geometry = vec![false; arena.scene.polygons.len()];
     let sky_origin = poses[usize::from(split_screen && secondary)].origin * Vec3::new(1., 0., 1.);
-    let sky_frames = arena.sky.as_ref().and_then(|sky| {
-        let hidden = &mut hidden_geometry[sky.polygons.clone()];
-        // viewSetSky creates sky[1] only for split screen.
-        if mirror {
-            hidden.fill(true);
-            return None;
-        }
-        let origin = [sky_origin.x as i32, -sky_origin.z as i32, 0];
-        let frames = GeometryTransform::hierarchy(
-            root?.child(origin, None),
-            &sky.transforms,
-            wheel_rotation,
-        );
-        for bound in &sky.bounds {
-            if !frames[bound.transform].contains(bound, 1200) {
-                hidden[bound.polygons.clone()].fill(true);
-            }
-        }
-        for lod in &sky.lods {
-            lod.hide_at_position(frames[lod.transform_index()].position, 3, hidden);
-        }
-        Some(frames)
-    });
-    let mut car_depths = Vec::with_capacity(poses.len());
-    for (stages, pose) in arena.body_ranges.iter().zip(poses) {
-        let body = &stages[pose.body_stage];
-        if let Some(root) = root {
-            let pos = [
-                pose.origin.x as i32,
-                -pose.origin.z as i32,
-                pose.origin.y as i32,
-            ];
-            let root = root.child(pos, Some(pose.matrix));
-            let frames = GeometryTransform::hierarchy(root, &body.transforms, wheel_rotation);
-            for bound in &body.bounds {
-                if !frames[bound.transform].contains(bound, actor_depth) {
-                    hidden_geometry[body.polygons.clone()][bound.polygons.clone()].fill(true);
-                }
-            }
-            for lod in &body.lods {
-                lod.hide_at_position(
-                    frames[lod.transform_index()].position,
-                    3,
-                    &mut hidden_geometry[body.polygons.clone()],
-                );
-            }
-            car_depths.push(frames);
-            continue;
-        }
-        let delta = pose.origin - eye;
-        let matrix = tm1_core::math::Matrix {
-            rotation: pose.matrix,
-            ..Default::default()
-        };
-        let cs_position = tm1_core::math::multiply(
-            &matrix,
-            [delta.x as i32, -delta.z as i32, delta.y as i32],
-            false,
-        );
-        let local_eye = cs_position.map(|v| -(v as f32));
-        for lod in &body.lods {
-            lod.hide_other_branches(local_eye, 3, &mut hidden_geometry[body.polygons.clone()]);
-        }
-    }
-    if let Some(frames) = &world_depths {
-        for bound in &arena.scene.bounds {
-            let backdrop = arena
-                .scene
-                .backdrop_start
-                .is_some_and(|start| bound.polygons.start >= start);
-            let depth = if mirror && !backdrop {
-                100
-            } else {
-                actor_depth
-            };
-            if !frames[bound.transform].contains(bound, depth) {
-                hidden_geometry[bound.polygons.clone()].fill(true);
-            }
-        }
-        for lod in arena.scene.lods.iter().flatten() {
-            lod.hide_at_position(
-                frames[lod.transform_index()].position,
-                3,
-                &mut hidden_geometry,
-            );
-        }
-        for controller in &arena.scene.visibility {
-            hidden_geometry
-                [controller.hidden_at_position(frames[controller.transform_index()].position)]
-            .fill(true);
-        }
-    } else {
-        for lod in arena.scene.lods.iter().flatten() {
-            lod.hide_other_branches([eye.x, -eye.z, eye.y], 3, &mut hidden_geometry);
-        }
-        for controller in &arena.scene.visibility {
-            hidden_geometry[controller.hidden_polygons([eye.x, -eye.z, eye.y])].fill(true);
-        }
-    }
-    for (address, branch, polygons) in &arena.scene.damage_branches {
-        if contacts.damage_branch(*address, secondary) != *branch {
-            hidden_geometry[polygons.clone()].fill(true);
-        }
-    }
     let (lens, center) = if split_screen {
         (BATTLE_FOCAL as i32, [160, 60])
     } else if secondary {
@@ -1246,7 +1133,9 @@ fn draw_view(
         }
     };
     enum HierarchyItem<'a> {
-        SceneRange(std::ops::Range<usize>, Option<usize>),
+        World,
+        Backdrop,
+        Car(usize),
         Trail(&'a tm1_core::drive::ContrailModel),
         Actor((&'a Scene, [i32; 13])),
     }
@@ -1262,19 +1151,9 @@ fn draw_view(
         .registered_models
         .iter()
         .filter_map(|model| match *model {
-            RegisteredModel::Backdrop => Some(HierarchyItem::SceneRange(
-                arena.scene.backdrop_start?..arena.vehicle_start,
-                None,
-            )),
+            RegisteredModel::Backdrop => Some(HierarchyItem::Backdrop),
             RegisteredModel::Car(slot) => {
-                if Some(slot) == hidden_car {
-                    return None;
-                }
-                let pose = poses.get(slot)?;
-                Some(HierarchyItem::SceneRange(
-                    arena.body_ranges[slot][pose.body_stage].polygons.clone(),
-                    Some(slot),
-                ))
+                (Some(slot) != hidden_car && slot < poses.len()).then_some(HierarchyItem::Car(slot))
             }
             RegisteredModel::Merc(slot) => {
                 let [branch, x, y, z, _] = contacts.merc_pose(slot, secondary)?;
@@ -1297,8 +1176,7 @@ fn draw_view(
     // shellInitNewDatabase creates missile CSs, then contrail CSs after dbInit.
     // Each is prepended, so both pools run in descending slot order.
     let trails = contacts.contrails(secondary);
-    let world_end = arena.scene.backdrop_start.unwrap_or(arena.vehicle_start);
-    let items = std::iter::once(HierarchyItem::SceneRange(0..world_end, None))
+    let items = std::iter::once(HierarchyItem::World)
         .chain(
             trails
                 .iter()
@@ -1308,65 +1186,138 @@ fn draw_view(
         )
         .chain(missiles.map(HierarchyItem::Actor))
         .chain(registered);
-    let mut objects = 0;
+    let world_frame = root.unwrap_or(tm1_core::drive::HierarchyTransform {
+        rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+        normals: [[0; 3]; 6],
+        position: [-eye.x as i32, eye.z as i32, -eye.y as i32],
+    });
+    #[derive(Clone, Copy)]
+    enum Source<'a> {
+        Scene { car: Option<usize>, sky: bool },
+        Trail(&'a tm1_core::drive::ContrailModel),
+        Actor(&'a Scene, [i32; 13]),
+    }
+    let state = hierarchy::BranchState {
+        wheels: wheel_steps,
+        rotation: wheel_rotation,
+        switches,
+        stands: stand_branches,
+        pickups: hidden,
+        visits: player.frame(),
+        damage: &|address| contacts.damage_branch(address, secondary),
+    };
+    let mut pass = hierarchy::Pass::new(world_frame, view.is_some());
     for item in items {
         match item {
-            HierarchyItem::SceneRange(range, car) => {
-                for i in range {
-                    if hidden_geometry[i] {
-                        continue;
-                    }
-                    let p = &arena.scene.polygons[i];
-                    if car.is_some_and(|slot| !poses[slot].shadow_visible && p.car_shadow) {
-                        continue;
-                    }
-                    if p.animation
-                        .iter()
-                        .any(|frame| frame.selected(player.frame()) != frame.child)
-                    {
-                        continue;
-                    }
-                    if let Some(Wheel::Tire {
+            HierarchyItem::Car(car) => {
+                let pose = &poses[car];
+                let body = &arena.body_ranges[car][pose.body_stage];
+                let position = [
+                    pose.origin.x as i32,
+                    -pose.origin.z as i32,
+                    pose.origin.y as i32,
+                ];
+                let slot = pass.coordinate_system(world_frame.child(position, Some(pose.matrix)));
+                pass.traverse(
+                    Source::Scene {
+                        car: Some(car),
+                        sky: false,
+                    },
+                    &body.model,
+                    0,
+                    body.polygons.start,
+                    slot,
+                    actor_depth,
+                    pose.shadow_visible,
+                    &state,
+                );
+            }
+            HierarchyItem::World => {
+                let depth = if mirror { 100 } else { 1200 };
+                pass.traverse(
+                    Source::Scene {
+                        car: None,
+                        sky: false,
+                    },
+                    &arena.scene,
+                    0,
+                    0,
+                    0,
+                    depth,
+                    true,
+                    &state,
+                );
+                if !mirror && let Some(sky) = &arena.sky {
+                    let slot = pass.coordinate_system(
+                        world_frame.child([sky_origin.x as i32, -sky_origin.z as i32, 0], None),
+                    );
+                    pass.traverse(
+                        Source::Scene {
+                            car: None,
+                            sky: true,
+                        },
+                        &sky.model,
+                        0,
+                        sky.polygons.start,
                         slot,
-                        initial,
-                        count,
-                        branch,
-                    }) = p.wheel
-                        && (wheel_steps[slot] + i64::from(initial)).rem_euclid(i64::from(count))
-                            != i64::from(branch)
-                    {
-                        continue;
-                    }
-                    if p.arena_switches
-                        .iter()
-                        .any(|&(slot, branch)| switches[usize::from(slot)] != branch)
-                    {
-                        continue;
-                    }
-                    if p.health_stand.is_some_and(|(slot, branch)| {
-                        (stand_branches >> slot) & 1 != u16::from(branch)
-                    }) {
-                        continue;
-                    }
-                    if p.pickup.is_some_and(|id| hidden & (1u64 << id) != 0) {
-                        continue;
-                    }
-                    if view.is_some() && !admit_object_face(&mut objects, p.first_in_object) {
-                        break;
-                    }
+                        depth,
+                        true,
+                        &state,
+                    );
+                }
+            }
+            HierarchyItem::Backdrop => {
+                let slot = pass.coordinate_system(world_frame);
+                pass.traverse(
+                    Source::Scene {
+                        car: None,
+                        sky: false,
+                    },
+                    &arena.scene,
+                    arena.scene.hierarchy[0].end,
+                    0,
+                    slot,
+                    actor_depth,
+                    true,
+                    &state,
+                );
+            }
+            HierarchyItem::Trail(trail) => {
+                let frame = world_frame.child(trail.origin, None);
+                let slot = pass.coordinate_system(frame);
+                pass.object(
+                    Source::Trail(trail),
+                    0..trail.faces().len(),
+                    slot,
+                    frame.position,
+                );
+            }
+            HierarchyItem::Actor((model, pose)) => {
+                let rotation =
+                    std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
+                let slot = pass.coordinate_system(
+                    world_frame.child([pose[1], pose[2], pose[3]], Some(rotation)),
+                );
+                pass.traverse(
+                    Source::Actor(model, pose),
+                    model,
+                    0,
+                    0,
+                    slot,
+                    actor_depth,
+                    true,
+                    &state,
+                );
+            }
+        }
+    }
+    for object in &pass.objects {
+        let node_depth = root.map(|_| pass.frame(object.slot, object.position));
+        match object.source {
+            Source::Scene { car, sky } => {
+                for i in object.polygons.clone() {
+                    let p = &arena.scene.polygons[i];
                     let slot = arena.tiles[&(p.texture, p.semi_transparent)];
-                    let sky = arena
-                        .sky
-                        .as_ref()
-                        .is_some_and(|sky| sky.polygons.contains(&i));
-                    let world_frames = if sky {
-                        sky_frames.as_ref()
-                    } else {
-                        world_depths.as_ref()
-                    };
-                    let node_depth = car
-                        .map_or(world_frames, |slot| car_depths.get(slot))
-                        .map(|table| table[p.transform_index]);
                     let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
                         let local = wheel_vertex(position, p.wheel);
                         if let Some(slot) = car {
@@ -1387,12 +1338,8 @@ fn draw_view(
                     submit_face(&mut batch, p, points, depths, screen, slot, tint);
                 }
             }
-            HierarchyItem::Trail(trail) => {
-                if view.is_some() && !admit_object_face(&mut objects, true) {
-                    break;
-                }
-                let transform =
-                    root.map(|root| GeometryTransform::from(root.child(trail.origin, None)));
+            Source::Trail(trail) => {
+                let transform = node_depth;
                 let tint = [16, 8, 0].map(|shift| ((trail.color >> shift) & 255) as f32 / 128.);
                 for face in trail.faces() {
                     let frame = arena.contrail_frames[face.frame as usize];
@@ -1451,35 +1398,9 @@ fn draw_view(
                     }
                 }
             }
-            HierarchyItem::Actor((model, pose)) => {
+            Source::Actor(model, pose) => {
                 let origin = world([pose[1] as f32, pose[2] as f32, pose[3] as f32]);
-                let model_depth = root.map(|root| {
-                    let rotation = std::array::from_fn(|j| {
-                        std::array::from_fn(|k| pose[4 + 3 * j + k] as i16)
-                    });
-                    let root = root.child([pose[1], pose[2], pose[3]], Some(rotation));
-                    GeometryTransform::hierarchy(root, &model.transforms, wheel_rotation)
-                });
-                let mut culled = vec![false; model.polygons.len()];
-                if let Some(frames) = &model_depth {
-                    for bound in &model.bounds {
-                        if !frames[bound.transform].contains(bound, actor_depth) {
-                            culled[bound.polygons.clone()].fill(true);
-                        }
-                    }
-                }
-                for (p, culled) in model.polygons.iter().zip(culled) {
-                    if culled
-                        || p.animation
-                            .iter()
-                            .any(|a| a.selected(player.frame()) != a.child)
-                    {
-                        continue;
-                    }
-                    if view.is_some() && !admit_object_face(&mut objects, p.first_in_object) {
-                        break;
-                    }
-                    let node_depth = model_depth.as_ref().map(|t| t[p.transform_index]);
+                for p in &model.polygons[object.polygons.clone()] {
                     let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
                         origin
                             + world(std::array::from_fn(|k| {
@@ -2128,17 +2049,6 @@ impl PacketCorner {
     }
 }
 
-// hierTraverse reserves an object slot before geomProc checks any of its faces.
-fn admit_object_face(count: &mut usize, first_in_object: bool) -> bool {
-    if first_in_object {
-        if *count == 220 {
-            return false;
-        }
-        *count += 1;
-    }
-    true
-}
-
 fn queue_subdivision(count: &mut usize, marked: bool, bucket: u32) -> bool {
     if marked && bucket < 100 && *count < 200 {
         *count += 1;
@@ -2268,6 +2178,7 @@ impl From<tm1_core::drive::HierarchyTransform> for GeometryTransform {
 }
 
 impl GeometryTransform {
+    #[cfg(test)]
     fn hierarchy(
         root: tm1_core::drive::HierarchyTransform,
         nodes: &[tm1_assets::scene::NodeTransform],
@@ -3527,6 +3438,18 @@ mod tests {
         assert_eq!(cs, prior);
     }
 
+    pub(super) fn test_branches() -> hierarchy::BranchState<'static> {
+        hierarchy::BranchState {
+            wheels: [0; 14],
+            rotation: [0, 4096],
+            switches: [0; 8],
+            stands: 0,
+            pickups: 0,
+            visits: 0,
+            damage: &|_| 0,
+        }
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn shared_object_limit_matches_retail_traversal() {
@@ -3566,28 +3489,26 @@ mod tests {
             .unwrap();
         let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
         cpu.put(base, &data);
-        let mut admitted = 0;
-        let mut expected_ids = Vec::new();
+        let root = tm1_core::drive::HierarchyTransform {
+            rows: [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]],
+            normals: [[0; 3]; 6],
+            position: [0; 3],
+        };
+        let mut pass = hierarchy::Pass::new(root, true);
         for _ in 0..4 {
             cpu.call(0x800fd914, &[0x80008000, group]);
-            for p in &scene.polygons {
-                if !admit_object_face(&mut admitted, p.first_in_object) {
-                    break;
-                }
-                if p.first_in_object {
-                    expected_ids.push(p.object_id);
-                }
-            }
+            let slot = pass.coordinate_system(root);
+            pass.traverse((), &scene, 0, 0, slot, 1200, true, &test_branches());
             let count = cpu.word(0x8018c484);
-            assert_eq!(admitted, count as usize);
-            assert_eq!(
-                expected_ids,
-                (0..count)
-                    .map(|j| cpu.word(0x801acfe8 + 32 * j))
-                    .collect::<Vec<_>>()
-            );
+            assert_eq!(pass.objects.len(), count as usize);
+            for (i, obj) in pass.objects.iter().enumerate() {
+                assert_eq!(
+                    scene.polygons[obj.polygons.start].object_id,
+                    cpu.word(0x801acfe8 + 32 * i as u32)
+                );
+            }
         }
-        assert_eq!(admitted, 220);
+        assert_eq!(pass.objects.len(), 220);
     }
 
     #[test]

@@ -1,0 +1,359 @@
+use super::GeometryTransform;
+use std::ops::Range;
+use tm1_assets::scene::{HierarchyKind, Scene};
+use tm1_core::drive::HierarchyTransform;
+
+pub(super) struct BranchState<'a> {
+    pub wheels: [i64; 14],
+    pub rotation: [i16; 2],
+    pub switches: [u8; 8],
+    pub stands: u16,
+    pub pickups: u64,
+    pub visits: u32,
+    pub damage: &'a dyn Fn(u32) -> u8,
+}
+
+pub(super) struct Object<S> {
+    pub source: S,
+    pub polygons: Range<usize>,
+    pub slot: usize,
+    pub position: [i32; 3],
+}
+
+pub(super) struct Pass<S> {
+    matrices: Vec<HierarchyTransform>,
+    pub objects: Vec<Object<S>>,
+    battle: bool,
+    stack: Vec<(usize, usize, [i32; 3])>,
+}
+
+impl<S: Copy> Pass<S> {
+    pub fn new(world: HierarchyTransform, battle: bool) -> Self {
+        Self {
+            matrices: vec![world],
+            objects: Vec::with_capacity(220),
+            battle,
+            stack: Vec::new(),
+        }
+    }
+
+    // Slot zero belongs to the world. Subsequent CS roots overwrite the last
+    // slot at capacity, including roots that end up submitting no objects.
+    pub fn coordinate_system(&mut self, root: HierarchyTransform) -> usize {
+        if self.battle && self.matrices.len() == 71 {
+            self.matrices[70] = root;
+            70
+        } else {
+            self.matrices.push(root);
+            self.matrices.len() - 1
+        }
+    }
+
+    pub fn object(&mut self, source: S, polygons: Range<usize>, slot: usize, position: [i32; 3]) {
+        if !self.battle || self.objects.len() < 220 {
+            self.objects.push(Object {
+                source,
+                polygons,
+                slot,
+                position,
+            });
+        }
+    }
+
+    pub fn frame(&self, slot: usize, position: [i32; 3]) -> GeometryTransform {
+        GeometryTransform::from(HierarchyTransform {
+            position,
+            ..self.matrices[slot]
+        })
+    }
+
+    pub fn traverse(
+        &mut self,
+        source: S,
+        scene: &Scene,
+        root: usize,
+        base: usize,
+        slot: usize,
+        depth: i32,
+        shadow: bool,
+        state: &BranchState,
+    ) {
+        self.stack.push((root, slot, self.matrices[slot].position));
+        while let Some((i, mut slot, mut position)) = self.stack.pop() {
+            let node = &scene.hierarchy[i];
+            if self.battle
+                && node
+                    .bound
+                    .is_some_and(|b| !self.frame(slot, position).contains(&scene.bounds[b], depth))
+            {
+                continue;
+            }
+            let mut branch = None;
+            match &node.kind {
+                HierarchyKind::Group => {}
+                HierarchyKind::Shadow if !shadow => continue,
+                HierarchyKind::DamageGroup if (state.damage)(node.address) != 0 => continue,
+                HierarchyKind::Shadow | HierarchyKind::DamageGroup => {}
+                HierarchyKind::Object(range) => {
+                    self.object(source, base + range.start..base + range.end, slot, position);
+                    continue;
+                }
+                HierarchyKind::Transform { index, pickup } => {
+                    if pickup.is_some_and(|id| state.pickups & (1u64 << id) != 0) {
+                        continue;
+                    }
+                    let n = &scene.transforms[*index - 1];
+                    let rotation = if n.truck_wheel {
+                        let [s, c] = state.rotation;
+                        Some([[4096, 0, 0], [0, c, s], [0, -s, c]])
+                    } else {
+                        n.rotation
+                    };
+                    let parent = HierarchyTransform {
+                        position,
+                        ..self.matrices[slot]
+                    };
+                    let child = parent.child(n.offset, rotation);
+                    position = child.position;
+                    if rotation.is_some() {
+                        if !self.battle || self.matrices.len() < 71 {
+                            self.matrices.push(child);
+                        }
+                        // A rotation that cannot allocate still transforms position.
+                        // Its children inherit the global last index, even on a sibling path.
+                        slot = self.matrices.len() - 1;
+                    }
+                }
+                HierarchyKind::Lod(id) => {
+                    let Some(active) =
+                        scene.lods.as_ref().unwrap()[*id].selected_index(position, 3)
+                    else {
+                        continue;
+                    };
+                    branch = Some(active);
+                }
+                HierarchyKind::Controller(id) => {
+                    branch = Some(usize::from(
+                        scene.visibility[*id].inside_at_position(position),
+                    ))
+                }
+                HierarchyKind::Animation(f) => branch = Some(usize::from(f.selected(state.visits))),
+                HierarchyKind::Tire {
+                    slot,
+                    initial,
+                    count,
+                } => {
+                    branch = Some(
+                        (state.wheels[*slot] + i64::from(*initial)).rem_euclid(i64::from(*count))
+                            as usize,
+                    )
+                }
+                HierarchyKind::ArenaSwitch(n) => {
+                    branch = Some(usize::from(state.switches[usize::from(*n)]))
+                }
+                HierarchyKind::Stand(n) => branch = Some(usize::from((state.stands >> n) & 1)),
+                HierarchyKind::DamageSwitch => {
+                    branch = Some(usize::from((state.damage)(node.address)))
+                }
+            }
+            let pending = self.stack.len();
+            let mut child = i + 1;
+            while child < node.end {
+                let next = &scene.hierarchy[child];
+                if branch.is_none_or(|b| b == next.branch) {
+                    self.stack.push((child, slot, position));
+                }
+                child = next.end;
+            }
+            self.stack[pending..].reverse();
+            if self.battle {
+                self.stack.truncate(150);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::reference_cpu::Cpu;
+    use tm1_assets::{disc::Disc, scene::Dmd};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn warehouse_view_matches_retail_object_list_and_final_matrices() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let db = Dmd::parse(&data).unwrap();
+        let world = db.battle_world().unwrap();
+        let sky = db.battle_sky().unwrap();
+        let mut models = vec![world, sky];
+        for &(id, kind) in &db.roots {
+            if (10..=130).contains(&kind) && kind % 10 == 0 {
+                let mut raw = Dmd::parse(&data).unwrap();
+                raw.roots = vec![(id, 1)];
+                models.push(raw.battle_world().unwrap());
+            }
+        }
+        let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        cpu.put(base, &data);
+        // Keep animation clocks fixed and select initial branches for the constructed view.
+        for model in &models {
+            for n in &model.hierarchy {
+                match n.kind {
+                    HierarchyKind::Animation(_) => cpu.put(n.address + 6, &u16::MAX.to_le_bytes()),
+                    HierarchyKind::Stand(_)
+                    | HierarchyKind::DamageSwitch
+                    | HierarchyKind::ArenaSwitch(_) => cpu.put(n.address + 7, &[0]),
+                    _ => {}
+                }
+            }
+        }
+        let word = |cpu: &mut Cpu, addr: u32, value: u32| cpu.put(addr, &value.to_le_bytes());
+        let put_rotation = |cpu: &mut Cpu, addr: u32, m: [[i32; 3]; 3]| {
+            cpu.put(
+                addr,
+                &m.into_iter()
+                    .flatten()
+                    .flat_map(|v| (v as i16).to_le_bytes())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let cs = 0x80008000;
+        let identity = [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]];
+        let mut saturated = false;
+        for (instances, mirror) in [(3, false), (12, true), (84, false)] {
+            let normals = if mirror {
+                [
+                    [-3454, 2200, 0],
+                    [3454, 2200, 0],
+                    [0, 4095, 0],
+                    [0, 1765, -3695],
+                    [0, 1765, 3695],
+                    [0, -4095, 0],
+                ]
+            } else {
+                [
+                    [-3355, 2349, 0],
+                    [3355, 2349, 0],
+                    [0, 4095, 0],
+                    [0, 1904, -3626],
+                    [0, 1904, 3626],
+                    [0, -4095, 0],
+                ]
+            };
+            let world = HierarchyTransform {
+                rows: [[4096, 0, 0], [0, 0, -3690], [0, 3690, 0]],
+                position: [20, 650, -80],
+                normals,
+            };
+            let mut pass = Pass::new(world, true);
+            let state = super::super::tests::test_branches();
+            word(&mut cpu, 0x8018c4b0, cs);
+            word(&mut cpu, cs + 4, 0x80007000);
+            put_rotation(&mut cpu, cs + 0x34, world.rows);
+            cpu.put(cs + 0x68, &world.position.map(i32::to_le_bytes).concat());
+            for (group, ns) in normals.chunks_exact(3).enumerate() {
+                put_rotation(
+                    &mut cpu,
+                    cs + 0xc4 + 32 * group as u32,
+                    std::array::from_fn(|i| std::array::from_fn(|j| ns[j][i])),
+                );
+            }
+            word(&mut cpu, cs + 0x104, models[0].root_id);
+            let which = u32::from(mirror);
+            word(
+                &mut cpu,
+                0x8018c51c + 4 * which,
+                if mirror { 13 } else { 6 },
+            );
+            word(
+                &mut cpu,
+                0x8018bf90 + 4 * which,
+                if mirror { 0 } else { cs + 0x110 },
+            );
+            word(&mut cpu, 0x8018bf14, cs + 2 * 0x110);
+            pass.traverse(
+                0,
+                &models[0],
+                0,
+                0,
+                0,
+                if mirror { 100 } else { 1200 },
+                true,
+                &state,
+            );
+            for i in 1..instances + 2 {
+                let addr = cs + i * 0x110;
+                let model = if i == 1 {
+                    1
+                } else {
+                    2 + (i as usize - 2) % (models.len() - 2)
+                };
+                let pos = if instances == 84 && (2..33).contains(&i) {
+                    [0, -25000, 0]
+                } else if i == 1 {
+                    [0; 3]
+                } else {
+                    [(i as i32 % 7 - 3) * 20, i as i32 * 11, 20]
+                };
+                let rotation = if i % 2 == 0 {
+                    [[3784, -1567, 0], [1567, 3784, 0], [0, 0, 4096]]
+                } else {
+                    identity
+                };
+                word(&mut cpu, addr + 4, 0x80007000);
+                word(&mut cpu, addr + 8, 1);
+                word(&mut cpu, addr + 0x10, cs);
+                put_rotation(&mut cpu, addr + 0x14, rotation);
+                cpu.put(addr + 0x5c, &pos.map(i32::to_le_bytes).concat());
+                word(&mut cpu, addr + 0x104, models[model].root_id);
+                word(
+                    &mut cpu,
+                    addr + 0x108,
+                    if i == instances + 1 { 0 } else { addr + 0x110 },
+                );
+                if mirror && i == 1 {
+                    continue;
+                }
+                let frame = world.child(pos, Some(rotation.map(|r| r.map(|v| v as i16))));
+                let slot = pass.coordinate_system(frame);
+                pass.traverse(
+                    model,
+                    &models[model],
+                    0,
+                    0,
+                    slot,
+                    if mirror { 1000 } else { 1200 },
+                    true,
+                    &state,
+                );
+            }
+            cpu.call_until(0x800fe57c, &[0x80007100, which], 0x800f78b8);
+            let count = cpu.word(0x8018c484) as usize;
+            let last = cpu.word(0x8018c488) as usize;
+            assert_eq!(pass.matrices.len(), last + 1, "{instances} matrices");
+            assert_eq!(pass.objects.len(), count, "{instances} objects");
+            for (i, item) in pass.objects.iter().enumerate() {
+                let rec = 0x801acfe8 + 32 * i as u32;
+                let id = models[item.source].polygons[item.polygons.start].object_id;
+                assert_eq!(id, cpu.word(rec), "object {i}/{count}");
+                assert_eq!(item.slot, cpu.word(rec + 24) as usize);
+                assert_eq!(item.position, [4, 8, 12].map(|d| cpu.word(rec + d) as i32));
+            }
+            for (slot, mat) in pass.matrices.iter().enumerate() {
+                for (i, &val) in mat.rows.as_flattened().iter().enumerate() {
+                    let a = 0x801aeb70 + 32 * slot as u32 + 2 * i as u32;
+                    assert_eq!(
+                        val,
+                        (cpu.word(a & !3) >> (8 * (a & 3))) as i16 as i32,
+                        "slot {slot}"
+                    );
+                }
+            }
+            saturated |= count == 220 && last == 70 && pass.objects.iter().any(|o| o.slot == 70);
+        }
+        assert!(saturated);
+    }
+}
