@@ -1203,7 +1203,7 @@ fn draw_view(
                 [tint[0], tint[1], tint[2], 1.],
             );
         }
-        batch.order_geometry(6, eye, forward, 0, PacketMode::Add);
+        batch.order_geometry(6, eye, forward, 0, PacketMode::texture(frame.texture));
     }
     let mut poses = [[0; 13]; 10];
     let count = contacts.missile_poses(&mut poses);

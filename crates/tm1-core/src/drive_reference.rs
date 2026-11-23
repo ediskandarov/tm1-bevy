@@ -3282,8 +3282,6 @@ fn special_missiles_original() {
                         expected.push(face);
                     }
                 }
-                faces[..count].sort_unstable();
-                expected.sort_unstable();
                 assert_eq!(faces[..count], expected, "{vehicle:?} {tick} trail");
                 r.compare();
                 let mut position = [0; 3];

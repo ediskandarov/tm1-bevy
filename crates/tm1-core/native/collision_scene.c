@@ -1933,14 +1933,14 @@ size_t tm1_contrail_faces(CollisionScene* s, s32 (*out)[14])
         Missile* m = &s->missiles[i];
         if (!m->trail.visible)
             continue;
-        for (int j = 0; j < 6; j++) {
-            int h = (m->trail.head + 6 - j) % 6;
+        for (int h = 0; h < 6; h++) {
+            int age = (m->trail.head + 6 - h) % 6;
             int old = m->trail.ends[h][0], next = m->trail.ends[h][1];
             if (old == next)
                 continue;
             for (int side = 0; side < 3; side++) {
                 s32* row = out[count++];
-                row[0] = (j * 8 + 3) / 6;
+                row[0] = (age * 8 + 3) / 6;
                 row[1] = m->trail.color;
                 for (int v = 0; v < 4; v++) {
                     SVECTOR local = m->trail.ring[v & 1 ? old : next][(side + (v >= 2)) % 3];
