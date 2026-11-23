@@ -144,6 +144,15 @@ impl StereoPcm {
         playback
     }
 
+    pub(super) fn release_loop(&self) -> bool {
+        if let (PcmData::Looping(..), Some(levels)) = (&self.data, &self.levels) {
+            levels.0.fetch_or(1 << 24, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
+    }
+
     pub(crate) fn with_levels(&self, levels: Levels) -> Self {
         Self {
             levels: Some(levels),
@@ -182,6 +191,27 @@ impl Decodable for StereoPcm {
 impl Iterator for Playback {
     type Item = f32;
     fn next(&mut self) -> Option<Self::Item> {
+        if self.cursor % 2 == 0 {
+            let levels = self
+                .clip
+                .levels
+                .as_ref()
+                .map_or(33 | (33 << 8) | (99 << 16), |l| l.0.load(Ordering::Relaxed));
+            if levels != self.last_levels {
+                let [left, right, percent, release] = levels.to_le_bytes();
+                if release != 0
+                    && let Some(env) = &mut self.envelope
+                {
+                    env.key_off();
+                }
+                self.frame_gain =
+                    [left, right].map(|channel| self.clip.volume.gain(channel, percent));
+                self.last_levels = levels;
+            }
+            if self.envelope.as_ref().is_some_and(|env| env.finished()) {
+                return None;
+            }
+        }
         let mut sample = match &self.clip.data {
             PcmData::Stereo { samples } => *samples.get(self.cursor)?,
             PcmData::Looping(motor, register) => {
@@ -197,19 +227,6 @@ impl Iterator for Playback {
                 self.mono
             }
         };
-        if self.cursor % 2 == 0 {
-            let levels = self
-                .clip
-                .levels
-                .as_ref()
-                .map_or(33 | (33 << 8) | (99 << 16), |l| l.0.load(Ordering::Relaxed));
-            if levels != self.last_levels {
-                let [left, right, percent, _] = levels.to_le_bytes();
-                self.frame_gain =
-                    [left, right].map(|channel| self.clip.volume.gain(channel, percent));
-                self.last_levels = levels;
-            }
-        }
         sample *= self.frame_gain[self.cursor % 2];
         self.cursor = self.cursor.wrapping_add(1);
         Some(sample)
@@ -263,6 +280,37 @@ mod tests {
         let mut restarted = clip.decoder();
         assert!(restarted.by_ref().take(8).all(|v| v == 0.));
         assert_eq!(restarted.phase, 3 * 4096);
+    }
+
+    #[test]
+    fn final_loop_key_off_finishes_the_stereo_pair_and_releases_from_sustain() {
+        let tone = LoopingTone {
+            pcm: vec![16384; 56].into(),
+            loop_at: 28,
+            adsr: [0x80ff, 0x1fc0],
+            volume: VabVolume {
+                program: 99,
+                tone: 99,
+            },
+        };
+        let clip = tone.voice(4096).0.with_levels(Levels::new([16, 47], 99));
+        let mut source = clip.decoder();
+        for _ in 0..80 {
+            source.next().unwrap();
+        }
+        let mono = super::super::interpolation::interpolate(&tone.pcm, source.phase);
+        let pair = |level| {
+            let v = ((mono * level) >> 15) as f32 / 32768.;
+            [16, 47].map(|channel| Some(v * tone.volume.gain(channel, 99)))
+        };
+        let sustain = pair(32759);
+        assert_eq!(source.next(), sustain[0]);
+        assert!(clip.release_loop());
+        assert_eq!(source.next(), sustain[1]);
+        assert_eq!([source.next(), source.next()], sustain);
+        assert_eq!([source.next(), source.next()], pair(32759 - 16384));
+        assert_eq!(source.next(), None);
+        assert_eq!(clip.decoder().next(), None);
     }
 
     #[test]

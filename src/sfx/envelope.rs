@@ -1,9 +1,10 @@
-//! SPU key-on volume envelope, clocked at the output sample rate.
+//! SPU voice volume envelope, clocked at the output sample rate.
 #[derive(Clone, Copy)]
 enum Phase {
     Attack,
     Decay,
     Sustain,
+    Release,
 }
 
 pub(super) struct Envelope {
@@ -23,10 +24,22 @@ impl Envelope {
         }
     }
 
+    pub(super) fn key_off(&mut self) {
+        if !matches!(self.phase, Phase::Release) {
+            self.phase = Phase::Release;
+            self.counter = 0;
+        }
+    }
+
+    pub(super) fn finished(&self) -> bool {
+        matches!(self.phase, Phase::Release) && self.level == 0
+    }
+
     pub(super) fn apply(&mut self, sample: i32) -> i32 {
         let output = (sample * self.level) >> 15;
         let [a, s] = self.registers;
         let (rate, decreasing, exponential) = match self.phase {
+            Phase::Release => ((s & 31) * 4, true, s & 0x20 != 0),
             Phase::Attack => ((a >> 8) & 127, false, a & 0x8000 != 0),
             Phase::Decay => (((a >> 4) & 15) * 4, true, true),
             Phase::Sustain => ((s >> 6) & 127, s & 0x4000 != 0, s & 0x8000 != 0),

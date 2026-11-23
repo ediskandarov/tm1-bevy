@@ -579,6 +579,7 @@ pub fn update(
         })
         .collect();
     use crate::driving::{BattleRequest, ExclusiveVoice};
+    let mut stopped = Vec::new();
     for request in &drive.sounds {
         let (tones, key, channels, percent, range) = match request {
             BattleRequest::EngineRev(..)
@@ -601,7 +602,7 @@ pub fn update(
             BattleRequest::Stop(key) => {
                 active.retain(|(group, entity, _)| {
                     if group == key {
-                        commands.entity(*entity).despawn();
+                        stopped.push(*entity);
                         ranked.retain(|v| v.entity != *entity);
                     }
                     group != key
@@ -651,6 +652,7 @@ pub fn update(
             }
         }
     }
+    stop_effects(&mut commands, stopped, ranked.is_empty());
     if ranked.len() > 24 {
         rank_voices(&mut ranked);
         for voice in &ranked[24..] {
@@ -662,6 +664,30 @@ pub fn update(
                 commands.entity(voice.entity).despawn();
             }
         }
+    }
+}
+
+fn stop_effects(commands: &mut Commands, stopped: Vec<Entity>, last_voices: bool) {
+    for entity in stopped {
+        if !last_voices {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        commands.queue(move |world: &mut World| {
+            // A running decoder keeps its current phase while the last voice releases.
+            let release = world
+                .get::<AudioSink>(entity)
+                .is_some_and(|sink| !sink.is_paused())
+                && world
+                    .get::<AudioPlayer<pcm::StereoPcm>>(entity)
+                    .and_then(|p| world.resource::<Assets<pcm::StereoPcm>>().get(&p.0))
+                    .is_some_and(pcm::StereoPcm::release_loop);
+            if release {
+                world.entity_mut(entity).remove::<(OneShot, duel::Voice)>();
+            } else {
+                world.despawn(entity);
+            }
+        });
     }
 }
 

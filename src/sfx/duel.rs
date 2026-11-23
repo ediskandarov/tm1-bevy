@@ -185,6 +185,7 @@ pub fn mix(
             groups.push((*key, entity, levels.clone()));
         }
     }
+    let mut stopped = Vec::new();
     for request in &duel.sounds {
         let (layers, key, channels, percent, distance) = match request {
             BattleRequest::EngineRev(..)
@@ -210,7 +211,7 @@ pub fn mix(
                         return true;
                     }
                     ranked.retain(|entry| entry.entity != *entity);
-                    commands.entity(*entity).despawn();
+                    stopped.push(*entity);
                     false
                 });
                 continue;
@@ -266,6 +267,7 @@ pub fn mix(
             }
         }
     }
+    super::stop_effects(&mut commands, stopped, ranked.is_empty());
     if ranked.len() > 24 {
         rank_voices(&mut ranked);
     }
