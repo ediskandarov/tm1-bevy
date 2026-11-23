@@ -24,6 +24,7 @@ pub(super) type Visits = std::collections::BTreeMap<u32, u64>;
 pub(super) struct Pass<S> {
     pub visits: Visits,
     matrices: Vec<HierarchyTransform>,
+    pub lights: Vec<super::LightMatrix>,
     pub objects: Vec<Object<S>>,
     battle: bool,
     stack: Vec<(usize, usize, [i32; 3])>,
@@ -34,6 +35,7 @@ impl<S: Copy> Pass<S> {
         Self {
             visits: Visits::new(),
             matrices: vec![world],
+            lights: vec![super::WORLD_LIGHT],
             objects: Vec::with_capacity(220),
             battle,
             stack: Vec::new(),
@@ -42,11 +44,20 @@ impl<S: Copy> Pass<S> {
 
     // Slot zero belongs to the world. Subsequent CS roots overwrite the last
     // slot at capacity, including roots that end up submitting no objects.
-    pub fn coordinate_system(&mut self, root: HierarchyTransform) -> usize {
+    pub fn coordinate_system(
+        &mut self,
+        root: HierarchyTransform,
+        rotation: Option<super::LightMatrix>,
+    ) -> usize {
+        let light = rotation.map_or(super::WORLD_LIGHT, |r| {
+            super::rotate_light(super::WORLD_LIGHT, r)
+        });
         if self.battle && self.matrices.len() == 71 {
+            self.lights[70] = light;
             self.matrices[70] = root;
             70
         } else {
+            self.lights.push(light);
             self.matrices.push(root);
             self.matrices.len() - 1
         }
@@ -118,8 +129,10 @@ impl<S: Copy> Pass<S> {
                     };
                     let child = parent.child(n.offset, rotation);
                     position = child.position;
-                    if rotation.is_some() {
+                    if let Some(rotation) = rotation {
                         if !self.battle || self.matrices.len() < 71 {
+                            self.lights
+                                .push(super::rotate_light(self.lights[slot], rotation));
                             self.matrices.push(child);
                         }
                         // A rotation that cannot allocate still transforms position.
@@ -185,6 +198,63 @@ mod tests {
     use super::*;
     use crate::reference_cpu::Cpu;
     use tm1_assets::{disc::Disc, scene::Dmd};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn vehicle_vertex_lighting_matches_disc_environments() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        // These SDK calls only copy the already constructed environment to COP2.
+        for addr in [0x8015c770, 0x8015c7a0, 0x8015d298] {
+            cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
+        }
+        cpu.call(0x80103f0c, &[]);
+        let matrix = |address| -> [[i16; 3]; 3] {
+            std::array::from_fn(|i| {
+                std::array::from_fn(|j| {
+                    let a = address + 2 * (3 * i + j) as u32;
+                    (cpu.word(a & !3) >> (8 * (a & 3))) as i16
+                })
+            })
+        };
+        let data = disc.read("UADMD/WH1.DMD").unwrap();
+        let db = Dmd::parse(&data).unwrap();
+        let bodies = db.vehicle_bodies_with_lights(20, true).unwrap();
+        let mut samples = 0;
+        for environment in 0..4 {
+            let addr = 0x801960b8 + 0x4c * environment;
+            let light = matrix(addr + 0x2c);
+            let colors = matrix(addr + 0x0c);
+            assert_eq!(light, super::super::WORLD_LIGHT);
+            for p in bodies.iter().flat_map(|s| &s.polygons) {
+                for v in &p.vertices {
+                    let Some(normal) = v.normal else { continue };
+                    let scale = if p.texture.is_some() { 128. } else { 255. };
+                    let rgb = std::array::from_fn(|i| (scale * v.color[i]).round() as i32);
+                    let ir = light.map(|row| {
+                        ((0..3)
+                            .map(|j| i64::from(row[j]) * i64::from(normal[j]))
+                            .sum::<i64>()
+                            >> 12)
+                            .clamp(0, 32767)
+                    });
+                    let expected = std::array::from_fn(|i| {
+                        let background = i64::from(cpu.word(addr + 4 * i as u32)) << 16;
+                        let sum =
+                            (0..3).fold(background, |sum, j| sum + i64::from(colors[i][j]) * ir[j]);
+                        let mac = ((sum >> 12).clamp(0, 32767) * (i64::from(rgb[i]) << 4)) >> 12;
+                        (mac >> 4).clamp(0, 255) as i32
+                    });
+                    assert_eq!(
+                        super::super::lit_rgb(rgb, normal, light, environment as u8),
+                        expected
+                    );
+                    samples += 1;
+                }
+            }
+        }
+        assert!(samples > 100);
+    }
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
@@ -301,6 +371,11 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
+        put_rotation(
+            &mut cpu,
+            0x80007000 + 0x2c,
+            super::super::WORLD_LIGHT.map(|r| r.map(i32::from)),
+        );
         let cs = 0x80008000;
         let identity = [[4096, 0, 0], [0, 4096, 0], [0, 0, 4096]];
         let mut saturated = false;
@@ -399,7 +474,8 @@ mod tests {
                     continue;
                 }
                 let frame = world.child(pos, Some(rotation.map(|r| r.map(|v| v as i16))));
-                let slot = pass.coordinate_system(frame);
+                let slot =
+                    pass.coordinate_system(frame, Some(rotation.map(|r| r.map(|v| v as i16))));
                 pass.traverse(
                     model,
                     &models[model],
@@ -430,6 +506,16 @@ mod tests {
                         val,
                         (cpu.word(a & !3) >> (8 * (a & 3))) as i16 as i32,
                         "slot {slot}"
+                    );
+                }
+            }
+            for (slot, matrix) in pass.lights.iter().enumerate() {
+                for (i, &value) in matrix.as_flattened().iter().enumerate() {
+                    let a = 0x801f729c + 32 * slot as u32 + 2 * i as u32;
+                    assert_eq!(
+                        value,
+                        (cpu.word(a & !3) >> (8 * (a & 3))) as i16,
+                        "light slot {slot}"
                     );
                 }
             }

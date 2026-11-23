@@ -11,6 +11,7 @@ pub struct TextureKey {
 #[derive(Clone, Debug)]
 pub struct Vertex {
     pub local: [i16; 3],
+    pub normal: Option<[i16; 3]>,
     pub position: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
@@ -1285,6 +1286,17 @@ impl<'a> Dmd<'a> {
             } else {
                 None
             };
+            let normal_count = ((flags >> 19) & 7) as usize;
+            ensure!(
+                matches!(normal_count, 0 | 1) || normal_count == n,
+                "invalid normal count {normal_count}"
+            );
+            let normals = if normal_count == 0 || textured && command & 1 != 0 {
+                None
+            } else {
+                Some(self.offset(u32le(self.data, p + 8)?)?)
+            };
+            let normal_indices = 16 + 4 * ((flags >> 24) & 15) as usize;
             let mut vertices = Vec::new();
             for i in 0..n {
                 let index = u16le(record, if billboard.is_some() { 4 } else { 4 + 2 * i })? as i16;
@@ -1311,7 +1323,21 @@ impl<'a> Dmd<'a> {
                 } else {
                     [0., 0.]
                 };
+                let normal = if let Some(table) = normals {
+                    let at = normal_indices + if normal_count == 1 { 0 } else { 2 * i };
+                    let index = u16le(record, at)? as i16;
+                    let address = table
+                        .checked_add_signed(8 * isize::from(index))
+                        .ok_or_else(|| anyhow::anyhow!("normal outside DMD"))?;
+                    let value = bytes(self.data, address, 6)?;
+                    Some(std::array::from_fn(|axis| {
+                        i16::from_le_bytes([value[2 * axis], value[2 * axis + 1]])
+                    }))
+                } else {
+                    None
+                };
                 vertices.push(Vertex {
+                    normal,
                     local,
                     position,
                     uv,
@@ -1404,6 +1430,35 @@ mod tests {
         assert_eq!(p.vertices[1].uv, [3., 4.]);
         assert_eq!(p.texture.unwrap().clut, 4);
         assert_eq!(p.vertices[0].color, [1.; 4]);
+        assert!(p.vertices.iter().all(|v| v.normal.is_none()));
+
+        // The normal indices follow the UV words, independently of the color count.
+        d.resize(208, 0);
+        d[40..44].copy_from_slice(&(base + 184).to_le_bytes());
+        d[130] = 10;
+        let flags = (3u32 << 16) | (3 << 19) | (4 << 24) | (1 << 28);
+        d[140..144].copy_from_slice(&flags.to_le_bytes());
+        for (i, (index, x)) in [(2u16, 320i16), (0, -241), (1, 150)]
+            .into_iter()
+            .enumerate()
+        {
+            let at = 160 + 2 * i;
+            d[at..at + 2].copy_from_slice(&index.to_le_bytes());
+            let at = 184 + 8 * usize::from(index);
+            d[at..at + 2].copy_from_slice(&x.to_le_bytes());
+        }
+        let normals = |data: &[u8]| {
+            Dmd::parse(data).unwrap().extract_kind(1).unwrap().polygons[0]
+                .vertices
+                .iter()
+                .map(|v| v.normal)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(normals(&d), [320, -241, 150].map(|x| Some([x, 0, 0])));
+        d[140..144].copy_from_slice(&(flags - (2 << 19)).to_le_bytes());
+        assert_eq!(normals(&d), [Some([320, 0, 0]); 3]);
+        d[147] |= 1;
+        assert_eq!(normals(&d), [None; 3]);
         d[134..136].copy_from_slice(&(-1i16).to_le_bytes());
         assert!(Dmd::parse(&d).unwrap().extract_kind(1).is_err());
     }

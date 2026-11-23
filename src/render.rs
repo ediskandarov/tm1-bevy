@@ -931,15 +931,39 @@ pub fn mirror_display(
     .extend(0.75);
 }
 
-// LIGHT.c uses three directional lights of the same color in each special
-// environment. Approximate their intensity over the baked vertex colors.
-fn body_light_color(env: u8) -> [f32; 3] {
-    let channels = match env {
-        1 => [255, 0, 0],
-        2 => [60, 140, 170],
-        _ => return [1.; 3],
+type LightMatrix = [[i16; 3]; 3];
+const WORLD_LIGHT: LightMatrix = [[617, -3494, 2046], [-3425, 1982, 1056], [3332, 1928, 1398]];
+
+fn rotate_light(light: LightMatrix, rotation: LightMatrix) -> LightMatrix {
+    light.map(|row| {
+        rotation.map(|axis| {
+            let dot = (0..3)
+                .map(|i| i64::from(axis[i]) * i64::from(row[i]))
+                .sum::<i64>();
+            (dot >> 12).clamp(-32768, 32767) as i16
+        })
+    })
+}
+
+fn lit_rgb(rgb: [i32; 3], normal: [i16; 3], light: LightMatrix, env: u8) -> [i32; 3] {
+    // NCCS clamps IR after both matrix products, then modulates the source RGB.
+    let incidence = light.map(|row| {
+        let dot = (0..3)
+            .map(|i| i32::from(row[i]) * i32::from(normal[i]))
+            .sum::<i32>();
+        (dot >> 12).clamp(0, 32767)
+    });
+    let (ambient, colors) = match env {
+        1 => (32, [[255; 3], [0; 3], [0; 3]]),
+        2 => (32, [[60; 3], [140; 3], [170; 3]]),
+        3 => (256, [[256, 0, 0]; 3]),
+        _ => (32, [[200, 128, 60], [200, 75, 128], [200, 75, 60]]),
     };
-    channels.map(|c| (32 + c) as f32 / 160.)
+    std::array::from_fn(|k| {
+        let sum = (0..3).map(|i| colors[k][i] * incidence[i]).sum::<i32>();
+        let intensity = (ambient * 16 + (sum >> 8)).clamp(0, 32767);
+        (rgb[k] * intensity >> 12).min(255)
+    })
 }
 
 fn packet_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
@@ -1057,7 +1081,10 @@ fn battle_hierarchy<'a>(
                     -pose.origin.z as i32,
                     pose.origin.y as i32,
                 ];
-                let slot = pass.coordinate_system(world_frame.child(position, Some(pose.matrix)));
+                let slot = pass.coordinate_system(
+                    world_frame.child(position, Some(pose.matrix)),
+                    Some(pose.matrix),
+                );
                 pass.traverse(
                     Source::Scene {
                         car: Some(car),
@@ -1090,6 +1117,7 @@ fn battle_hierarchy<'a>(
                 if !mirror && let Some(sky) = &arena.sky {
                     let slot = pass.coordinate_system(
                         world_frame.child([sky_origin.x as i32, -sky_origin.z as i32, 0], None),
+                        None,
                     );
                     pass.traverse(
                         Source::Scene {
@@ -1107,7 +1135,7 @@ fn battle_hierarchy<'a>(
                 }
             }
             HierarchyItem::Backdrop => {
-                let slot = pass.coordinate_system(world_frame);
+                let slot = pass.coordinate_system(world_frame, None);
                 pass.traverse(
                     Source::Scene {
                         car: None,
@@ -1124,7 +1152,7 @@ fn battle_hierarchy<'a>(
             }
             HierarchyItem::Trail(trail) => {
                 let frame = world_frame.child(trail.origin, None);
-                let slot = pass.coordinate_system(frame);
+                let slot = pass.coordinate_system(frame, None);
                 pass.object(
                     Source::Trail(trail),
                     0..trail.faces().len(),
@@ -1137,6 +1165,7 @@ fn battle_hierarchy<'a>(
                     std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
                 let slot = pass.coordinate_system(
                     world_frame.child([pose[1], pose[2], pose[3]], Some(rotation)),
+                    Some(rotation),
                 );
                 pass.traverse(
                     Source::Actor(model, pose),
@@ -1325,7 +1354,8 @@ fn draw_view(
                            depths: [u32; 4],
                            screen: [[i32; 2]; 4],
                            slot: usize,
-                           tint: [f32; 3]| {
+                           light: LightMatrix,
+                           env: u8| {
         let n = p.vertices.len();
         let Some((raw, bucket)) = hierarchy_bucket(n, depths, p.fixed_ot) else {
             return;
@@ -1334,12 +1364,13 @@ fn draw_view(
         let scale = if p.texture.is_some() { 128. } else { 255. };
         let corners: [PacketCorner; 4] = std::array::from_fn(|i| {
             let v = &p.vertices[i.min(n - 1)];
+            let base = std::array::from_fn(|k| (v.color[k] * scale).round() as i32);
             PacketCorner {
                 xy: screen[i],
                 uv: v.uv.map(|u| u as i32),
-                rgb: std::array::from_fn(|k| {
-                    (v.color[k] * tint[k] * scale).round().clamp(0., 255.) as i32
-                }),
+                rgb: v
+                    .normal
+                    .map_or(base, |normal| lit_rgb(base, normal, light, env)),
             }
         });
         let subdivide =
@@ -1421,8 +1452,17 @@ fn draw_view(
                     }) else {
                         continue;
                     };
-                    let tint = car.map_or([1.; 3], |slot| body_light_color(lights[slot]));
-                    submit_face(&mut batch, p, points, depths, screen, slot, tint);
+                    let env = car.map_or(0, |slot| lights[slot]);
+                    submit_face(
+                        &mut batch,
+                        p,
+                        points,
+                        depths,
+                        screen,
+                        slot,
+                        pass.lights[object.slot],
+                        env,
+                    );
                 }
             }
             Source::Trail(trail) => {
@@ -1499,7 +1539,16 @@ fn draw_view(
                         continue;
                     };
                     let slot = arena.tiles[&(p.texture, p.semi_transparent)];
-                    submit_face(&mut batch, p, points, depths, screen, slot, [1.; 3]);
+                    submit_face(
+                        &mut batch,
+                        p,
+                        points,
+                        depths,
+                        screen,
+                        slot,
+                        pass.lights[object.slot],
+                        0,
+                    );
                 }
             }
         }
@@ -3652,7 +3701,7 @@ mod tests {
         let mut pass = hierarchy::Pass::new(root, true);
         for _ in 0..4 {
             cpu.call(0x800fd914, &[0x80008000, group]);
-            let slot = pass.coordinate_system(root);
+            let slot = pass.coordinate_system(root, None);
             pass.traverse((), &scene, 0, 0, slot, 1200, true, &test_branches());
             let count = cpu.word(0x8018c484);
             assert_eq!(pass.objects.len(), count as usize);
