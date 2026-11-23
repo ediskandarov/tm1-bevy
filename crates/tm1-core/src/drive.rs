@@ -1000,6 +1000,50 @@ fn hover_requests(
         .chain(closest.map(|p| (HoverSound::Motor, p)))
 }
 
+/// Position from the hierarchy stack and the third row of its active GTE matrix.
+#[derive(Clone, Copy)]
+pub struct HierarchyDepth {
+    pub row: [i32; 3],
+    pub position: [i32; 3],
+}
+
+impl HierarchyDepth {
+    pub fn child(self, offset: [i32; 3], rotation: Option<[[i16; 3]; 3]>) -> Self {
+        let position = std::array::from_fn(|i| self.position[i].wrapping_add(offset[i]));
+        let Some(rotation) = rotation else {
+            return Self { position, ..self };
+        };
+        let local = crate::math::multiply(
+            &crate::math::Matrix {
+                rotation,
+                ..Default::default()
+            },
+            position,
+            false,
+        );
+        let row = rotation.map(|axis| {
+            let sum: i32 = axis
+                .into_iter()
+                .zip(self.row)
+                .map(|(a, b)| i32::from(a) * b)
+                .sum();
+            (sum >> 12).clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+        });
+        Self {
+            row,
+            position: local,
+        }
+    }
+
+    pub fn translation(self) -> i32 {
+        self.row
+            .into_iter()
+            .zip(self.position)
+            .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
+            / 4096
+    }
+}
+
 impl SoundListener {
     pub fn new(car: &PlayerVehicle, camera: &VehicleCamera, helicopter: Option<[i32; 5]>) -> Self {
         Self::for_view(car, camera, helicopter, false)
@@ -1067,40 +1111,11 @@ impl SoundListener {
         (self.eye, self.matrix[2], self.matrix[1])
     }
 
-    /// Depth row and integer translation installed by viewProc for the world hierarchy.
-    pub fn world_depth_transform(&self) -> ([i32; 3], i32) {
-        (self.matrix[2], self.effect_coordinates([0; 3])[2])
-    }
-
-    /// Depth registers for a child of the world CS after csUpdMat.
-    pub fn model_depth_transform(
-        &self,
-        position: [i32; 3],
-        rotation: [[i16; 3]; 3],
-    ) -> ([i32; 3], i32) {
-        let relative = std::array::from_fn(|i| position[i].wrapping_sub(self.eye[i]));
-        let local = crate::math::multiply(
-            &crate::math::Matrix {
-                rotation,
-                ..Default::default()
-            },
-            relative,
-            false,
-        );
-        let row = rotation.map(|axis| {
-            let sum: i32 = axis
-                .into_iter()
-                .zip(self.matrix[2])
-                .map(|(a, b)| i32::from(a) * b)
-                .sum();
-            (sum >> 12).clamp(i32::from(i16::MIN), i32::from(i16::MAX))
-        });
-        let translation = row
-            .into_iter()
-            .zip(local)
-            .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
-            / 4096;
-        (row, translation)
+    pub fn hierarchy_depth(&self) -> HierarchyDepth {
+        HierarchyDepth {
+            row: self.matrix[2],
+            position: self.eye.map(i32::wrapping_neg),
+        }
     }
 
     /// WEAPON and EXPLODE transform each point with mathMulVec before perspective division.

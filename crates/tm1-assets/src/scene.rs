@@ -10,6 +10,7 @@ pub struct TextureKey {
 }
 #[derive(Clone, Debug)]
 pub struct Vertex {
+    pub local: [i16; 3],
     pub position: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
@@ -79,6 +80,7 @@ pub enum Wheel {
 }
 #[derive(Clone, Debug)]
 pub struct Polygon {
+    pub transform_index: usize,
     pub animation: Vec<AnimationFrame>,
     pub lod_dependent: bool,
     pub wheel: Option<Wheel>,
@@ -164,7 +166,16 @@ impl LevelOfDetail {
 }
 
 #[derive(Debug)]
+pub struct NodeTransform {
+    pub parent: usize,
+    pub offset: [i32; 3],
+    pub rotation: Option<[[i16; 3]; 3]>,
+    pub truck_wheel: bool,
+}
+
+#[derive(Debug)]
 pub struct Scene {
+    pub transforms: Vec<NodeTransform>,
     pub version: u32,
     pub root_id: u32,
     pub polygons: Vec<Polygon>,
@@ -178,11 +189,13 @@ pub struct Scene {
 
 #[derive(Clone, Copy, Debug)]
 struct Transform {
+    index: usize,
     axes: [[f32; 3]; 3],
     offset: [f32; 3],
 }
 impl Transform {
     const IDENTITY: Self = Self {
+        index: 0,
         axes: [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
         offset: [0.; 3],
     };
@@ -609,6 +622,7 @@ impl<'a> Dmd<'a> {
         include_lods: bool,
     ) -> Result<Scene> {
         let mut scene = Scene {
+            transforms: Vec::new(),
             version: self.version,
             root_id,
             polygons: vec![],
@@ -768,16 +782,23 @@ impl<'a> Dmd<'a> {
             4 => {
                 bytes(d, p, 20)?;
                 if d[p + 19] & 2 == 0 {
-                    let mut offset = [0.; 3];
+                    let mut offset = [0; 3];
                     for (axis, value) in offset.iter_mut().enumerate() {
-                        *value = u32le(d, p + 4 + 4 * axis)? as i32 as f32;
+                        *value = u32le(d, p + 4 + 4 * axis)? as i32;
                     }
                     if (401..=450).contains(&u16le(d, p + 2)?)
                         && (1..=50).contains(&u16le(d, p + 16)?)
                     {
                         pickup = Some((u16le(d, p + 16)? - 1) as u8);
                     }
-                    transform.offset = transform.apply(offset);
+                    scene.transforms.push(NodeTransform {
+                        parent: transform.index,
+                        offset,
+                        rotation: None,
+                        truck_wheel: false,
+                    });
+                    transform.index = scene.transforms.len();
+                    transform.offset = transform.apply(offset.map(|v| v as f32));
                     list(d[p + 18] as usize, p + 20)?;
                 }
             }
@@ -785,18 +806,20 @@ impl<'a> Dmd<'a> {
                 bytes(d, p, 40)?;
                 if d[p + 39] & 2 == 0 {
                     let parent = transform;
-                    let mut offset = [0.; 3];
+                    let mut rotation = [[0; 3]; 3];
+                    let mut offset = [0; 3];
                     for (axis, value) in offset.iter_mut().enumerate() {
-                        *value = u32le(d, p + 24 + 4 * axis)? as i32 as f32;
+                        *value = u32le(d, p + 24 + 4 * axis)? as i32;
                         let mut column = [0.; 3];
                         for (row, c) in column.iter_mut().enumerate() {
-                            *c = u16le(d, p + 4 + 2 * (axis * 3 + row))? as i16 as f32 / 4096.;
+                            rotation[axis][row] = u16le(d, p + 4 + 2 * (axis * 3 + row))? as i16;
+                            *c = f32::from(rotation[axis][row]) / 4096.;
                         }
                         for (row, c) in parent.rotate(column).into_iter().enumerate() {
                             transform.axes[row][axis] = c;
                         }
                     }
-                    transform.offset = parent.apply(offset);
+                    transform.offset = parent.apply(offset.map(|v| v as f32));
                     if battle_body && u16le(d, p + 2)? == 42 && (1..=4).contains(&u16le(d, p + 36)?)
                     {
                         // The original replaces the node rotation while retaining its translation.
@@ -806,6 +829,13 @@ impl<'a> Dmd<'a> {
                             axis: parent.rotate([1., 0., 0.]),
                         });
                     }
+                    scene.transforms.push(NodeTransform {
+                        parent: parent.index,
+                        offset,
+                        rotation: Some(rotation),
+                        truck_wheel: wheel.is_some(),
+                    });
+                    transform.index = scene.transforms.len();
                     list(d[p + 38] as usize, p + 40)?;
                 }
             }
@@ -1027,9 +1057,9 @@ impl<'a> Dmd<'a> {
                 let index = u16le(record, if billboard.is_some() { 4 } else { 4 + 2 * i })? as i16;
                 ensure!(index >= 0, "negative vertex index");
                 let v = bytes(self.data, verts + index as usize * 8, 8)?;
-                let position = transform.apply(std::array::from_fn(|axis| {
-                    i16::from_le_bytes([v[2 * axis], v[2 * axis + 1]]) as f32
-                }));
+                let local =
+                    std::array::from_fn(|axis| i16::from_le_bytes([v[2 * axis], v[2 * axis + 1]]));
+                let position = transform.apply(local.map(f32::from));
                 let c = bytes(record, 16 + if colors == 1 { 0 } else { i * 4 }, 4)?;
                 let divisor = if textured { 128. } else { 255. };
                 let color = if textured && command & 1 != 0 {
@@ -1049,12 +1079,14 @@ impl<'a> Dmd<'a> {
                     [0., 0.]
                 };
                 vertices.push(Vertex {
+                    local,
                     position,
                     uv,
                     color,
                 });
             }
             scene.polygons.push(Polygon {
+                transform_index: transform.index,
                 animation: Vec::new(),
                 lod_dependent: false,
                 wheel: None,

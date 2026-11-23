@@ -18,6 +18,7 @@ use tm1_assets::{
 use bevy::camera::visibility::RenderLayers;
 
 struct BodyGeometry {
+    transforms: Vec<tm1_assets::scene::NodeTransform>,
     polygons: std::ops::Range<usize>,
     lods: Vec<tm1_assets::scene::LevelOfDetail>,
 }
@@ -184,6 +185,7 @@ impl Arena {
                     let start = scene.polygons.len();
                     scene.polygons.extend(variant.polygons);
                     BodyGeometry {
+                        transforms: variant.transforms,
                         polygons: start..scene.polygons.len(),
                         lods: variant.lods.unwrap_or_default(),
                     }
@@ -986,8 +988,8 @@ fn draw_view(
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let depth = if let Some(view) = view {
-        let (row, translation) = view.world_depth_transform();
-        GeometryDepth::from_world_matrix(row, translation)
+        let root = view.hierarchy_depth();
+        GeometryDepth::from_world_matrix(root.row, root.translation())
     } else {
         let axis = (forward * axis_scale).as_dvec3();
         GeometryDepth {
@@ -997,9 +999,15 @@ fn draw_view(
     };
     let wheel_steps = contacts.wheel_steps(secondary);
     let lights = contacts.car_lights(secondary);
-    let [sin, cos] = player
-        .wheel_sin_cos(wheel_steps[4])
-        .map(|n| f32::from(n) / 4096.);
+    let wheel_rotation = player.wheel_sin_cos(wheel_steps[4]);
+    let [sin, cos] = wheel_rotation.map(|n| f32::from(n) / 4096.);
+    let world_depths = view.map(|view| {
+        GeometryDepth::hierarchy(
+            view.hierarchy_depth(),
+            &arena.scene.transforms,
+            wheel_rotation,
+        )
+    });
     let wheel_vertex = |p, wheel| {
         if let Some(Wheel::Hammerhead { pivot, axis }) = wheel {
             let axis = Vec3::from_array(axis);
@@ -1056,16 +1064,20 @@ fn draw_view(
     let mut hidden_geometry = vec![false; arena.scene.polygons.len()];
     let mut car_depths = Vec::with_capacity(poses.len());
     for (stages, pose) in arena.body_ranges.iter().zip(poses) {
+        let body = &stages[pose.body_stage];
         if let Some(view) = view {
             let pos = [
                 pose.origin.x as i32,
                 -pose.origin.z as i32,
                 pose.origin.y as i32,
             ];
-            let (row, translation) = view.model_depth_transform(pos, pose.matrix);
-            car_depths.push(GeometryDepth::from_world_matrix(row, translation));
+            let root = view.hierarchy_depth().child(pos, Some(pose.matrix));
+            car_depths.push(GeometryDepth::hierarchy(
+                root,
+                &body.transforms,
+                wheel_rotation,
+            ));
         }
-        let body = &stages[pose.body_stage];
         let delta = pose.origin - eye;
         let matrix = tm1_core::math::Matrix {
             rotation: pose.matrix,
@@ -1143,6 +1155,9 @@ fn draw_view(
                 .body_ranges
                 .partition_point(|ranges| ranges[2].polygons.end <= i)
         });
+        let node_depth = car
+            .map_or(world_depths.as_ref(), |slot| car_depths.get(slot))
+            .map(|table| table[p.transform_index]);
         let mut points = [Vec3::ZERO; 4];
         let mut depths = [0; 4];
         for (corner, vertex) in p.vertices.iter().enumerate() {
@@ -1159,8 +1174,8 @@ fn draw_view(
                 world(local)
             };
             points[corner] = billboard_point(center, p.billboard, corner);
-            depths[corner] = if let Some(transform) = car.and_then(|slot| car_depths.get(slot)) {
-                transform.vertex(world(local).to_array())
+            depths[corner] = if let Some(transform) = node_depth {
+                transform.vertex(world(vertex.local.map(f32::from)).to_array())
             } else {
                 depth.vertex(points[corner].to_array())
             };
@@ -1253,9 +1268,10 @@ fn draw_view(
         let model_depth = view.map(|view| {
             let rotation =
                 std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
-            let (row, translation) =
-                view.model_depth_transform([pose[1], pose[2], pose[3]], rotation);
-            GeometryDepth::from_world_matrix(row, translation)
+            let root = view
+                .hierarchy_depth()
+                .child([pose[1], pose[2], pose[3]], Some(rotation));
+            GeometryDepth::hierarchy(root, &model.transforms, wheel_rotation)
         });
         for p in &model.polygons {
             if p.animation
@@ -1273,8 +1289,8 @@ fn draw_view(
                         .sum()
                 });
                 points[corner] = billboard_point(origin + world(rotated), p.billboard, corner);
-                depths[corner] = if let Some(transform) = model_depth {
-                    transform.vertex(world(vertex.position).to_array())
+                depths[corner] = if let Some(table) = &model_depth {
+                    table[p.transform_index].vertex(world(vertex.local.map(f32::from)).to_array())
                 } else {
                     depth.vertex(points[corner].to_array())
                 };
@@ -1944,6 +1960,27 @@ impl GeometryDepth {
             axis: world(row.map(|v| v as f32)).as_dvec3() / 4096.,
             translation: f64::from(translation),
         }
+    }
+
+    fn hierarchy(
+        root: tm1_core::drive::HierarchyDepth,
+        nodes: &[tm1_assets::scene::NodeTransform],
+        [sin, cos]: [i16; 2],
+    ) -> Vec<Self> {
+        let mut frames = Vec::with_capacity(nodes.len() + 1);
+        frames.push(root);
+        for node in nodes {
+            let rotation = if node.truck_wheel {
+                Some([[4096, 0, 0], [0, cos, sin], [0, -sin, cos]])
+            } else {
+                node.rotation
+            };
+            frames.push(frames[node.parent].child(node.offset, rotation));
+        }
+        frames
+            .into_iter()
+            .map(|frame| Self::from_world_matrix(frame.row, frame.translation()))
+            .collect()
     }
 
     fn vertex(self, point: [f32; 3]) -> u32 {
@@ -2762,6 +2799,81 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn hammerhead_wheel_depth_matches_hier_traverse() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let data = disc.read("UADMD/XARENA1.DMD").unwrap();
+        let db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let [body, _, _] = db.vehicle_bodies(40).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        cpu.put(base, &data);
+        let cs = 0x80008000;
+        let parent = tm1_core::drive::HierarchyDepth {
+            row: [1513, -3097, 947],
+            position: [77, -420, 151],
+        };
+        for (i, v) in parent.row.into_iter().enumerate() {
+            cpu.put(cs + 0x40 + 2 * i as u32, &(v as i16).to_le_bytes());
+        }
+        for (i, v) in parent.position.into_iter().enumerate() {
+            cpu.put(cs + 0x68 + 4 * i as u32, &v.to_le_bytes());
+        }
+        // Isolate traversal from frustum rejection and use the regular vehicle LOD setting.
+        cpu.put(0x800fe034, &[8, 0, 224, 3, 1, 0, 2, 36]);
+        cpu.call(0x800fe9a0, &[3]);
+        let root = db.roots.iter().find(|r| r.1 == 40).unwrap().0;
+        // Enter geomProc's EO translation block with the matrix in s5 and object in a1.
+        let jump = 0x08000000 | ((0x800f79a4u32 >> 2) & 0x03ffffff);
+        cpu.put(
+            0x80007000,
+            &[jump, 0x0080a821].map(u32::to_le_bytes).concat(),
+        );
+        for wheel in [[0i16, 4096], [1567, 3784], [-2896, 2896]] {
+            let [sin, cos] = wheel;
+            let rot = [4096, 0, 0, 0, cos, sin, 0, -sin, cos]
+                .map(i16::to_le_bytes)
+                .concat();
+            for i in (0..data.len() - 40).step_by(4) {
+                if data[i] == 5
+                    && data[i + 2..i + 4] == 42u16.to_le_bytes()
+                    && (1..=4).contains(&u16::from_le_bytes(
+                        data[i + 36..i + 38].try_into().unwrap(),
+                    ))
+                {
+                    cpu.put(base + i as u32 + 4, &rot);
+                }
+            }
+            cpu.put(0x8018c484, &[0; 12]);
+            cpu.call(0x800fd914, &[cs, root]);
+            let depths = GeometryDepth::hierarchy(parent, &body.transforms, wheel);
+            let mut pivots = std::collections::BTreeSet::new();
+            for i in 0..cpu.word(0x8018c484) {
+                let record = 0x801acfe8 + 32 * i;
+                let id = cpu.word(record);
+                let matrix = 0x801aeb70 + 32 * cpu.word(record + 24);
+                // geomProc installs the translation from this object's recorded position.
+                cpu.call_until(0x80007000, &[matrix, record], 0x800f7a94);
+                let row = [12, 14, 16]
+                    .map(|k| (cpu.word(matrix + (k & !3)) >> (8 * (k & 3))) as i16 as i32);
+                let translation = cpu.word(matrix + 28) as i32;
+                for p in body.polygons.iter().filter(|p| p.object_id == id) {
+                    let Some(Wheel::Hammerhead { pivot, .. }) = p.wheel else {
+                        continue;
+                    };
+                    if depths[p.transform_index].axis
+                        == GeometryDepth::from_world_matrix(row, translation).axis
+                        && depths[p.transform_index].translation == f64::from(translation)
+                    {
+                        pivots.insert(pivot.map(|v| v as i32));
+                    }
+                }
+            }
+            assert_eq!(pivots.len(), 4, "wheel {wheel:?}");
         }
     }
 
