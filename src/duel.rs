@@ -544,6 +544,7 @@ pub fn advance(
             tm1_core::drive::SoundListener::new(&duel.cars[1], &duel.cameras[1], None);
         duel.winner = duel.scene.step_duel(&mut duel.cars, input, 3);
         crate::driving::battle_audio(
+            duel.cars[0].frame(),
             &duel.scene,
             &listener,
             duel.settings.effects_volume(),

@@ -227,7 +227,7 @@ impl Sounds {
             .collect::<Result<_>>()?;
         let effects = battle_programs(vehicle, opponents)
             .enumerate()
-            .map(|(id, prog)| EffectTone::load(&bank, prog, id == 1 || prog == 38))
+            .map(|(id, prog)| EffectTone::load(&bank, prog, matches!(id, 1 | 6) || prog == 38))
             .collect::<Result<_>>()?;
         let player_engine = EngineSample::load(&bank, vehicle)?;
         let rival_engines = opponents
@@ -272,10 +272,34 @@ impl EngineTone {
 }
 #[derive(Component)]
 pub struct OneShot {
+    range: u32,
+    timed: Option<TimedVoice>,
     key: Option<crate::driving::ExclusiveVoice>,
     levels: pcm::Levels,
     order: u64,
     priority: u8,
+}
+
+// UA_SOUND requests mode 4 with a 960-update timeout for flamethrower ID 0x0f.
+#[derive(Clone, Copy)]
+struct TimedVoice {
+    start: u32,
+}
+impl TimedVoice {
+    fn from_request(request: &crate::driving::BattleRequest) -> Option<Self> {
+        use crate::driving::{BattleRequest, BattleSound, ExclusiveVoice};
+        match request {
+            BattleRequest::Play(BattleSound {
+                exclusive: Some(ExclusiveVoice::WeaponLaunch(7)),
+                frame,
+                ..
+            }) => Some(Self { start: *frame }),
+            _ => None,
+        }
+    }
+    fn expired(self, frame: u32) -> bool {
+        frame.wrapping_sub(self.start) >= 960
+    }
 }
 
 #[derive(Resource, Default)]
@@ -523,7 +547,7 @@ pub fn update(
     }
     *restart = drive.audio_restart_count;
     for (e, sink, shot) in &mut shots {
-        if reset || stop_battle {
+        if reset || stop_battle || shot.timed.is_some_and(|t| t.expired(frame)) {
             commands.entity(e).despawn();
             continue;
         }
@@ -531,8 +555,8 @@ pub fn update(
             entity: e,
             order: shot.order,
             priority: shot.priority,
-            range: 0,
-            finishing: true,
+            range: shot.range,
+            finishing: shot.timed.is_none(),
             engine: false,
         });
         if let Some(sink) = sink {
@@ -560,7 +584,7 @@ pub fn update(
         .iter()
         .filter_map(|(entity, _, shot)| {
             shot.key
-                .filter(|_| !reset)
+                .filter(|_| !reset && !shot.timed.is_some_and(|t| t.expired(frame)))
                 .map(|key| (key, entity, shot.levels.clone()))
         })
         .collect();
@@ -610,6 +634,8 @@ pub fn update(
                 .spawn((
                     crate::campaign::StageEntity,
                     OneShot {
+                        timed: TimedVoice::from_request(request),
+                        range,
                         key,
                         levels: control.clone(),
                         order,
@@ -723,6 +749,7 @@ mod tests {
         let mut requests: Vec<_> = (0..10)
             .map(|_| {
                 BattleRequest::Play(BattleSound {
+                    frame: 0,
                     id: 4,
                     exclusive: None,
                     volume_percent: 99,
@@ -887,20 +914,14 @@ mod tests {
         }
     }
 
-    #[test]
-    #[ignore = "requires the supported TM1_CUE"]
-    fn simultaneous_pedestrian_screams_share_retail_voices() {
-        use crate::campaign::{Campaign, Entry, Stage};
-        use crate::driving::{BattleRequest, BattleSound, Drive, effect_sample, effect_voice};
-
-        let mut world = crate::contest::menu_world();
-        let disc = &world.resource::<Campaign>().0;
+    fn retail_sound_cpu(disc: &Disc, id: u32) -> (crate::reference_cpu::Cpu, usize, usize) {
         let exe = disc.read("SIPS_600.07").unwrap();
         let mut cpu = crate::reference_cpu::Cpu::new(&exe);
-        let program_id = (cpu.word(0x8016fefc + 6 * 0x89 + 2) & 0xffff) as usize;
+        let at = (0x16fefc + 6 * id + 2) as usize;
+        let program_id = usize::from(u16::from_le_bytes(cpu.ram[at..at + 2].try_into().unwrap()));
         let tones = program(&disc.read("SND/UACORE.VAB").unwrap(), program_id).unwrap();
-        let single = 0x801963a8 + 28 * 0x89;
-        cpu.put(single, &0x89u32.to_le_bytes());
+        let single = 0x801963a8 + 28 * id;
+        cpu.put(single, &id.to_le_bytes());
         cpu.put(single + 4, &[tones.len() as u8, tones[0].program_volume]);
         cpu.put(single + 20, &1u32.to_le_bytes());
         cpu.put(0x8016fecc + 24, &(3357u32 * 3357).to_le_bytes());
@@ -922,6 +943,45 @@ mod tests {
             cpu.put(endpoint, &[8, 0, 224, 3, 0x21, 0x10, 0, 0]); // return zero
         }
         cpu.put(0x8016bbc8, &[8, 0, 224, 3, 0x21, 0x10, 0x80, 0]); // return chosen voice
+        (cpu, program_id, tones.len())
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn timed_flame_voice_matches_jp_sound_flushes() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let (mut cpu, _, _) = retail_sound_cpu(&disc, 0xf);
+        cpu.put(0x8016bfc0, &[8, 0, 224, 3, 0, 0, 0, 0]); // SDK key off
+        cpu.call(0x80107c6c, &[7, 31, 0]);
+        cpu.call(0x80105ebc, &[]);
+        // Keep the hardware voice on to exercise the timer to its full duration.
+        cpu.put(0x8016f674, &[8, 0, 224, 3, 1, 0, 2, 36]);
+        let start = u32::MAX - 500;
+        let timed = TimedVoice { start };
+        for elapsed in 0..=961 {
+            let tone = cpu.word(0x801963a8 + 28 * 0xf + 24);
+            assert_eq!(
+                timed.expired(start.wrapping_add(elapsed)),
+                tone == 0,
+                "flush {elapsed}"
+            );
+            if tone != 0 {
+                assert_eq!(cpu.word(tone + 0x4c), 960 - elapsed);
+                assert_eq!(cpu.word(tone + 0x74), 31);
+            }
+            cpu.call(0x80105ebc, &[]);
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn simultaneous_pedestrian_screams_share_retail_voices() {
+        use crate::campaign::{Campaign, Entry, Stage};
+        use crate::driving::{BattleRequest, BattleSound, Drive, effect_sample, effect_voice};
+
+        let mut world = crate::contest::menu_world();
+        let disc = &world.resource::<Campaign>().0;
+        let (mut cpu, program_id, count_tones) = retail_sound_cpu(disc, 0x89);
         let stage = Stage::load(
             disc,
             Level::Warehouse,
@@ -937,6 +997,7 @@ mod tests {
             for _ in 0..count {
                 cpu.call(0x801085d0, &[]);
                 requests.push(BattleRequest::Play(BattleSound {
+                    frame: 0,
                     id,
                     exclusive: effect_voice(36),
                     volume_percent: 99,
@@ -958,7 +1019,7 @@ mod tests {
                 .iter(&world)
                 .collect();
             voices.sort();
-            assert_eq!(voices.len(), tones.len());
+            assert_eq!(voices.len(), count_tones);
             assert_eq!(
                 voices.iter().filter(|v| !previous.contains(*v)).count(),
                 key_ons
@@ -985,6 +1046,7 @@ mod tests {
         let hover = ExclusiveVoice::HoverGuns;
         let play = |key| {
             BattleRequest::Play(BattleSound {
+                frame: 0,
                 id: 1,
                 exclusive: Some(key),
                 volume_percent: 99,
@@ -1035,6 +1097,7 @@ mod tests {
         crate::campaign::replace(&mut world, stage);
         world.resource_mut::<Drive>().sounds = (0..10)
             .map(|i| BattleSound {
+                frame: 0,
                 id: 4,
                 exclusive: None,
                 volume_percent: 99,
@@ -1416,6 +1479,7 @@ mod tests {
         crate::campaign::replace(&mut world, stage);
         let impact = |channels| {
             crate::driving::BattleRequest::Play(BattleSound {
+                frame: 0,
                 range: 0,
                 channels,
                 exclusive: Some(ExclusiveVoice::ScaledEffect(103)),

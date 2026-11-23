@@ -39,6 +39,7 @@ pub enum BattleRequest {
 }
 
 pub struct BattleSound {
+    pub frame: u32,
     pub volume_percent: i32,
     pub exclusive: Option<ExclusiveVoice>,
     pub id: usize,
@@ -61,6 +62,7 @@ pub(crate) fn effect_voice(kind: i32) -> Option<ExclusiveVoice> {
         54 => Some(ExclusiveVoice::ScaledEffect(4)),
         55 | 56 => Some(ExclusiveVoice::ScaledEffect(104)),
         29 | 30 | 33 | 37 => Some(ExclusiveVoice::ScaledEffect(105)),
+        11 => Some(ExclusiveVoice::WeaponLaunch(7)),
         26 => Some(ExclusiveVoice::Recharge),
         36 => Some(ExclusiveVoice::Scream),
         401..=406 | 410..=414 | 430 => Some(ExclusiveVoice::Pickup(kind)),
@@ -148,6 +150,15 @@ impl BattleQueue {
             }
         } else if self.remaining > 0 {
             self.remaining -= 1;
+            // SOUND.c mode 4 replaces the active tones inside soundProcessIds.
+            // A full queue discards the play request before it can stop the old voice.
+            if let BattleRequest::Play(BattleSound {
+                exclusive: Some(ExclusiveVoice::WeaponLaunch(7)),
+                ..
+            }) = &request
+            {
+                emit(BattleRequest::Stop(ExclusiveVoice::WeaponLaunch(7)));
+            }
             emit(request);
         } else if let BattleRequest::EngineRev(slot, _) = request {
             emit(BattleRequest::EngineDeferred(slot));
@@ -158,6 +169,7 @@ impl BattleQueue {
 // Deliver requests as they were emitted by the simulation. A rendering frame can
 // contain several steps, so each call finishes the pending hover motor request.
 pub(crate) fn battle_audio(
+    frame: u32,
     scene: &CollisionScene,
     listener: &tm1_core::drive::SoundListener,
     volume: u8,
@@ -178,6 +190,7 @@ pub(crate) fn battle_audio(
         };
         let centered = |id, exclusive, volume_percent| {
             BattleRequest::Play(BattleSound {
+                frame,
                 id,
                 exclusive,
                 volume_percent,
@@ -187,6 +200,7 @@ pub(crate) fn battle_audio(
         };
         let play = |id, exclusive, volume_percent, position, full_range| {
             BattleRequest::Play(BattleSound {
+                frame,
                 id,
                 exclusive,
                 volume_percent,
@@ -276,7 +290,6 @@ pub(crate) fn battle_audio(
                     let restart = match kind {
                         10 => Some(ExclusiveVoice::SpecialLaunch(car(0))),
                         18..=25 => Some(ExclusiveVoice::SpecialLaunch(car((kind - 17) as usize))),
-                        11 => Some(ExclusiveVoice::WeaponLaunch(7)),
                         _ => None,
                     };
                     if let Some(key) = restart {
@@ -996,6 +1009,7 @@ pub fn advance(
             state.mirror,
         );
         battle_audio(
+            state.player.frame(),
             &state.contacts,
             &state.listener,
             state.settings.effects_volume(),
@@ -1045,6 +1059,55 @@ pub fn advance(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn flamethrower_retrigger_uses_one_retail_queue_entry() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(0x8016fecc + 24, &(3357u32 * 3357).to_le_bytes());
+        for fill in 41..=46 {
+            cpu.put(0x8018bf7c, &u32::MAX.to_le_bytes());
+            let mut queue = BattleQueue::new();
+            let mut actual = Vec::new();
+            for _ in 0..fill {
+                cpu.call(0x80106d60, &[0x82, 0, 0, 0, 0, 0]);
+                queue.submit(BattleRequest::Turbo, &mut |_| {});
+            }
+            for _ in 0..2 {
+                cpu.call(0x80107c6c, &[7, 0, 0]);
+                queue.submit(
+                    BattleRequest::Play(BattleSound {
+                        frame: 0,
+                        exclusive: effect_voice(11),
+                        id: 6,
+                        volume_percent: 99,
+                        channels: [33; 2],
+                        range: 0,
+                    }),
+                    &mut |r| {
+                        actual.push(match r {
+                            BattleRequest::Stop(ExclusiveVoice::WeaponLaunch(7)) => 0,
+                            BattleRequest::Play(_) => 1,
+                            _ => unreachable!(),
+                        })
+                    },
+                );
+            }
+            cpu.call(0x80106d60, &[0x82, 0, 0, 0, 0, 0]);
+            queue.submit(BattleRequest::Turbo, &mut |_| actual.push(2));
+            let mut expected = Vec::new();
+            for i in fill..cpu.word(0x8018bf7c) {
+                let at = 0x801984e8 + 28 * i;
+                match (cpu.word(at), cpu.word(at + 12), cpu.word(at + 24)) {
+                    (0xf, 4, 2) => expected.extend([0, 1]),
+                    (0x82, 0, 2) => expected.push(2),
+                    packet => panic!("unexpected sound request {packet:?}"),
+                }
+            }
+            assert_eq!(actual, expected, "prior requests {fill}");
+        }
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn battle_queue_matches_retail_at_the_last_request() {
@@ -1294,6 +1357,7 @@ mod tests {
                 .resource_mut::<Drive>()
                 .sounds
                 .push(BattleRequest::Play(BattleSound {
+                    frame: 0,
                     id: 4,
                     exclusive: None,
                     volume_percent: 99,

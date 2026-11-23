@@ -1,7 +1,7 @@
 //! Tone allocation for the shared SPU during split-screen play.
 use super::{
-    Candidate, EffectTone, EngineSample, Sample, TURBO_PROGRAM, VoiceSequence, battle_programs,
-    pcm::Levels, pcm::StereoPcm, rank_voices,
+    Candidate, EffectTone, EngineSample, Sample, TURBO_PROGRAM, TimedVoice, VoiceSequence,
+    battle_programs, pcm::Levels, pcm::StereoPcm, rank_voices,
 };
 use crate::{
     campaign::StageEntity,
@@ -32,6 +32,7 @@ pub struct DuelEngine {
 
 #[derive(Component)]
 pub struct Voice {
+    timed: Option<TimedVoice>,
     order: u64,
     priority: u8,
     distance: u32,
@@ -63,7 +64,7 @@ impl DuelBank {
             .collect();
         let programs = battle_programs(cars[0], &cars[1..])
             .enumerate()
-            .map(|(i, id)| EffectTone::load(bank, id, i == 1 || id == 38))
+            .map(|(i, id)| EffectTone::load(bank, id, matches!(i, 1 | 6) || id == 38))
             .collect::<Result<_>>()?;
         let mut menu = |id| -> Result<Handle<AudioSource>> {
             Ok(world
@@ -97,6 +98,7 @@ impl DuelBank {
                         register,
                     },
                     Voice {
+                        timed: None,
                         order: sequence.next(),
                         priority: layer.priority,
                         distance: 0,
@@ -157,6 +159,10 @@ pub fn mix(
     let mut groups = Vec::new();
     let restarted = sequence.update_engines(&duel.sounds);
     for (entity, mut voice, engine, audible) in &mut playing {
+        if voice.timed.is_some_and(|t| t.expired(frame)) {
+            commands.entity(entity).despawn();
+            continue;
+        }
         if let Some(engine) = engine {
             if sequence.engines_stopped[engine.slot] {
                 if audible {
@@ -179,7 +185,8 @@ pub fn mix(
         ranked.push(Candidate {
             entity,
             order: voice.order,
-            finishing: engine.is_none_or(|e| sequence.engines_deferred[e.slot]),
+            finishing: voice.timed.is_none()
+                && engine.is_none_or(|e| sequence.engines_deferred[e.slot]),
             priority: voice.priority,
             range: voice.distance,
             engine: engine.is_some(),
@@ -243,6 +250,7 @@ pub fn mix(
                     StageEntity,
                     DuelEffect,
                     Voice {
+                        timed: TimedVoice::from_request(request),
                         order,
                         priority: tone.priority,
                         distance,
@@ -658,6 +666,7 @@ mod tests {
         }
         let request = |id, exclusive, volume_percent, channels, range| {
             BattleRequest::Play(BattleSound {
+                frame: 0,
                 id,
                 exclusive,
                 volume_percent,

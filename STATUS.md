@@ -59,6 +59,8 @@ The cockpit reads the steering quad and texture coordinates from each stage DMD.
 
 ## Flamethrower launch audio
 
+Each flamethrower sound consumes one entry in the 45-request battle queue. An accepted play replaces its previous tones. A discarded play leaves those tones alone. The campaign and duel mixers keep a playing flame tone in the requested group at its launch range until the sample finishes, the voice is displaced or its 960-update timer expires. A disc-backed test compares queue behavior with 41 through 46 preceding requests. A second test holds the emulated SDK key status on and checks the timer and release against 962 successive JP sound states.
+
 A successful forward launch by Thumper or Minion plays the flamethrower and vehicle special from the collision model position plus the weapon direction. With all five emitters active, only the special plays, from the car position. A rear shot plays its launch sound even when the emitters are full and only consumes ammo if an emitter starts. A seven-shot JP replay checks both positions, request order and car state at several headings. The Rooftops boss replays check Minion’s sound positions during AI combat. Both game modes restart the shared flamethrower sound on each launch and replace each vehicle’s previous special voice. The disc program table supplies program 21 for the flamethrower, 49 for Thumper’s special and 56 for Minion’s special.
 
 ## Bullet rendering
