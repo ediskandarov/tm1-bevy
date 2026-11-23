@@ -942,9 +942,11 @@ mod tests {
         }
     }
 
-    fn retail_sound_cpu(disc: &Disc, id: u32) -> (crate::reference_cpu::Cpu, usize, usize) {
-        let exe = disc.read("SIPS_600.07").unwrap();
-        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+    fn load_retail_program(
+        cpu: &mut crate::reference_cpu::Cpu,
+        disc: &Disc,
+        id: u32,
+    ) -> (usize, Vec<tm1_assets::sound::Tone>) {
         let at = (0x16fefc + 6 * id + 2) as usize;
         let program_id = usize::from(u16::from_le_bytes(cpu.ram[at..at + 2].try_into().unwrap()));
         let tones = program(&disc.read("SND/UACORE.VAB").unwrap(), program_id).unwrap();
@@ -952,6 +954,13 @@ mod tests {
         cpu.put(single, &id.to_le_bytes());
         cpu.put(single + 4, &[tones.len() as u8, tones[0].program_volume]);
         cpu.put(single + 20, &1u32.to_le_bytes());
+        (program_id, tones)
+    }
+
+    fn retail_sound_cpu(disc: &Disc, id: u32) -> (crate::reference_cpu::Cpu, usize, usize) {
+        let exe = disc.read("SIPS_600.07").unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+        let (program_id, tones) = load_retail_program(&mut cpu, disc, id);
         cpu.put(0x8016fecc + 24, &(3357u32 * 3357).to_le_bytes());
         // Supply the disc tone attributes and stand in for the SDK audio device.
         for (index, tone) in tones.iter().enumerate() {
@@ -1068,6 +1077,64 @@ mod tests {
                 .iter(&world)
                 .any(|voice| voice.key == Some(key))
         );
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn jp_stop_flush_mutes_unused_channels_only_while_tones_remain() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let mut tone_count = 0;
+        for id in 0..128 {
+            if bank[32 + id * 16] != 0 {
+                for tone in program(&bank, id).unwrap() {
+                    assert_eq!(tone.adsr[1] & 0x3f, 0, "release bits in VAB program {id}");
+                    tone_count += 1;
+                }
+            }
+        }
+        assert_eq!(tone_count, 172);
+        for engine_running in [false, true] {
+            let (mut cpu, _, layers) = retail_sound_cpu(&disc, 0x12);
+            cpu.call(0x80107c6c, &[6, 0, 0]); // Catapult launch.
+            if engine_running {
+                let (_, engine_tones) = load_retail_program(&mut cpu, &disc, 0x4e);
+                assert_eq!(engine_tones.len(), 1);
+                cpu.call(0x80106d60, &[0x4e, 0, 0, 1, 30, 0]);
+            }
+            cpu.call(0x80105ebc, &[]);
+            let table = 0x196390;
+            let occupied = cpu.ram[table..table + 24].to_vec();
+            assert_eq!(
+                occupied.iter().filter(|&&slot| slot != 0).count(),
+                layers + usize::from(engine_running)
+            );
+            // The engine is still sounding at the second flush.
+            cpu.put(0x8016f674, &[8, 0, 224, 3, 1, 0, 2, 36]);
+            cpu.call(0x80107d18, &[6]);
+            let mut muted = Vec::new();
+            cpu.call_observed(0x80105ebc, &[], 0x80000080, |cpu| {
+                if cpu.pc() == 0x8016c494 {
+                    assert_eq!(&cpu.r[5..7], &[0, 0]);
+                    muted.push(cpu.r[4] as usize);
+                }
+            });
+            let slots = &cpu.ram[table..table + 24];
+            let released_mask = occupied
+                .iter()
+                .zip(slots)
+                .enumerate()
+                .filter(|(_, (before, after))| **before != 0 && **after == 0)
+                .fold(0u32, |mask, (slot, _)| mask | (1 << slot));
+            assert_eq!(released_mask.count_ones() as usize, layers);
+            // SsUtKeyOffV queues the bits in the SDK before the SPU transfer.
+            let sdk_key_off = (cpu.word(0x801f8510) & 0xffff) | (cpu.word(0x801f8518) << 16);
+            assert_eq!(sdk_key_off, released_mask);
+            let expected: Vec<_> = (0..24)
+                .filter(|&i| engine_running && slots[i] == 0)
+                .collect();
+            assert_eq!(muted, expected);
+        }
     }
 
     #[test]
