@@ -166,6 +166,7 @@ fn main() -> Result<()> {
         )),
         Some(flag) => anyhow::bail!("unknown argument: {flag:?}"),
     };
+    let fixed_capture = screenshot.is_some() && !realtime;
     let mut capture = smoke::Capture::new(screenshot, demo, realtime);
     capture.special_demo = special_demo;
     if demo
@@ -190,16 +191,21 @@ fn main() -> Result<()> {
         );
     }
     let mut app = App::new();
+    let mut plugins = DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window {
+            title: format!("TM1 • {level:?}"),
+            resolution: (1280, 800).into(),
+            ..default()
+        }),
+        ..default()
+    });
+    if cfg!(target_os = "macos") && fixed_capture {
+        // Window teardown on macOS can block the render thread after GPU readback.
+        plugins = plugins.disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>();
+    }
     app.insert_resource(capture)
         .insert_resource(campaign::Campaign(disc))
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: format!("TM1 • {level:?}"),
-                resolution: (1280, 800).into(),
-                ..default()
-            }),
-            ..default()
-        }));
+        .add_plugins(plugins);
     use bevy::audio::AddAudioSource;
     app.add_audio_source::<sfx::pcm::StereoPcm>();
     app.add_audio_source::<music::CdTrack>();
