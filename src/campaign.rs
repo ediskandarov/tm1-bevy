@@ -59,14 +59,15 @@ pub struct Stage {
     clear: ClearColor,
 }
 pub(crate) fn stage_clear_color(level: Level) -> ClearColor {
-    ClearColor(match level {
-        Level::Arena | Level::Arena5 => Color::srgb_u8(40, 40, 40),
-        Level::Rooftops => Color::srgb_u8(0, 20, 0),
-        Level::Cyburbia => Color::srgb_u8(110, 110, 100),
-        Level::CityPark => Color::srgb_u8(75, 60, 30),
-        Level::Freeway => Color::srgb_u8(60, 45, 20),
-        Level::Warehouse => Color::srgb_u8(75, 70, 55),
-    })
+    let command = match level {
+        Level::Arena | Level::Arena5 => [40, 40, 40],
+        Level::Rooftops => [0, 20, 0],
+        Level::Cyburbia => [110, 110, 100],
+        Level::CityPark => [75, 60, 30],
+        Level::Freeway => [60, 45, 20],
+        Level::Warehouse => [75, 70, 55],
+    };
+    ClearColor(render::flat_color(command, 255))
 }
 
 fn load_cockpit(
@@ -441,6 +442,56 @@ pub fn replace(world: &mut World, stage: Stage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn stage_clear_matches_both_retail_draw_environments() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        for (level, entry, stop) in [
+            (Level::Arena, 0x8014b7a4, 0x8014b8ec),
+            (Level::Arena5, 0x8014b7a4, 0x8014b8ec),
+            (Level::Warehouse, 0x8014b934, 0x8014ba84),
+            (Level::Freeway, 0x8014bacc, 0x8014bc1c),
+            (Level::CityPark, 0x8014bc68, 0x8014bdb0),
+            (Level::Cyburbia, 0x8014bdfc, 0x8014bf28),
+            (Level::Rooftops, 0x8014bf6c, 0x8014c0b4),
+        ] {
+            let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+            // Isolate the stage's background setup from camera and light creation.
+            // Those helpers return writable records. Execute viewSetBgColor in full.
+            for at in (entry..stop).step_by(4) {
+                let op = cpu.word(at);
+                if op >> 26 == 3 {
+                    let target = 0x80000000 | ((op & 0x03ffffff) << 2);
+                    if target != 0x8010ae48 {
+                        cpu.put(target, &0x03e00008u32.to_le_bytes());
+                        cpu.put(target + 4, &0x3c028001u32.to_le_bytes());
+                    }
+                }
+            }
+            let views = [0x80020000u32, 0x80021000];
+            cpu.put(0x8018bf98, &2u32.to_le_bytes());
+            for (i, db) in views.iter().enumerate() {
+                cpu.put(0x8018c514 + i as u32 * 4, &db.to_le_bytes());
+                cpu.put(*db, &[0xff; 0xb0]);
+            }
+            cpu.call_until(entry, &[], stop);
+            for db in views {
+                for offset in [0x28, 0xa8] {
+                    let [_, r, g, b] = cpu.word(db + offset).to_le_bytes();
+                    let expand = |c: u8| {
+                        let v = c / 8;
+                        v * 8 + v / 4
+                    };
+                    assert_eq!(
+                        stage_clear_color(level).0,
+                        Color::srgb_u8(expand(r), expand(g), expand(b)),
+                        "{level:?}"
+                    );
+                }
+            }
+        }
+    }
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn arena_five_registration_precedes_the_level_counter_reseed() {

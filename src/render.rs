@@ -540,6 +540,12 @@ pub fn boss_text(fonts: &tm1_assets::screen::Fonts, pixels: &mut [u8]) {
         fonts.centered(pixels, tm1_assets::screen::Face::Text, y, text);
     }
 }
+/// Expand the RGB555 framebuffer value of an untextured GPU command for display.
+pub(crate) fn flat_color(rgb: [u8; 3], alpha: u8) -> Color {
+    let [r, g, b] = rgb.map(|value| (value & 0xf8) | (value >> 5));
+    Color::srgba_u8(r, g, b, alpha)
+}
+
 pub fn battle_notice(
     window: Single<&Window>,
     drive: Res<crate::driving::Drive>,
@@ -552,7 +558,7 @@ pub fn battle_notice(
         *backdrop.0 = Visibility::Visible;
         let field = (elapsed.as_secs_f64() * 60.).floor() as u32 + 1;
         let red = 255 - (30 - field.min(30)) * 255 / 30;
-        backdrop.1.color = Color::srgba_u8(red as u8, 0, 0, 128);
+        backdrop.1.color = flat_color([red as u8, 0, 0], 128);
         backdrop.1.custom_size = size;
     }
     for (notice, mut visibility, mut sprite) in &mut notices {
@@ -634,7 +640,7 @@ pub fn hit_sheet(
         Visibility::Visible
     };
     sprite.custom_size = Some(Vec2::new(window.width(), window.height()));
-    sprite.color = Color::srgba_u8(r, g, b, a);
+    sprite.color = flat_color([r, g, b], a);
 }
 
 #[derive(Component, Default)]
@@ -1548,8 +1554,7 @@ impl Instruments<'_> {
         }
     }
     fn bar(&mut self, rect: [i32; 4], colors: [[u8; 3]; 2]) {
-        let colors =
-            colors.map(|[r, g, b]| Color::srgba_u8(r, g, b, 128).to_linear().to_f32_array());
+        let colors = colors.map(|rgb| flat_color(rgb, 128).to_linear().to_f32_array());
         self.quad(rect, [self.arena.uv(0, Vec2::ZERO); 4], colors);
     }
     fn sprite(&mut self, x: i32, y: i32, f: SpriteFrame, tint: [u8; 3], semi: bool) {
@@ -1701,8 +1706,7 @@ fn draw_radar(
             );
         }
     };
-    let color =
-        |[r, g, b]: [u8; 3], alpha| Color::srgba_u8(r, g, b, alpha).to_linear().to_f32_array();
+    let color = |rgb, alpha| flat_color(rgb, alpha).to_linear().to_f32_array();
     rect(16, 32, 73, 45, [white; 4], color([52, 113, 17], 128));
     rect(51, 55, 5, 1, [white; 4], color([0, 48, 0], 255));
     rect(53, 54, 1, 3, [white; 4], color([0, 48, 0], 255));

@@ -776,7 +776,7 @@ mod tests {
         let kinds = [Vehicle::YellowJacket, Vehicle::Outlaw];
         world.insert_resource(ClearColor(Color::WHITE));
         start(&mut world, Level::Rooftops, kinds, Difficulty::Hard, [2, 3]).unwrap();
-        assert_eq!(world.resource::<ClearColor>().0, Color::srgb_u8(0, 20, 0));
+        assert_eq!(world.resource::<ClearColor>().0, Color::srgb_u8(0, 16, 0));
         world.insert_resource(crate::smoke::Capture::new(None, false, false));
         world
             .resource_mut::<Time<Real>>()
