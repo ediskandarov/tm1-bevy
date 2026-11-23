@@ -5138,6 +5138,34 @@ fn arena_animation_matches_retail() {
             cpu.word(animation.node + 12) as u8
         );
     }
+    // Exercise both initial directions and stationary endpoints using the same DMD children.
+    let node = animation.node;
+    let base = u32::from_le_bytes(d[12..16].try_into().unwrap());
+    let offset = (node - base) as usize;
+    let lo = d[offset + 8];
+    let hi = d[offset + 9];
+    assert!(hi > lo);
+    for (initial, direction) in [(lo, 1), (hi, 255), (lo, 0), (hi, 0)] {
+        let mut model = d.clone();
+        model[offset + 10] = 1;
+        model[offset + 12] = initial;
+        model[offset + 13] = direction;
+        let arena = tm1_assets::scene::Dmd::parse(&model)
+            .unwrap()
+            .extract_kind(1)
+            .unwrap();
+        let animation = arena
+            .polygons
+            .iter()
+            .flat_map(|p| &p.animation)
+            .find(|a| a.node == node)
+            .unwrap();
+        cpu.put(base, &model);
+        for visits in 1..=512 {
+            cpu.call(0x800fe4f8, &[node]);
+            assert_eq!(animation.selected(visits), cpu.word(node + 12) as u8);
+        }
+    }
 }
 
 #[test]

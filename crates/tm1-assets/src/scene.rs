@@ -44,7 +44,7 @@ impl DashboardIcons {
             )
     }
 }
-/// One branch of a looping HIER animation, with its initial DMD clock.
+/// One branch of a HIER animation, with its initial DMD clock.
 #[derive(Clone, Copy, Debug)]
 pub struct AnimationFrame {
     pub node: u32,
@@ -52,6 +52,7 @@ pub struct AnimationFrame {
     lo: u8,
     hi: u8,
     initial: u8,
+    direction: Option<i8>,
     rate: u16,
     timer: u16,
 }
@@ -61,6 +62,24 @@ impl AnimationFrame {
             return self.initial;
         }
         let changes = (u64::from(visits) + u64::from(self.timer)) / (u64::from(self.rate) + 1);
+        if let Some(direction) = self.direction {
+            let span = u64::from(self.hi - self.lo);
+            if changes == 0 || (direction == 0 && self.initial > self.lo && self.initial < self.hi)
+            {
+                return self.initial;
+            }
+            let offset = u64::from(self.initial - self.lo);
+            let period = 2 * span;
+            let phase = if direction < 0 {
+                period - offset
+            } else {
+                offset
+            };
+            // A stationary endpoint acquires its inward direction on the first tick.
+            let steps = changes - u64::from(direction == 0);
+            let index = (phase + steps) % period;
+            return self.lo + index.min(period - index) as u8;
+        }
         let count = u64::from(self.hi - self.lo) + 1;
         self.lo + ((u64::from(self.initial - self.lo) + changes) % count) as u8
     }
@@ -905,7 +924,15 @@ impl<'a> Dmd<'a> {
                 ensure!(d[p + 12] < d[p + 11], "animation child out of range");
                 let (lo, hi, initial) = (d[p + 8], d[p + 9], d[p + 12]);
                 let (rate, timer) = (u16le(d, p + 6)?, u16le(d, p + 14)?);
-                if d[p + 10] == 1
+                let direction = (d[p + 10] == 1).then_some(d[p + 13] as i8);
+                let valid_direction = match direction {
+                    Some(1) => initial < hi,
+                    Some(-1) => initial > lo,
+                    Some(0) => hi > lo,
+                    None => true,
+                    _ => false,
+                };
+                if !valid_direction
                     || !(lo <= initial && initial <= hi && hi < d[p + 11] && timer <= rate)
                 {
                     children.push(u32le(d, p + 16 + 4 * usize::from(initial))?);
@@ -925,6 +952,7 @@ impl<'a> Dmd<'a> {
                             lo,
                             hi,
                             initial,
+                            direction,
                             rate,
                             timer,
                         };
