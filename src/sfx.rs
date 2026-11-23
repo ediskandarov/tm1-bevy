@@ -3,21 +3,13 @@ mod envelope;
 mod interpolation;
 pub mod pcm;
 use anyhow::Result;
-use bevy::{
-    audio::{AudioSinkPlayback, Volume},
-    prelude::*,
-};
+use bevy::{audio::AudioSinkPlayback, prelude::*};
 use tm1_assets::{disc::Disc, sound::program};
 
 #[derive(Component)]
-struct MenuButtonVoice(bool);
+pub(crate) struct MenuButtonVoice(pub bool);
 
-pub(crate) fn play_menu_button(
-    world: &mut World,
-    select: bool,
-    player: AudioPlayer,
-    gain: f32,
-) -> Entity {
+pub(crate) fn play_menu_button(world: &mut World, select: bool, player: AudioPlayer) -> Entity {
     // UA_SOUND requests cycle and select with mode 5: each restarts its own ID.
     let previous = world
         .query::<(Entity, &MenuButtonVoice)>()
@@ -27,21 +19,16 @@ pub(crate) fn play_menu_button(
         world.despawn(entity);
     }
     world
-        .spawn((
-            MenuButtonVoice(select),
-            player,
-            PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain)),
-        ))
+        .spawn((MenuButtonVoice(select), player, PlaybackSettings::DESPAWN))
         .id()
 }
 
 #[derive(Resource)]
 pub struct Sounds {
-    sources: Vec<AudioSource>,
+    menu: Vec<MenuSound>,
     turbo: Vec<EffectTone>,
     effects: Vec<Vec<EffectTone>>,
     rival_engines: Vec<Vec<EngineSample>>,
-    voices: Vec<Handle<AudioSource>>,
     player_engine: Vec<EngineSample>,
     screen_engine: Vec<Handle<pcm::StereoPcm>>,
     screen_levels: pcm::Levels,
@@ -122,18 +109,41 @@ fn sample_pitch(tone: &tm1_assets::sound::Tone, engine: bool) -> usize {
     })
     .clamp(1, usize::from(interpolation::MAX_STEP))
 }
+pub(crate) struct MenuSound {
+    tones: Vec<tm1_assets::sound::Tone>,
+    clips: std::collections::HashMap<u8, Handle<AudioSource>>,
+}
+
+impl MenuSound {
+    pub fn load(bank: &[u8], program_id: usize) -> Result<Self> {
+        Ok(Self {
+            tones: program(bank, program_id)?,
+            clips: Default::default(),
+        })
+    }
+
+    pub fn player(&mut self, volume: u8, assets: &mut Assets<AudioSource>) -> AudioPlayer {
+        let handle = self.clips.entry(volume).or_insert_with(|| {
+            let sample = Sample::from_tones(&self.tones, volume);
+            assets.add(
+                sample
+                    .wave()
+                    .expect("decoded menu sample fits a stereo WAV"),
+            )
+        });
+        AudioPlayer::new(handle.clone())
+    }
+}
+
 pub struct Sample {
     mix: Vec<[f32; 2]>,
 }
 impl Sample {
-    pub fn load(bank: &[u8], prog: usize, engine: bool) -> Result<Self> {
-        Ok(Self::from_tones(program(bank, prog)?, engine))
-    }
-    fn from_tones(tones: Vec<tm1_assets::sound::Tone>, engine: bool) -> Self {
+    fn from_tones(tones: &[tm1_assets::sound::Tone], volume: u8) -> Self {
         let mut mix = Vec::<[f32; 2]>::new();
         for t in tones {
-            let gain = pcm::VabVolume::from_tone(&t).gain(33, 99);
-            Self::mix_tone(&mut mix, &t, engine, gain);
+            let gain = pcm::VabVolume::from_tone(t).gain(volume, 99);
+            Self::mix_tone(&mut mix, t, false, gain);
         }
         Self { mix }
     }
@@ -185,15 +195,6 @@ fn battle_programs(
 }
 
 impl Sounds {
-    fn register(&mut self, assets: &mut Assets<AudioSource>) {
-        self.voices = std::mem::take(&mut self.sources)
-            .into_iter()
-            .map(|s| assets.add(s))
-            .collect();
-    }
-    pub fn menu_voice(&self, select: bool) -> AudioPlayer {
-        AudioPlayer::new(self.voices[usize::from(select)].clone())
-    }
     pub fn set_screen_volume(&self, volume: u8) {
         self.screen_levels.set([i32::from(volume); 2], 99);
     }
@@ -218,9 +219,9 @@ impl Sounds {
         opponents: &[tm1_core::drive::Vehicle],
     ) -> Result<Self> {
         let bank = disc.read("SND/UACORE.VAB")?;
-        let sources = [57, 58]
+        let menu = [57, 58]
             .into_iter()
-            .map(|prog| Sample::load(&bank, prog, false)?.wave())
+            .map(|prog| MenuSound::load(&bank, prog))
             .collect::<Result<_>>()?;
         let effects = battle_programs(vehicle, opponents)
             .enumerate()
@@ -232,11 +233,10 @@ impl Sounds {
             .map(|&car| EngineSample::load(&bank, car))
             .collect::<Result<_>>()?;
         Ok(Self {
-            sources,
+            menu,
             effects,
             turbo: EffectTone::load(&bank, TURBO_PROGRAM, true)?,
             rival_engines,
-            voices: Vec::new(),
             player_engine,
             screen_engine: Vec::new(),
             screen_levels: pcm::Levels::new([33; 2], 99),
@@ -347,10 +347,8 @@ pub fn start(
     mut commands: Commands,
     mut sounds: ResMut<Sounds>,
     drive: Res<crate::driving::Drive>,
-    mut assets: ResMut<Assets<AudioSource>>,
     mut clips: ResMut<Assets<pcm::StereoPcm>>,
 ) {
-    sounds.register(&mut assets);
     let screen_levels = sounds.screen_levels.clone();
     let mut register_signature = |tones: &[EffectTone]| {
         tones
@@ -414,7 +412,8 @@ pub fn start(
 }
 pub fn update(
     mut commands: Commands,
-    sounds: Res<Sounds>,
+    mut sounds: ResMut<Sounds>,
+    mut assets: ResMut<Assets<AudioSource>>,
     mut clips: ResMut<Assets<pcm::StereoPcm>>,
     drive: Res<crate::driving::Drive>,
     window: Single<&Window>,
@@ -440,7 +439,6 @@ pub fn update(
     let shell_rev = drive.lost_life_elapsed().is_some() || drive.showing_boss_intro();
     let stop_battle = drive.lives == 0 || shell_rev || drive.pause.is_some();
     let pause = !window.focused;
-    let gain = drive.settings.effects_gain();
     if shell_rev && shell_engines.is_empty() {
         sounds.set_screen_volume(drive.settings.effects_volume());
         for (player, mut settings) in sounds.ending_engine() {
@@ -561,9 +559,9 @@ pub fn update(
         }
     }
     if let Some(select) = drive.pause_sound {
-        let player = sounds.menu_voice(select);
+        let player = sounds.menu[usize::from(select)].player(volume, &mut assets);
         commands.queue(move |world: &mut World| {
-            let entity = play_menu_button(world, select, player, gain);
+            let entity = play_menu_button(world, select, player);
             world
                 .entity_mut(entity)
                 .insert(crate::campaign::StageEntity);
@@ -692,8 +690,43 @@ fn refresh_requested(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bevy::ecs::system::RunSystemOnce;
+    use bevy::{audio::Volume, ecs::system::RunSystemOnce};
     use tm1_core::drive::{Difficulty, Level, Vehicle};
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn menu_pcm_uses_the_selected_integer_voice_level() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let bank = disc.read("SND/UACORE.VAB").unwrap();
+        let mut assets = Assets::default();
+        // Each row gives the JP seven-bit tone level at channel volumes 0, 10, 33 and 57.
+        for (id, levels) in [
+            (57, [0, 10, 33, 57]),
+            (58, [0, 8, 26, 46]),
+            (36, [0, 3, 9, 16]),
+            (41, [0, 7, 25, 43]),
+        ] {
+            let mut sound = MenuSound::load(&bank, id).unwrap();
+            for (volume, level) in [0, 10, 33, 57].into_iter().zip(levels) {
+                let handle = sound.player(volume, &mut assets).0;
+                let mut expected = Vec::new();
+                for tone in &sound.tones {
+                    Sample::mix_tone(&mut expected, tone, false, level as f32 * 129. / 16384.);
+                }
+                let bytes = &assets.get(&handle).unwrap().bytes[44..];
+                assert_eq!(bytes.len(), expected.len() * 4);
+                for (frame, samples) in bytes.chunks_exact(4).zip(expected) {
+                    assert_eq!(
+                        frame,
+                        samples
+                            .map(|s| (s.clamp(-32768., 32767.) as i16).to_le_bytes())
+                            .as_flattened()
+                    );
+                }
+                assert_eq!(sound.player(volume, &mut assets).0, handle);
+            }
+        }
+    }
 
     #[test]
     fn engine_stop_survives_render_updates_until_the_next_rev_request() {
@@ -774,7 +807,7 @@ mod tests {
             [0, 127]
         );
         for tone in hover {
-            let sample = Sample::from_tones(vec![tone], false);
+            let sample = Sample::from_tones(&[tone], 33);
             assert!(sample.mix.iter().any(|pair| pair[0] != 0.));
             assert!(sample.mix.iter().all(|pair| pair[0] == pair[1]));
         }

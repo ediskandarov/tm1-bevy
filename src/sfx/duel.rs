@@ -1,6 +1,6 @@
 //! Tone allocation for the shared SPU during split-screen play.
 use super::{
-    Candidate, EffectTone, EngineSample, Sample, TURBO_PROGRAM, TimedVoice, VoiceSequence,
+    Candidate, EffectTone, EngineSample, MenuSound, TURBO_PROGRAM, TimedVoice, VoiceSequence,
     battle_programs, pcm::Levels, pcm::StereoPcm, rank_voices,
 };
 use crate::{
@@ -19,7 +19,7 @@ pub struct DuelBank {
     engine_levels: Levels,
     score_engines: Vec<Handle<StereoPcm>>,
     turbo: Vec<EffectTone>,
-    menu: [Handle<AudioSource>; 2],
+    pub(crate) menu: [MenuSound; 2],
 }
 
 #[derive(Component)]
@@ -66,18 +66,13 @@ impl DuelBank {
             .enumerate()
             .map(|(i, id)| EffectTone::load(bank, id, matches!(i, 1 | 6) || id == 38))
             .collect::<Result<_>>()?;
-        let mut menu = |id| -> Result<Handle<AudioSource>> {
-            Ok(world
-                .resource_mut::<Assets<AudioSource>>()
-                .add(Sample::load(bank, id, false)?.wave()?))
-        };
         Ok(Self {
             programs,
             engines,
             engine_levels,
             score_engines,
             turbo: EffectTone::load(bank, TURBO_PROGRAM, true)?,
-            menu: [menu(57)?, menu(58)?],
+            menu: [MenuSound::load(bank, 57)?, MenuSound::load(bank, 58)?],
         })
     }
 
@@ -126,10 +121,6 @@ impl DuelBank {
                 PlaybackSettings::DESPAWN,
             ));
         }
-    }
-
-    pub fn menu_voice(&self, select: bool) -> AudioPlayer {
-        AudioPlayer::new(self.menu[usize::from(select)].clone())
     }
 }
 

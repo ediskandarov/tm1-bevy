@@ -52,9 +52,6 @@ impl Settings {
             v => 47 * u16::from(99 - v) / 99 + 10,
         }) as u8
     }
-    pub fn effects_gain(self) -> f32 {
-        f32::from(self.effects_volume()) / 33.
-    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PauseInput {

@@ -98,7 +98,7 @@ pub struct Contest {
     options: Vec<u8>,
     controls: crate::pause::Art,
     pub(crate) settings: crate::pause::Settings,
-    button_sounds: Vec<Handle<AudioSource>>,
+    button_sounds: Vec<crate::sfx::MenuSound>,
     password_from_options: bool,
     cursor_fields: u32,
     password_wait_release: bool,
@@ -314,22 +314,16 @@ impl Contest {
             world.despawn(entity);
         }
     }
-    fn play_button(&self, world: &mut World, index: usize) {
-        let voice = self.button_sounds[index].clone();
+    fn play_button(&mut self, world: &mut World, index: usize) {
+        let player = self.button_sounds[index].player(
+            self.settings.effects_volume(),
+            &mut world.resource_mut::<Assets<AudioSource>>(),
+        );
         if index < 2 {
-            crate::sfx::play_menu_button(
-                world,
-                index == 1,
-                AudioPlayer::new(voice),
-                self.settings.effects_gain(),
-            );
-            return;
+            crate::sfx::play_menu_button(world, index == 1, player);
+        } else {
+            world.spawn((player, PlaybackSettings::DESPAWN));
         }
-        world.spawn((
-            AudioPlayer::new(voice),
-            PlaybackSettings::DESPAWN
-                .with_volume(bevy::audio::Volume::Linear(self.settings.effects_gain())),
-        ));
     }
     fn play(&mut self, world: &mut World, mut clip: Option<Clip>) {
         if let Some(voice) = self.cinema.take().and_then(|movie| movie.voice) {
@@ -1193,9 +1187,8 @@ pub fn show(
     };
     let bank = disc.read("SND/UACORE.VAB")?;
     for program in [57, 58, 36, 41] {
-        let sample = crate::sfx::Sample::load(&bank, program, false)?.wave()?;
         menu.button_sounds
-            .push(world.resource_mut::<Assets<AudioSource>>().add(sample));
+            .push(crate::sfx::MenuSound::load(&bank, program)?);
     }
     campaign::clear_stage(world);
     menu.image = crate::ending::spawn_screen(world, ContestScreen, menu.frame());
@@ -2163,12 +2156,9 @@ mod tests {
         }
         assert_eq!(world.resource::<duel::Duel>().settings.music, 8);
         let menu_voices = |world: &mut World| {
-            let bank = world.resource::<crate::sfx::duel::DuelBank>();
-            let sources = [bank.menu_voice(false).0, bank.menu_voice(true).0];
-            sources.map(|source| {
-                let mut query =
-                    world.query_filtered::<(Entity, &AudioPlayer), With<duel::PauseVoice>>();
-                let mut matching = query.iter(world).filter(|(_, player)| player.0 == source);
+            [false, true].map(|select| {
+                let mut query = world.query_filtered::<(Entity, &crate::sfx::MenuButtonVoice), With<duel::PauseVoice>>();
+                let mut matching = query.iter(world).filter(|(_, marker)| marker.0 == select);
                 let entity = matching.next().unwrap().0;
                 assert!(matching.next().is_none());
                 entity
@@ -2606,11 +2596,10 @@ mod tests {
         assert!(clip(&world) == Some(Clip::Logo));
         tick(&mut world, 0);
         let confirmations = |world: &mut World| {
-            let sound = world.resource::<Contest>().button_sounds[1].clone();
             world
-                .query::<(Entity, &AudioPlayer)>()
+                .query::<(Entity, &crate::sfx::MenuButtonVoice)>()
                 .iter(world)
-                .filter_map(|(entity, player)| (player.0 == sound).then_some(entity))
+                .filter_map(|(entity, marker)| marker.0.then_some(entity))
                 .collect::<Vec<_>>()
         };
         let mut pads = [
@@ -2769,7 +2758,12 @@ mod tests {
         for key in [Enter, KeyP, Digit1, Digit3, Digit1, Digit1, Digit4] {
             press(&mut world, key);
         }
-        let reward = world.resource::<Contest>().button_sounds[2].clone();
+        let reward = world.resource_scope(|world, mut menu: Mut<Contest>| {
+            let volume = menu.settings.effects_volume();
+            menu.button_sounds[2]
+                .player(volume, &mut world.resource_mut::<Assets<AudioSource>>())
+                .0
+        });
         let rewards = |world: &mut World| {
             world
                 .query::<&AudioPlayer>()

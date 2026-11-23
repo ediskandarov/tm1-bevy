@@ -290,7 +290,8 @@ pub fn pause_menu(
     arena: Res<render::Arena>,
     window: Single<&Window>,
     time: Res<Time<Real>>,
-    sounds: Res<crate::sfx::duel::DuelBank>,
+    mut sounds: ResMut<crate::sfx::duel::DuelBank>,
+    mut clips: ResMut<Assets<AudioSource>>,
     tracks: Res<Assets<crate::music::CdTrack>>,
     mut images: ResMut<Assets<Image>>,
     mut hud: Single<(&mut Sprite, &mut Visibility), With<DuelHud>>,
@@ -468,10 +469,10 @@ pub fn pause_menu(
         }
     }
     if let Some(select) = sound {
-        let player = sounds.menu_voice(select);
-        let gain = duel.settings.effects_gain();
+        let player =
+            sounds.menu[usize::from(select)].player(duel.settings.effects_volume(), &mut clips);
         commands.queue(move |world: &mut World| {
-            let entity = crate::sfx::play_menu_button(world, select, player, gain);
+            let entity = crate::sfx::play_menu_button(world, select, player);
             world.entity_mut(entity).insert((StageEntity, PauseVoice));
         });
     }
