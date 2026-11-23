@@ -382,3 +382,17 @@ The comparison covers the JP shell, battle loop, interactive database dispatch, 
 | Presentation differences | Battle blending uses the host destination color and rasterizer. Transparency over a nonblack background, clipping and pixel coverage can differ from the console. The chase framing and HUD layout have port-specific elements. Disc STR/XA cinematics require an external FFmpeg executable and are skipped if the decoder cannot start. Stage loading does not reproduce physical CD seeks. |
 
 Verification still needed includes a continuous keyboard contest through Minion and the ending, the Hard continuation through Arena 5, and comparison of a complete retail battle frame’s state, draw packets and sound requests. Existing targeted replays and forced-transition captures remain useful evidence for their covered scenarios. The renderer does not need pixel-perfect output for initial arena acceptance under R4. Physical gamepad testing is deferred by player decision. Windows build and play validation are scheduled last. Browser support and migration to Bevy meshes/materials are later project goals.
+
+### Rust STR video decoder probe
+
+A native Apple Silicon probe used PSoXide revision `6bfe478ff0e0c6e226cdf67b164df311c1658fec`. The complete psx-fmv dependency graph failed on stable Rust 1.97.1 because psx-vram enables the nightly optimize_attribute feature. The probe compiled the upstream stream, bitstream and idct modules with psx-math on stable Rust. The upstream IDCT module supplies the transform matrix. The probe supplied a host-side block reconstruction step to produce full-range planar YUV420 frames.
+
+The probe read the three JP disc extents as raw 2352-byte sectors and passed the video payloads to FrameAssembler. The BS decoder produced run-length data for all 1,216 frames with zero dropped frames. For frames 0 and 30 of each movie, the probe reconstructed all three image planes at 320 × 240 and compared them with FFmpeg psxstr output in yuvj420p. The maximum absolute difference across all six images was one 8-bit sample unit.
+
+| File | Complete frames | Mean absolute sample error at frame 0 | At frame 30 |
+| --- | ---: | ---: | ---: |
+| SLOGO15S.STR | 149 | 0.01002 | 0.01037 |
+| TMTTL15S.STR | 67 | 0.01217 | 0.02471 |
+| TMDMO15S.STR | 1,000 | 0.01524 | 0.01896 |
+
+The comparison covers video decoding before RGB conversion. XA audio, synchronization, Bevy playback and real-time performance remain open. The shipping cinema path still uses FFmpeg. The upstream modules carry GPL-2.0-or-later headers. The probe ran outside the game crate and added no runtime dependency.
