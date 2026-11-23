@@ -276,6 +276,7 @@ pub fn setup(
     mut arena: ResMut<Arena>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut packet_materials: ResMut<Assets<crate::texture_blend::TextureBlend>>,
     mut images: ResMut<Assets<Image>>,
 ) {
     let mut image = Image::new(
@@ -358,10 +359,10 @@ pub fn setup(
         alpha_mode: AlphaMode2d::Mask(0.5),
         ..default()
     });
-    let blend = materials.add(ColorMaterial {
-        texture: Some(texture),
-        alpha_mode: AlphaMode2d::Blend,
-        ..default()
+    let blend = packet_materials.add(crate::texture_blend::TextureBlend {
+        atlas: texture,
+        subtract: false,
+        order: 0,
     });
     // The retail sky uses a fixed far ordering-table slot and follows the
     // player horizontally. A background camera gives it independent depth.
@@ -1583,14 +1584,24 @@ impl Instruments<'_> {
         let [x, y, width, height] = rect;
         let uv = [self.arena.uv(0, Vec2::ZERO); 4];
         for (offset, length, rgb) in bar_spans(width, colors) {
-            let color = flat_color(rgb, 128).to_linear().to_f32_array();
+            let [r, g, b, _] = packet_rgb(rgb);
+            let color = [r, g, b, PacketMode::UntexturedAverage as u8 as f32];
             self.quad([x + offset, y, length, height], uv, color);
         }
     }
     fn sprite(&mut self, x: i32, y: i32, f: SpriteFrame, tint: [u8; 3], semi: bool) {
         let tint = tint.map(|v| v as f32 / 128.);
+        let mode = if semi {
+            PacketMode::texture(f.texture)
+        } else {
+            PacketMode::Opaque
+        };
         self.arena.sprite_rects(f, 0, semi, |[dx, dy, w, h], uv| {
-            self.quad([x + dx, y + dy, w, h], uv, [tint[0], tint[1], tint[2], 1.]);
+            self.quad(
+                [x + dx, y + dy, w, h],
+                uv,
+                [tint[0], tint[1], tint[2], mode as u8 as f32],
+            );
         });
     }
     fn number(&mut self, x: i32, y: i32, n: i32, digits: &[SpriteFrame; 10], tint: [u8; 3]) {
@@ -1675,7 +1686,7 @@ fn draw_instruments(
         hud.quad(
             [209, 18, 105, 34],
             [arena.uv(0, Vec2::ZERO); 4],
-            [0., 0., 0., 1.],
+            [0., 0., 0., PacketMode::UntexturedOpaque as u8 as f32],
         );
     }
     let white = [128; 3];
@@ -2145,7 +2156,7 @@ pub fn duel_view(
     hud.quad(
         [0, 116, 320, 6],
         [arena.uv(0, Vec2::ZERO); 4],
-        [0., 0., 0., 1.],
+        [0., 0., 0., PacketMode::UntexturedOpaque as u8 as f32],
     );
     for (slot, car) in duel.cars.iter().enumerate() {
         let bias = if slot == 0 { -120 } else { 0 };
@@ -2349,6 +2360,34 @@ mod tests {
                         .collect::<Vec<_>>(),
                     packets,
                     "{n}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn dashboard_sprites_fit_forward_blend_pass() {
+        use tm1_core::drive::{Level::*, Vehicle};
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut paths = std::collections::BTreeSet::new();
+        for level in [Arena, Warehouse, Freeway, CityPark, Cyburbia, Rooftops] {
+            paths.insert(format!("UA2PLAY/{}.DMD", level.duel_database().unwrap()));
+            for car in Vehicle::ROSTER {
+                paths.insert(format!("UADMD/{}.DMD", level.database(car)));
+            }
+        }
+        for path in paths {
+            let data = disc.read(&path).unwrap();
+            let icons = tm1_assets::scene::Dmd::parse(&data)
+                .unwrap()
+                .dashboard_icons()
+                .unwrap();
+            for (sprite, semi) in icons.frames() {
+                assert!(
+                    !semi || PacketMode::texture(sprite.texture) != PacketMode::Subtract,
+                    "{path} page {:x}",
+                    sprite.texture.page
                 );
             }
         }
