@@ -21,12 +21,45 @@ struct BodyGeometry {
     lods: Vec<tm1_assets::scene::LevelOfDetail>,
 }
 
-struct CarPose {
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CarPose {
     origin: Vec3,
     matrix: [[i16; 3]; 3],
     body_stage: usize,
     shadow_visible: bool,
 }
+pub(crate) struct CarAppearance {
+    lights: [u8; 9],
+    wheel_steps: [i64; 14],
+}
+
+impl CarAppearance {
+    pub(crate) fn capture(scene: &tm1_core::drive::CollisionScene) -> Self {
+        Self {
+            lights: scene.car_lights(),
+            wheel_steps: scene.wheel_steps(),
+        }
+    }
+}
+impl CarPose {
+    pub(crate) fn player(car: &tm1_core::drive::PlayerVehicle) -> Self {
+        Self {
+            origin: world(car.position().map(|v| v as f32)),
+            matrix: car.rotation(),
+            body_stage: car.body_stage(),
+            shadow_visible: car.shadow_visible(),
+        }
+    }
+    pub(crate) fn rival(car: &tm1_core::drive::Opponent) -> Self {
+        Self {
+            origin: world(car.position().map(|v| v as f32)),
+            matrix: car.rotation(),
+            body_stage: car.body_stage(),
+            shadow_visible: car.shadow_visible(),
+        }
+    }
+}
+
 #[derive(Component)]
 pub struct WorldCamera;
 #[derive(Component)]
@@ -831,26 +864,7 @@ pub fn update(
         arena.pitch.sin(),
         arena.yaw.cos() * arena.pitch.cos(),
     );
-    let origin = world(drive.player.position().map(|v| v as f32));
-    let matrix = drive.player.rotation();
-    let poses: Vec<_> = std::iter::once(CarPose {
-        origin,
-        matrix,
-        body_stage: drive.player.body_stage(),
-        shadow_visible: drive.player.shadow_visible(),
-    })
-    .chain(drive.opponents.iter().map(|ai| CarPose {
-        origin: world(ai.position().map(|v| v as f32)),
-        matrix: ai.rotation(),
-        body_stage: ai.body_stage(),
-        shadow_visible: ai.shadow_visible(),
-    }))
-    .collect();
-    let hide_player =
-        !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
-    let view = (!arena.overview).then(|| {
-        tm1_core::drive::SoundListener::new(&drive.player, &drive.camera, drive.helicopter_pose())
-    });
+    let view = (!arena.overview).then_some(drive.listener);
     let (eye, forward, camera_up) = view.map(camera_pose).unwrap_or_else(|| {
         let eye = arena.center + direction * arena.radius * arena.zoom;
         (eye, (arena.center - eye).normalize(), Vec3::Y)
@@ -874,10 +888,15 @@ pub fn update(
             }
         }
         if sky {
+            let origin = if rear {
+                world(drive.player.position().map(|v| v as f32))
+            } else {
+                drive.primary_cars[0].origin
+            };
             camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
     }
-    let lights = drive.contacts.car_lights();
+
     let mut screen_batch = Batch::default();
     let mut windshield = Batch::default();
     draw_instruments(&mut screen_batch, &mut windshield, &arena, &drive, &window);
@@ -888,9 +907,9 @@ pub fn update(
         &drive.player,
         &drive.contacts,
         false,
-        &poses,
-        &lights,
-        hide_player.then_some(0),
+        &drive.primary_cars,
+        &drive.primary_appearance,
+        (drive.primary_hidden && !arena.overview).then_some(0),
         false,
         eye,
         forward,
@@ -899,13 +918,18 @@ pub fn update(
     );
     renderer.submit(&mut arena, false, packets);
     if let Some((rear_eye, rear_forward, rear_up)) = rear_pose {
+        let poses: Vec<_> = std::iter::once(CarPose::player(&drive.player))
+            .chain(drive.opponents.iter().map(CarPose::rival))
+            .collect();
+        let appearance = CarAppearance::capture(&drive.contacts);
+        let hide_player = !drive.camera.show_body;
         let packets = draw_view(
             &arena,
             &drive.player,
             &drive.contacts,
             true,
             &poses,
-            &lights,
+            &appearance,
             hide_player.then_some(0),
             false,
             rear_eye,
@@ -968,7 +992,7 @@ fn draw_view(
     contacts: &tm1_core::drive::CollisionScene,
     secondary: bool,
     poses: &[CarPose],
-    lights: &[u8; 9],
+    appearance: &CarAppearance,
     hidden_car: Option<usize>,
     split_screen: bool,
     eye: Vec3,
@@ -978,7 +1002,7 @@ fn draw_view(
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let depth_axis = forward * axis_scale;
-    let wheel_steps = contacts.wheel_steps();
+    let wheel_steps = &appearance.wheel_steps;
     let [sin, cos] = player
         .wheel_sin_cos(wheel_steps[4])
         .map(|n| f32::from(n) / 4096.);
@@ -1140,7 +1164,7 @@ fn draw_view(
             let car = arena
                 .body_ranges
                 .partition_point(|ranges| ranges[2].polygons.end <= i);
-            body_light_color(lights[car])
+            body_light_color(appearance.lights[car])
         } else {
             [1.; 3]
         };
@@ -2089,12 +2113,6 @@ pub fn duel_view(
         With<WorldCamera>,
     >,
 ) {
-    let poses = duel.cars.each_ref().map(|car| CarPose {
-        origin: world(car.position().map(|v| v as f32)),
-        matrix: car.rotation(),
-        body_stage: car.body_stage(),
-        shadow_visible: car.shadow_visible(),
-    });
     let width = window.physical_width();
     let height = window.physical_height();
     if width == 0 || height < 2 {
@@ -2171,11 +2189,26 @@ pub fn duel_view(
         }
     }
     panel.write(&mut renderer.meshes, &arena.mesh);
-    let lights = duel.scene.car_lights();
+    let current_cars = duel.cars.each_ref().map(CarPose::player);
+    let current_appearance = CarAppearance::capture(&duel.scene);
     for slot in 0..2 {
         let car = &duel.cars[slot];
         let view = &duel.cameras[slot];
-        let transform = tm1_core::drive::SoundListener::new(car, view, None);
+        let (transform, poses, appearance, hidden) = if slot == 0 {
+            (
+                duel.primary_view,
+                &duel.primary_cars,
+                &duel.primary_appearance,
+                duel.primary_hidden,
+            )
+        } else {
+            (
+                tm1_core::drive::SoundListener::new(car, view, None),
+                &current_cars,
+                &current_appearance,
+                !view.show_body,
+            )
+        };
         let (eye, forward, up) = camera_pose(transform);
         let top = if slot == 0 { 0 } else { height / 2 };
         let h = if slot == 0 { height / 2 } else { height - top };
@@ -2204,9 +2237,9 @@ pub fn duel_view(
             car,
             &duel.scene,
             slot != 0,
-            &poses,
-            &lights,
-            (!view.show_body).then_some(slot),
+            poses,
+            appearance,
+            hidden.then_some(slot),
             true,
             eye,
             forward,

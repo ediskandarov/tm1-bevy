@@ -376,6 +376,9 @@ pub struct Drive {
     helicopter_key_held: bool,
     pub windshield_holes: [[i32; 2]; 6],
     pub camera: tm1_core::drive::VehicleCamera,
+    pub(crate) primary_cars: Vec<crate::render::CarPose>,
+    pub(crate) primary_hidden: bool,
+    pub(crate) primary_appearance: crate::render::CarAppearance,
     pub listener: tm1_core::drive::SoundListener,
     last_listener: Option<tm1_core::drive::SoundListener>,
     pub helicopter_unlocked: bool,
@@ -606,7 +609,7 @@ impl Drive {
                 heli.update(&self.player, 3, true);
             }
             self.camera.update(&self.player, true);
-            self.refresh_listener();
+            self.capture_primary_view();
             self.player.set_rng_state(ticks());
             self.windshield_holes = self.player.windshield_holes();
             self.lost_life = None;
@@ -615,14 +618,21 @@ impl Drive {
             self.lost_life = Some(elapsed);
         }
     }
-    fn refresh_listener(&mut self) {
+    fn capture_primary_view(&mut self) {
+        use crate::render::CarPose;
+        self.primary_cars.clear();
+        self.primary_cars.push(CarPose::player(&self.player));
+        self.primary_cars
+            .extend(self.opponents.iter().map(CarPose::rival));
+        self.primary_appearance = crate::render::CarAppearance::capture(&self.contacts);
+        self.primary_hidden = self.helicopter_pose().is_none() && !self.camera.show_body;
         self.listener =
             tm1_core::drive::SoundListener::new(&self.player, &self.camera, self.helicopter_pose());
     }
     pub fn begin_battle(&mut self, ticks: u32) {
         self.player
             .set_battle_view(self.selected_view(), self.camera.fixed_pose.is_some());
-        self.refresh_listener();
+        self.capture_primary_view();
         self.battle_seed = ticks;
         self.player.set_rng_state(ticks);
         self.windshield_holes = self.player.windshield_holes();
@@ -647,6 +657,11 @@ impl Drive {
             level_seed,
             reset_weapons_on_entry,
             windshield_holes: player.windshield_holes(),
+            primary_cars: std::iter::once(crate::render::CarPose::player(&player))
+                .chain(opponents.iter().map(crate::render::CarPose::rival))
+                .collect(),
+            primary_hidden: !camera.show_body,
+            primary_appearance: crate::render::CarAppearance::capture(&contacts),
             opponents,
             contacts,
             deck: Default::default(),
@@ -988,7 +1003,7 @@ pub fn advance(
                 }
             }
         }
-        state.refresh_listener();
+        state.capture_primary_view();
         state.contacts.radar.display(state.radar);
         let prepared = state
             .contacts
@@ -1976,7 +1991,12 @@ mod tests {
                 .press(key);
         }
         for _ in 0..40 {
+            let drive = key_app.world().resource::<Drive>();
+            let before: Vec<_> = std::iter::once(crate::render::CarPose::player(&drive.player))
+                .chain(drive.opponents.iter().map(crate::render::CarPose::rival))
+                .collect();
             tick(&mut key_app, 50);
+            assert_eq!(key_app.world().resource::<Drive>().primary_cars, before);
         }
         assert_eq!(driven, snapshot(&key_app));
         app.world_mut().get_mut::<Window>(window).unwrap().focused = false;
