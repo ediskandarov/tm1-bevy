@@ -7,14 +7,14 @@ The playable arena below is the first milestone. Subsequent work covers the
 remaining vehicle roster and special weapons, levels and their interactions,
 opponents and progression, the original front end, multiplayer modes and
 endings. Verify behavior against the supported release as each path becomes
-playable. Track implemented paths and outstanding limitations in STATUS.md.
+playable. Track implemented paths and outstanding limitations in the [implementation status](status/README.md).
 
 ## Initial arena deliverable
 
 ### R1. Platform and scope
 
 - A Bevy desktop application for macOS.
-- Initial target architecture: Apple Silicon, a working assumption to validate.
+- First supported architecture: Apple Silicon. Windows x64 is also a release build target.
 - One arena selected from the supported disc.
 - A player-controlled vehicle, at least one opponent using the original AI,
   collisions, damage, weapons, effects, and the ability to restart the arena.
@@ -30,8 +30,8 @@ the machine gun and the fire missile.
 
 - The source is local BIN/CUE for one specific JP revision.
 - The player selects a CUE and grants access to the BIN files it references.
-- Record the supported track layout and hashes in a future manifest.
-- Reject unsupported or incomplete images with a clear error.
+- Compare track sizes and hashes against the JP reference manifest.
+- Warn on JP reference mismatches and use the audio tracks declared by the CUE. Report unreadable files, invalid sector bounds and malformed disc structures as errors.
 - The loader obtains geometry, textures, game data, and audio from the image.
 - Installing a separate set of previously extracted assets is not required.
 - An automatically generated local cache is acceptable if tied to the image
@@ -116,5 +116,3 @@ have not been set and must not be implied to have been met.
   macOS version must not depend on direct access to a physical CD drive.
 - Gradually replace the primitive renderer with Bevy meshes/materials/entities.
 - Expand to other arenas and the full game flow after evaluating the experiment.
-
-(This text was generated via LLM.)
