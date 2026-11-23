@@ -836,23 +836,17 @@ pub fn update(
     .collect();
     let hide_player =
         !arena.overview && drive.helicopter_pose().is_none() && !drive.camera.show_body;
-    let (eye, forward, camera_up) = if arena.overview {
+    let view = (!arena.overview).then(|| {
+        tm1_core::drive::SoundListener::new(&drive.player, &drive.camera, drive.helicopter_pose())
+    });
+    let (eye, forward, camera_up) = view.map(camera_pose).unwrap_or_else(|| {
         let eye = arena.center + direction * arena.radius * arena.zoom;
         (eye, (arena.center - eye).normalize(), Vec3::Y)
-    } else {
-        camera_pose(tm1_core::drive::SoundListener::new(
-            &drive.player,
-            &drive.camera,
-            drive.helicopter_pose(),
-        ))
-    };
-    let mirror = drive.mirror && !arena.overview;
-    let rear_pose = mirror.then(|| {
-        camera_pose(tm1_core::drive::SoundListener::rear_view(
-            &drive.player,
-            &drive.camera,
-        ))
     });
+    let mirror = drive.mirror && !arena.overview;
+    let rear_view =
+        mirror.then(|| tm1_core::drive::SoundListener::rear_view(&drive.player, &drive.camera));
+    let rear_pose = rear_view.map(camera_pose);
     for (mut camera, mut settings, sky, rear) in &mut cameras {
         if rear {
             settings.is_active = mirror;
@@ -889,6 +883,7 @@ pub fn update(
         eye,
         forward,
         camera_up,
+        view,
     );
     renderer.submit(&mut arena, false, packets);
     if let Some((rear_eye, rear_forward, rear_up)) = rear_pose {
@@ -904,6 +899,7 @@ pub fn update(
             rear_eye,
             rear_forward,
             rear_up,
+            rear_view,
         );
         renderer.submit(&mut arena, true, packets);
     }
@@ -966,6 +962,7 @@ fn draw_view(
     eye: Vec3,
     forward: Vec3,
     camera_up: Vec3,
+    view: Option<tm1_core::drive::SoundListener>,
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let depth_axis = forward * axis_scale;
@@ -1254,15 +1251,17 @@ fn draw_view(
             );
         }
     }
-    let camera_coords = |point: Vec3| {
-        let d = point - eye;
+    let coords = |p: [i32; 3]| {
+        if let Some(view) = view {
+            return view.effect_coordinates(p);
+        }
+        let d = world(p.map(|v| v as f32)) - eye;
         [
             d.dot(right) as i32,
-            (-d.dot(up) * axis_scale) as i32,
-            (d.dot(forward) * axis_scale) as i32,
+            -d.dot(up) as i32,
+            d.dot(forward) as i32,
         ]
     };
-    let coords = |p: [i32; 3]| camera_coords(world(p.map(|v| v as f32)));
     let (lens, center) = if split_screen {
         (BATTLE_FOCAL as i32, [160, 60])
     } else if secondary {
@@ -1274,15 +1273,20 @@ fn draw_view(
         (BATTLE_FOCAL as i32, [160, 120])
     };
     let bucket_depth = |bucket: u32| (bucket as f32 * 8. / axis_scale).max(near + 0.01);
+    // Mirror packets already contain reflected X. Its display sprite flips the render target.
+    let pixel_right = if secondary && !split_screen {
+        -right
+    } else {
+        right
+    };
     let vertex = |[x, y]: [i32; 2], depth: f32| {
-        let offset = right * (x as f32 * axis_scale) - up * y as f32;
+        let offset = pixel_right * (x as f32 * axis_scale) - up * y as f32;
         eye + forward * depth + offset * (depth / lens as f32)
     };
     let mut drops = [[0; 4]; 12];
     let drop_count = contacts.drawn_drops(secondary, &mut drops);
     for &[x, y, z, weapon] in &drops[..drop_count] {
-        let center = world([x as f32, y as f32, z as f32]);
-        let camera = camera_coords(center);
+        let camera = coords([x, y, z]);
         let Some(bucket) = tm1_core::drive::drop_bucket(camera, weapon) else {
             continue;
         };
@@ -1299,10 +1303,9 @@ fn draw_view(
         let depth = bucket_depth(bucket);
         for &i in indices(4) {
             let xy = if weapon == 9 {
-                let dx = if i & 1 == 0 { -48. } else { 48. };
-                let dy = if i < 2 { -48. } else { 48. };
-                let corner = center + world([dx, dy, 0.]);
-                tm1_core::drive::drop_screen_point(camera_coords(corner), [lens; 2])
+                let dx = if i & 1 == 0 { -48 } else { 48 };
+                let dy = if i < 2 { -48 } else { 48 };
+                tm1_core::drive::drop_screen_point(coords([x + dx, y + dy, z]), [lens; 2])
             } else {
                 billboard[i]
             };
@@ -2160,7 +2163,8 @@ pub fn duel_view(
     for slot in 0..2 {
         let car = &duel.cars[slot];
         let view = &duel.cameras[slot];
-        let (eye, forward, up) = camera_pose(tm1_core::drive::SoundListener::new(car, view, None));
+        let transform = tm1_core::drive::SoundListener::new(car, view, None);
+        let (eye, forward, up) = camera_pose(transform);
         let top = if slot == 0 { 0 } else { height / 2 };
         let h = if slot == 0 { height / 2 } else { height - top };
         let focal = window.height() * BATTLE_FOCAL / 240.;
@@ -2195,6 +2199,7 @@ pub fn duel_view(
             eye,
             forward,
             up,
+            Some(transform),
         );
         renderer.submit(&mut arena, slot != 0, packets);
     }

@@ -1067,6 +1067,17 @@ impl SoundListener {
         (self.eye, self.matrix[2], self.matrix[1])
     }
 
+    /// WEAPON and EXPLODE transform each point with mathMulVec before perspective division.
+    pub fn effect_coordinates(&self, point: [i32; 3]) -> [i32; 3] {
+        let delta: [i32; 3] = std::array::from_fn(|i| point[i].wrapping_sub(self.eye[i]));
+        self.matrix.map(|row| {
+            row.into_iter()
+                .zip(delta)
+                .fold(0i32, |sum, (m, d)| sum.wrapping_add(m.wrapping_mul(d)))
+                / 4096
+        })
+    }
+
     fn range_and_x(&self, position: [i32; 3]) -> (i32, i32) {
         let delta: [i32; 3] =
             std::array::from_fn(|j| position[j].wrapping_sub(self.eye[j]).min(3357));

@@ -1818,6 +1818,13 @@ fn positional_sound_matches_retail() {
                 [-9000, -6500, -12000],
             ] {
                 let point = std::array::from_fn(|j| location[j] + d[j]);
+                let relative = std::array::from_fn(|axis| point[axis] - listener.eye[axis]);
+                vec3_cpu(&mut cpu, source, relative);
+                cpu.call(0x800fe9c4, &[WORLD + 0x34, source, source + 0x10]);
+                assert_eq!(
+                    listener.effect_coordinates(point),
+                    [0, 4, 8].map(|offset| cpu.word(source + 0x10 + offset) as i32)
+                );
                 vec3_cpu(&mut cpu, source, point);
                 cpu.call(0x8010461c, &[source]);
                 let range = cpu.call(0x80104400, &[]) as i32;
