@@ -1,4 +1,4 @@
-//! SCREEN.c framebuffers and FONT.c glyphs from the JP disc.
+//! SCREEN.c framebuffers and FONT.c layout for the disc font atlases.
 use crate::{bytes, disc::Disc, texture::rgb555, u16le, u32le};
 use anyhow::{Result, ensure};
 
@@ -74,14 +74,16 @@ fn opponent_card_modulation_preserves_texel_coverage() {
     assert_eq!(card_color(0x40), [0, 8, 0, 255]);
 }
 
+mod font_layout;
+use font_layout::{CAR_NAMES, CAR_SIGNS, PASSWORD, SIGN, SPEED_DIGITS, TEXT};
+
+const FALLBACK_GLYPH: usize = 47;
+
 pub struct Fonts {
     pixels: Vec<[u8; 4]>,
     width: usize,
     signs: Vec<[u8; 4]>,
     sign_width: usize,
-    car_signs: Vec<String>,
-    car_names: Vec<String>,
-    metrics: [Vec<Glyph>; 4],
 }
 #[derive(Clone, Copy)]
 struct Glyph {
@@ -106,7 +108,6 @@ pub enum Face {
 }
 impl Fonts {
     pub fn load(disc: &Disc) -> Result<Self> {
-        let exe = disc.read("SIPS_600.07")?;
         let bitmap = |path: &str| -> Result<(Vec<[u8; 4]>, usize, usize)> {
             let tim = disc.read(path)?;
             ensure!(
@@ -131,68 +132,30 @@ impl Fonts {
         };
         let (pixels, width, height) = bitmap("UATIM/UAFONT1.TIM")?;
         let (signs, sign_width, sign_height) = bitmap("TIM/CPFONT.TIM")?;
-        let base = u32le(&exe, 24)?;
-        let file_offset = |address: u32| -> Result<usize> {
-            Ok(2048
-                + address
-                    .checked_sub(base)
-                    .ok_or_else(|| anyhow::anyhow!("invalid executable address"))?
-                    as usize)
-        };
-        let strings = |address| -> Result<Vec<String>> {
-            let table = file_offset(address)?;
-            let mut names = Vec::with_capacity(13);
-            for i in 0..13 {
-                let at = file_offset(u32le(&exe, table + 4 * i)?)?;
-                let text = std::ffi::CStr::from_bytes_until_nul(
-                    exe.get(at..)
-                        .ok_or_else(|| anyhow::anyhow!("invalid car sign pointer"))?,
-                )?;
-                names.push(text.to_str()?.to_owned());
-            }
-            Ok(names)
-        };
-        let metrics =
-            |address: u32, count: usize, width: usize, height: usize| -> Result<Vec<Glyph>> {
-                let at = file_offset(address)?;
-                bytes(&exe, at, count * 6)?
-                    .chunks_exact(6)
-                    .map(|g| {
-                        let glyph = Glyph {
-                            u: g[0].into(),
-                            v: g[1].into(),
-                            w: g[2].into(),
-                            h: g[3].into(),
-                            y: i16::from_le_bytes([g[4], g[5]]).into(),
-                        };
-                        ensure!(
-                            glyph.u + glyph.w <= width && glyph.v + glyph.h <= height,
-                            "glyph outside font TIM"
-                        );
-                        Ok(glyph)
-                    })
-                    .collect()
-            };
+        for (metrics, w, h) in [
+            (&TEXT[..], width, height),
+            (&PASSWORD[..], width, height),
+            (&SPEED_DIGITS[..], width, height),
+            (&SIGN[..=FALLBACK_GLYPH - SPEED_DIGITS.len()], width, height),
+            (&SIGN[..], sign_width, sign_height),
+        ] {
+            ensure!(
+                metrics.iter().all(|g| g.u + g.w <= w && g.v + g.h <= h),
+                "glyph outside font TIM"
+            );
+        }
         Ok(Self {
             pixels,
             width,
             signs,
             sign_width,
-            car_signs: strings(0x801712e0)?,
-            car_names: strings(0x80171768)?,
-            metrics: [
-                metrics(0x801709b8, 77, width, height)?,
-                metrics(0x801707e8, 77, width, height)?,
-                metrics(0x80170b88, 48, width, height)?,
-                metrics(0x80170bc4, 77, sign_width, sign_height)?,
-            ],
         })
     }
     pub fn car_name(&self, card: usize) -> &str {
-        &self.car_names[card]
+        CAR_NAMES[card]
     }
     pub fn car_sign(&self, card: usize) -> &str {
-        &self.car_signs[card]
+        CAR_SIGNS[card]
     }
     fn glyph(&self, face: Face, c: u8) -> Glyph {
         let mapped = match c {
@@ -206,14 +169,27 @@ impl Fonts {
         let idx = if (48..125).contains(&mapped) {
             usize::from(mapped - 48)
         } else {
-            47
+            FALLBACK_GLYPH
         };
-        let metrics = &self.metrics[match face {
-            Face::Choice | Face::Selected | Face::PasswordLabel | Face::PasswordSelected => 1,
-            Face::Control | Face::ArrowActive => 3,
-            _ => face as usize,
-        }];
-        metrics.get(idx).copied().unwrap_or(metrics[47])
+        match face {
+            Face::Text => TEXT[idx],
+            Face::Password
+            | Face::Choice
+            | Face::Selected
+            | Face::PasswordLabel
+            | Face::PasswordSelected => PASSWORD[idx],
+            Face::Sign | Face::Control | Face::ArrowActive => SIGN[idx],
+            Face::Speed => {
+                // The JP speed lookup continues into the adjacent sign table after digit 9.
+                // Slot 47 supplies the advance for the spaces before a short speed.
+                let slot = idx.min(FALLBACK_GLYPH);
+                if slot < SPEED_DIGITS.len() {
+                    SPEED_DIGITS[slot]
+                } else {
+                    SIGN[slot - SPEED_DIGITS.len()]
+                }
+            }
+        }
     }
     pub fn password_stride(&self) -> i32 {
         self.glyph(Face::Password, b'=').w as i32 + 7
