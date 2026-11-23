@@ -116,6 +116,7 @@ pub struct Polygon {
     pub texture: Option<TextureKey>,
     pub double_sided: bool,
     pub semi_transparent: bool,
+    pub dither: bool,
     pub fixed_ot: u32,
     pub subdivide_near: bool,
 }
@@ -1361,6 +1362,13 @@ impl<'a> Dmd<'a> {
                 texture,
                 double_sided: flags >> 31 != 0,
                 semi_transparent: command & 2 != 0,
+                // geomProc wraps flagged objects in the dithered draw mode.
+                dither: u16le(self.data, p + 26)? & 2 != 0
+                    && (if textured {
+                        command & 1 == 0
+                    } else {
+                        command & 0x10 != 0
+                    }),
                 subdivide_near: header[0] & 0x7f != 0 && u16le(self.data, p + 26)? & 4 != 0,
                 fixed_ot: (u32le(self.data, p + 24)? >> 19) & 0xfff,
             });
