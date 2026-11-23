@@ -988,8 +988,8 @@ fn draw_view(
 ) -> Batch {
     let axis_scale = if arena.overview { 1. } else { VIEW_SCALE_X };
     let depth = if let Some(view) = view {
-        let root = view.hierarchy_depth();
-        GeometryDepth::from_world_matrix(root.row, root.translation())
+        let root = view.hierarchy_transform();
+        GeometryDepth::from_world_matrix(root.rows[2], root.translation()[2])
     } else {
         let axis = (forward * axis_scale).as_dvec3();
         GeometryDepth {
@@ -1002,8 +1002,8 @@ fn draw_view(
     let wheel_rotation = player.wheel_sin_cos(wheel_steps[4]);
     let [sin, cos] = wheel_rotation.map(|n| f32::from(n) / 4096.);
     let world_depths = view.map(|view| {
-        GeometryDepth::hierarchy(
-            view.hierarchy_depth(),
+        GeometryTransform::hierarchy(
+            view.hierarchy_transform(),
             &arena.scene.transforms,
             wheel_rotation,
         )
@@ -1071,8 +1071,8 @@ fn draw_view(
                 -pose.origin.z as i32,
                 pose.origin.y as i32,
             ];
-            let root = view.hierarchy_depth().child(pos, Some(pose.matrix));
-            car_depths.push(GeometryDepth::hierarchy(
+            let root = view.hierarchy_transform().child(pos, Some(pose.matrix));
+            car_depths.push(GeometryTransform::hierarchy(
                 root,
                 &body.transforms,
                 wheel_rotation,
@@ -1114,28 +1114,37 @@ fn draw_view(
     } else {
         (BATTLE_FOCAL as i32, [160, 120])
     };
-    let billboard_point = |center: Vec3, extent: Option<[i16; 2]>, corner: usize, z: u32| {
+    let bucket_depth = |bucket: u32| (bucket as f32 * 8. / axis_scale).max(near + 0.01);
+    // Mirror packets already contain reflected X. Its display sprite flips the render target.
+    let pixel_right = if secondary && !split_screen {
+        -right
+    } else {
+        right
+    };
+    let vertex = |[x, y]: [i32; 2], depth: f32| {
+        let offset = pixel_right * (x as f32 * axis_scale) - up * y as f32;
+        eye + forward * depth + offset * (depth / lens as f32)
+    };
+    let billboard_point = |origin: Vec3,
+                           extent: Option<[i16; 2]>,
+                           corner: usize,
+                           z: u32,
+                           transform: Option<GeometryTransform>,
+                           local: [i16; 3]| {
         let Some(extent) = extent else {
-            return center;
+            return origin;
         };
-        let [width, height] = if view.is_some() {
+        let sign_x = if corner & 1 == 0 { -1 } else { 1 };
+        let sign_y = if corner < 2 { -1 } else { 1 };
+        if let Some(transform) = transform {
+            let xy = [0, 1].map(|axis| transform.coordinate(axis, local));
+            let [x, y] = gte_screen_offset(xy, z, lens, center);
             let [w, h] = sprite_half_size(extent, lens, z);
-            let units_per_pixel = (center - eye).dot(forward) / lens as f32;
-            let horizontal = if secondary && !split_screen {
-                -axis_scale
-            } else {
-                axis_scale
-            };
-            [
-                w as f32 * units_per_pixel * horizontal,
-                h as f32 * units_per_pixel,
-            ]
+            vertex([x + sign_x * w, y + sign_y * h], bucket_depth(z >> 3))
         } else {
-            extent.map(f32::from)
-        };
-        center
-            + right * if corner & 1 == 0 { -width } else { width }
-            + up * if corner < 2 { height } else { -height }
+            origin + right * (sign_x as f32 * f32::from(extent[0]))
+                - up * (sign_y as f32 * f32::from(extent[1]))
+        }
     };
     for i in visible {
         if hidden_geometry[i] {
@@ -1198,11 +1207,18 @@ fn draw_view(
                 world(local)
             };
             depths[corner] = if let Some(transform) = node_depth {
-                transform.vertex(world(vertex.local.map(f32::from)).to_array())
+                transform.depth(vertex.local)
             } else {
                 depth.vertex(center.to_array())
             };
-            points[corner] = billboard_point(center, p.billboard, corner, depths[corner]);
+            points[corner] = billboard_point(
+                center,
+                p.billboard,
+                corner,
+                depths[corner],
+                node_depth,
+                vertex.local,
+            );
         }
         if !p.double_sided
             && p.billboard.is_none()
@@ -1293,9 +1309,9 @@ fn draw_view(
             let rotation =
                 std::array::from_fn(|j| std::array::from_fn(|k| pose[4 + 3 * j + k] as i16));
             let root = view
-                .hierarchy_depth()
+                .hierarchy_transform()
                 .child([pose[1], pose[2], pose[3]], Some(rotation));
-            GeometryDepth::hierarchy(root, &model.transforms, wheel_rotation)
+            GeometryTransform::hierarchy(root, &model.transforms, wheel_rotation)
         });
         for p in &model.polygons {
             if p.animation
@@ -1304,6 +1320,7 @@ fn draw_view(
             {
                 continue;
             }
+            let node_depth = model_depth.as_ref().map(|t| t[p.transform_index]);
             let mut depths = [0; 4];
             let mut points = [Vec3::ZERO; 4];
             for (corner, vertex) in p.vertices.iter().enumerate() {
@@ -1314,11 +1331,18 @@ fn draw_view(
                 });
                 let center = origin + world(rotated);
                 depths[corner] = if let Some(table) = &model_depth {
-                    table[p.transform_index].vertex(world(vertex.local.map(f32::from)).to_array())
+                    table[p.transform_index].depth(vertex.local)
                 } else {
                     depth.vertex(center.to_array())
                 };
-                points[corner] = billboard_point(center, p.billboard, corner, depths[corner]);
+                points[corner] = billboard_point(
+                    center,
+                    p.billboard,
+                    corner,
+                    depths[corner],
+                    node_depth,
+                    vertex.local,
+                );
             }
             if !p.double_sided
                 && p.billboard.is_none()
@@ -1349,17 +1373,6 @@ fn draw_view(
             -d.dot(up) as i32,
             d.dot(forward) as i32,
         ]
-    };
-    let bucket_depth = |bucket: u32| (bucket as f32 * 8. / axis_scale).max(near + 0.01);
-    // Mirror packets already contain reflected X. Its display sprite flips the render target.
-    let pixel_right = if secondary && !split_screen {
-        -right
-    } else {
-        right
-    };
-    let vertex = |[x, y]: [i32; 2], depth: f32| {
-        let offset = pixel_right * (x as f32 * axis_scale) - up * y as f32;
-        eye + forward * depth + offset * (depth / lens as f32)
     };
     let mut drops = [[0; 4]; 12];
     let drop_count = contacts.drawn_drops(secondary, &mut drops);
@@ -1932,6 +1945,26 @@ fn line_pixels(
     }
 }
 
+// RTPS uses a normalized reciprocal with one refinement and a 17-bit quotient.
+fn gte_screen_offset(xy: [i32; 2], depth: u32, lens: i32, center: [i32; 2]) -> [i32; 2] {
+    let quotient = if lens as u32 >= 2 * depth {
+        0x1ffff
+    } else {
+        let shift = (depth as u16).leading_zeros();
+        let divisor = (depth << shift) as i32;
+        let index = (divisor - 0x7fc0) >> 7;
+        let seed = ((0x40000 / (index + 0x100) + 1) / 2).clamp(0x101, 0x200);
+        let correction = (0x80 - divisor * seed) >> 8;
+        let reciprocal = (seed * (0x20000 + correction) + 0x80) >> 8;
+        (((i64::from(lens) << shift) * i64::from(reciprocal) + 0x8000) >> 16).min(0x1ffff)
+    };
+    std::array::from_fn(|axis| {
+        let ir = xy[axis].clamp(-32768, 32767);
+        let pixel = ((i64::from(ir) * quotient) >> 16) as i32 + center[axis];
+        pixel.clamp(-1024, 1023) - center[axis]
+    })
+}
+
 // geomSprite divides signed DMD extents by SZ and clamps each half-size independently.
 fn sprite_half_size(extent: [i16; 2], lens: i32, depth: u32) -> [i32; 2] {
     extent.map(|v| (i32::from(v) * lens / depth.max(1) as i32).clamp(1, 500))
@@ -1982,8 +2015,21 @@ impl GeometryDepth {
         }
     }
 
+    fn vertex(self, point: [f32; 3]) -> u32 {
+        let z = self.axis.dot(Vec3::from_array(point).as_dvec3()) + self.translation;
+        z.clamp(0., 65535.) as u32
+    }
+}
+
+#[derive(Clone, Copy)]
+struct GeometryTransform {
+    rows: [[i32; 3]; 3],
+    translation: [i32; 3],
+}
+
+impl GeometryTransform {
     fn hierarchy(
-        root: tm1_core::drive::HierarchyDepth,
+        root: tm1_core::drive::HierarchyTransform,
         nodes: &[tm1_assets::scene::NodeTransform],
         [sin, cos]: [i16; 2],
     ) -> Vec<Self> {
@@ -1999,13 +2045,23 @@ impl GeometryDepth {
         }
         frames
             .into_iter()
-            .map(|frame| Self::from_world_matrix(frame.row, frame.translation()))
+            .map(|frame| Self {
+                rows: frame.rows,
+                translation: frame.translation(),
+            })
             .collect()
     }
 
-    fn vertex(self, point: [f32; 3]) -> u32 {
-        let z = self.axis.dot(Vec3::from_array(point).as_dvec3()) + self.translation;
-        z.clamp(0., 65535.) as u32
+    fn coordinate(self, axis: usize, point: [i16; 3]) -> i32 {
+        let product: i64 = self.rows[axis]
+            .into_iter()
+            .zip(point)
+            .map(|(a, b)| i64::from(a) * i64::from(b))
+            .sum();
+        self.translation[axis].wrapping_add((product >> 12) as i32)
+    }
+    fn depth(self, point: [i16; 3]) -> u32 {
+        self.coordinate(2, point).clamp(0, 65535) as u32
     }
 }
 
@@ -2823,6 +2879,26 @@ mod tests {
     }
 
     #[test]
+    fn projected_centers_match_gte_reference() {
+        // Reference checksums use DuckStation's 257-entry UNR table, RTPS IR/SXY saturation and native aspect.
+        for (lens, center, expected) in [
+            (91, [50, 15], 0xb59ff7ad),
+            (228, [160, 60], 0xc103de2b),
+            (228, [160, 120], 0x0b9809c7),
+        ] {
+            let mut hash = 0x811c9dc5u32;
+            for z in 0..=65535 {
+                for xy in [[-32769, 32768], [(z % 511) as i32 - 255, 119]] {
+                    for offset in gte_screen_offset(xy, z, lens, center) {
+                        hash = (hash ^ offset as u32).wrapping_mul(0x01000193);
+                    }
+                }
+            }
+            assert_eq!(hash, expected, "lens {lens} center {center:?}");
+        }
+    }
+
+    #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn sprite_half_sizes_match_jp_geom_sprite() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
@@ -2868,12 +2944,12 @@ mod tests {
         let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
         cpu.put(base, &data);
         let cs = 0x80008000;
-        let parent = tm1_core::drive::HierarchyDepth {
-            row: [1513, -3097, 947],
+        let parent = tm1_core::drive::HierarchyTransform {
+            rows: [[3678, 1780, -292], [-202, 1050, 3525], [1513, -3097, 947]],
             position: [77, -420, 151],
         };
-        for (i, v) in parent.row.into_iter().enumerate() {
-            cpu.put(cs + 0x40 + 2 * i as u32, &(v as i16).to_le_bytes());
+        for (i, v) in parent.rows.as_flattened().iter().copied().enumerate() {
+            cpu.put(cs + 0x34 + 2 * i as u32, &(v as i16).to_le_bytes());
         }
         for (i, v) in parent.position.into_iter().enumerate() {
             cpu.put(cs + 0x68 + 4 * i as u32, &v.to_le_bytes());
@@ -2905,7 +2981,7 @@ mod tests {
             }
             cpu.put(0x8018c484, &[0; 12]);
             cpu.call(0x800fd914, &[cs, root]);
-            let depths = GeometryDepth::hierarchy(parent, &body.transforms, wheel);
+            let depths = GeometryTransform::hierarchy(parent, &body.transforms, wheel);
             let mut pivots = std::collections::BTreeSet::new();
             for i in 0..cpu.word(0x8018c484) {
                 let record = 0x801acfe8 + 32 * i;
@@ -2913,16 +2989,19 @@ mod tests {
                 let matrix = 0x801aeb70 + 32 * cpu.word(record + 24);
                 // geomProc installs the translation from this object's recorded position.
                 cpu.call_until(0x80007000, &[matrix, record], 0x800f7a94);
-                let row = [12, 14, 16]
-                    .map(|k| (cpu.word(matrix + (k & !3)) >> (8 * (k & 3))) as i16 as i32);
-                let translation = cpu.word(matrix + 28) as i32;
+                let rows = std::array::from_fn(|i| {
+                    std::array::from_fn(|j| {
+                        let k = 2 * (3 * i + j) as u32;
+                        (cpu.word(matrix + (k & !3)) >> (8 * (k & 3))) as i16 as i32
+                    })
+                });
+                let translation = [20, 24, 28].map(|k| cpu.word(matrix + k) as i32);
                 for p in body.polygons.iter().filter(|p| p.object_id == id) {
                     let Some(Wheel::Hammerhead { pivot, .. }) = p.wheel else {
                         continue;
                     };
-                    if depths[p.transform_index].axis
-                        == GeometryDepth::from_world_matrix(row, translation).axis
-                        && depths[p.transform_index].translation == f64::from(translation)
+                    if depths[p.transform_index].rows == rows
+                        && depths[p.transform_index].translation == translation
                     {
                         pivots.insert(pivot.map(|v| v as i32));
                     }

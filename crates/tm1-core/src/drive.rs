@@ -1000,14 +1000,14 @@ fn hover_requests(
         .chain(closest.map(|p| (HoverSound::Motor, p)))
 }
 
-/// Position from the hierarchy stack and the third row of its active GTE matrix.
+/// Position from the hierarchy stack and its active GTE rotation matrix.
 #[derive(Clone, Copy)]
-pub struct HierarchyDepth {
-    pub row: [i32; 3],
+pub struct HierarchyTransform {
+    pub rows: [[i32; 3]; 3],
     pub position: [i32; 3],
 }
 
-impl HierarchyDepth {
+impl HierarchyTransform {
     pub fn child(self, offset: [i32; 3], rotation: Option<[[i16; 3]; 3]>) -> Self {
         let position = std::array::from_fn(|i| self.position[i].wrapping_add(offset[i]));
         let Some(rotation) = rotation else {
@@ -1021,26 +1021,29 @@ impl HierarchyDepth {
             position,
             false,
         );
-        let row = rotation.map(|axis| {
-            let sum: i32 = axis
-                .into_iter()
-                .zip(self.row)
-                .map(|(a, b)| i32::from(a) * b)
-                .sum();
-            (sum >> 12).clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+        let rows = self.rows.map(|row| {
+            rotation.map(|axis| {
+                let sum: i32 = axis
+                    .into_iter()
+                    .zip(row)
+                    .map(|(a, b)| i32::from(a) * b)
+                    .sum();
+                (sum >> 12).clamp(i32::from(i16::MIN), i32::from(i16::MAX))
+            })
         });
         Self {
-            row,
+            rows,
             position: local,
         }
     }
 
-    pub fn translation(self) -> i32 {
-        self.row
-            .into_iter()
-            .zip(self.position)
-            .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
-            / 4096
+    pub fn translation(self) -> [i32; 3] {
+        self.rows.map(|row| {
+            row.into_iter()
+                .zip(self.position)
+                .fold(0i32, |sum, (a, b)| sum.wrapping_add(a.wrapping_mul(b)))
+                / 4096
+        })
     }
 }
 
@@ -1111,9 +1114,9 @@ impl SoundListener {
         (self.eye, self.matrix[2], self.matrix[1])
     }
 
-    pub fn hierarchy_depth(&self) -> HierarchyDepth {
-        HierarchyDepth {
-            row: self.matrix[2],
+    pub fn hierarchy_transform(&self) -> HierarchyTransform {
+        HierarchyTransform {
+            rows: self.matrix,
             position: self.eye.map(i32::wrapping_neg),
         }
     }

@@ -1796,7 +1796,7 @@ fn positional_sound_matches_retail() {
             vec3_cpu(&mut cpu, node + 0x5c, offset);
             cpu.call_until(0x8010a774, &[view], 0x8010a9fc);
             assert_eq!(
-                listener.hierarchy_depth().translation(),
+                listener.hierarchy_transform().translation()[2],
                 cpu.word(WORLD + 0x50) as i32
             );
             // csUpdMat has filled the child matrix and translation by its next SetRotMatrix.
@@ -1814,15 +1814,20 @@ fn positional_sound_matches_retail() {
             );
             vec3_cpu(&mut cpu, child + 0x5c, position);
             cpu.call_until(0x800ff070, &[child, child + 0x200], 0x800ff148);
-            let child_depth = listener.hierarchy_depth().child(position, Some(rotation));
-            for (j, v) in child_depth.row.into_iter().enumerate() {
-                let offset = ((child + 0x40) & 0x1fffff) as usize + 2 * j;
+            let child_depth = listener
+                .hierarchy_transform()
+                .child(position, Some(rotation));
+            for (j, v) in child_depth.rows.as_flattened().iter().copied().enumerate() {
+                let offset = ((child + 0x34) & 0x1fffff) as usize + 2 * j;
                 assert_eq!(
                     v,
                     i16::from_le_bytes(cpu.ram[offset..offset + 2].try_into().unwrap()) as i32
                 );
             }
-            assert_eq!(child_depth.translation(), cpu.word(child + 0x50) as i32);
+            assert_eq!(
+                child_depth.translation(),
+                [0, 4, 8].map(|d| cpu.word(child + 0x48 + d) as i32)
+            );
             let matrix = ((WORLD + 0x34) & 0x1fffff) as usize;
             for (j, value) in listener.matrix.iter().flatten().enumerate() {
                 let at = matrix + 2 * j;
