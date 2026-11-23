@@ -90,6 +90,7 @@ pub struct Polygon {
     pub arena_switches: Vec<(u8, u8)>,
     pub health_stand: Option<(u8, u8)>,
     pub object_id: u32,
+    pub first_in_object: bool,
     pub source_offset: usize,
     pub vertices: Vec<Vertex>,
     pub texture: Option<TextureKey>,
@@ -269,6 +270,10 @@ impl<'a> Dmd<'a> {
     pub fn extract_kind(&self, kind: u16) -> Result<Scene> {
         self.extract(kind, None, false)
     }
+    pub fn battle_sky(&self) -> Result<Scene> {
+        self.extract(2, None, true)
+    }
+
     pub fn battle_world(&self) -> Result<Scene> {
         self.extract(1, None, true)
     }
@@ -1070,7 +1075,7 @@ impl<'a> Dmd<'a> {
         let count = u32le(self.data, p + 16)? as usize;
         ensure!(count < 100_000, "unreasonable polygon count");
         scene.object_ids.push(ptr);
-        for _ in 0..count {
+        for face in 0..count {
             let header = bytes(self.data, poly, 16)?;
             let len = header[2] as usize * 4;
             ensure!(len >= 16, "invalid polygon size");
@@ -1152,6 +1157,7 @@ impl<'a> Dmd<'a> {
                 arena_switches: Vec::new(),
                 health_stand: None,
                 object_id: ptr,
+                first_in_object: face == 0,
                 source_offset: poly,
                 vertices,
                 texture,

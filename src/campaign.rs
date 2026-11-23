@@ -120,7 +120,7 @@ pub(crate) fn arena_art(
         load_cockpit(disc, dmd, vehicle)?,
         scene,
         (!matches!(level, Level::Arena | Level::Arena5))
-            .then(|| dmd.extract_kind(2))
+            .then(|| dmd.battle_sky())
             .transpose()?,
         player_mesh,
         opponent_mesh,

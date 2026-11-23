@@ -52,8 +52,6 @@ impl CarPose {
 
 #[derive(Component)]
 pub struct WorldCamera;
-#[derive(Component)]
-pub struct SkyCamera;
 
 #[derive(Component)]
 pub struct MirrorCamera;
@@ -121,7 +119,7 @@ pub struct Arena {
     pub(crate) pause_art: crate::pause::Art,
     cockpit: tm1_assets::screen::Cockpit,
     scene: Scene,
-    sky: Option<Scene>,
+    sky: Option<BodyGeometry>,
     missile_models: [Option<Scene>; 2],
     merc_models: [Vec<Scene>; 2],
     pedestrians: Vec<Vec<Scene>>,
@@ -178,28 +176,34 @@ impl Arena {
         arrows: [SpriteFrame; 4],
         vram: Vram,
     ) -> Result<Self> {
+        let world_end = scene.polygons.len();
+        let append = |scene: &mut Scene, model: Scene| {
+            let start = scene.polygons.len();
+            scene.polygons.extend(model.polygons);
+            BodyGeometry {
+                transforms: model.transforms,
+                bounds: model.bounds,
+                polygons: start..scene.polygons.len(),
+                lods: model.lods.unwrap_or_default(),
+            }
+        };
+        let sky = sky.map(|mut model| {
+            // viewSetSky assigns the fixed bucket to the entire coordinate system.
+            for polygon in &mut model.polygons {
+                polygon.fixed_ot = 0xffe;
+            }
+            append(&mut scene, model)
+        });
         let vehicle_start = scene.polygons.len();
         let body_ranges = std::iter::once(vehicle)
             .chain(opponents)
-            .map(|variants| {
-                variants.map(|variant| {
-                    let start = scene.polygons.len();
-                    scene.polygons.extend(variant.polygons);
-                    BodyGeometry {
-                        transforms: variant.transforms,
-                        bounds: variant.bounds,
-                        polygons: start..scene.polygons.len(),
-                        lods: variant.lods.unwrap_or_default(),
-                    }
-                })
-            })
+            .map(|variants| variants.map(|model| append(&mut scene, model)))
             .collect();
         let mut tiles = BTreeMap::new();
         tiles.insert((None, false), 0);
         for p in scene
             .polygons
             .iter()
-            .chain(sky.iter().flat_map(|s| &s.polygons))
             .chain(missile_models.iter().flatten().flat_map(|s| &s.polygons))
             .chain(
                 merc_models
@@ -255,7 +259,7 @@ impl Arena {
         }
         let mut lo = Vec3::splat(f32::INFINITY);
         let mut hi = Vec3::splat(f32::NEG_INFINITY);
-        for p in &scene.polygons[..vehicle_start] {
+        for p in &scene.polygons[..world_end] {
             for v in &p.vertices {
                 let pos = world(v.position);
                 lo = lo.min(pos);
@@ -406,50 +410,6 @@ pub fn setup(
         subtract: false,
         order: 0,
     });
-    // The retail sky uses a fixed far ordering-table slot and follows the
-    // player horizontally. A background camera gives it independent depth.
-    if let Some(sky) = &arena.sky {
-        let mut batch = Batch::default();
-        // viewSetSky fixes the bucket at 0xffe. AddPrim prepends each face.
-        for polygon in sky.polygons.iter().rev() {
-            let mode =
-                PacketMode::polygon(polygon) as u8 | if polygon.double_sided { 0 } else { 0x20 };
-            let slot = arena.tiles[&(polygon.texture, polygon.semi_transparent)];
-            for &i in indices(polygon.vertices.len()) {
-                let v = &polygon.vertices[i];
-                let [r, g, b, _] = v.color;
-                batch.push(
-                    world(v.position),
-                    arena.uv(slot, v.uv.into()),
-                    [r, g, b, f32::from(mode)],
-                );
-            }
-        }
-        commands.spawn((
-            crate::campaign::StageEntity,
-            Mesh2d(meshes.add(batch.mesh())),
-            MeshMaterial2d(blend.clone()),
-            RenderLayers::layer(2),
-            NoFrustumCulling,
-        ));
-        commands.spawn((
-            crate::campaign::StageEntity,
-            WorldCamera,
-            SkyCamera,
-            Camera2d,
-            Camera {
-                order: -1,
-                ..default()
-            },
-            Projection::Perspective(PerspectiveProjection {
-                fov: 2. * (120. / BATTLE_FOCAL).atan(),
-                near: 1.,
-                far: 100000.,
-                ..default()
-            }),
-            RenderLayers::layer(2),
-        ));
-    }
     let mut mirror_image = Image::new_target_texture(
         MIRROR_WIDTH,
         MIRROR_HEIGHT,
@@ -458,41 +418,26 @@ pub fn setup(
     );
     mirror_image.sampler = ImageSampler::nearest();
     let mirror_target = images.add(mirror_image);
-    for sky in [false, true] {
-        if sky && arena.sky.is_none() {
-            continue;
-        }
-        let mirror = commands
-            .spawn((
-                crate::campaign::StageEntity,
-                WorldCamera,
-                MirrorCamera,
-                Camera2d,
-                Camera {
-                    order: if sky { -3 } else { -2 },
-                    sub_camera_view: duel.is_none().then(mirror_subview),
-                    is_active: false,
-                    clear_color: if !sky && arena.sky.is_some() {
-                        ClearColorConfig::None
-                    } else {
-                        ClearColorConfig::Default
-                    },
-                    ..default()
-                },
-                bevy::camera::RenderTarget::Image(mirror_target.clone().into()),
-                Projection::Perspective(PerspectiveProjection {
-                    fov: 2. * (MIRROR_HEIGHT as f32 / (2. * MIRROR_FOCAL)).atan(),
-                    near: if sky { 1. } else { arena.radius * 0.005 },
-                    far: if sky { 100000. } else { arena.radius * 10. },
-                    ..default()
-                }),
-                RenderLayers::layer(if sky { 2 } else { 3 }),
-            ))
-            .id();
-        if sky {
-            commands.entity(mirror).insert(SkyCamera);
-        }
-    }
+    commands.spawn((
+        crate::campaign::StageEntity,
+        WorldCamera,
+        MirrorCamera,
+        Camera2d,
+        Camera {
+            order: -2,
+            sub_camera_view: duel.is_none().then(mirror_subview),
+            is_active: false,
+            ..default()
+        },
+        bevy::camera::RenderTarget::Image(mirror_target.clone().into()),
+        Projection::Perspective(PerspectiveProjection {
+            fov: 2. * (MIRROR_HEIGHT as f32 / (2. * MIRROR_FOCAL)).atan(),
+            near: arena.radius * 0.005,
+            far: arena.radius * 10.,
+            ..default()
+        }),
+        RenderLayers::layer(3),
+    ));
     commands.spawn((
         crate::campaign::StageEntity,
         MirrorDisplay,
@@ -509,12 +454,6 @@ pub fn setup(
         Camera2d,
         Camera {
             order: 0,
-            clear_color: if arena.sky.is_some() {
-                ClearColorConfig::None
-            } else {
-                ClearColorConfig::Default
-            },
-
             ..default()
         },
         Projection::Perspective(PerspectiveProjection {
@@ -838,15 +777,7 @@ pub fn update(
     drive: Res<crate::driving::Drive>,
     capture: Res<crate::smoke::Capture>,
     mut timings: Local<Vec<f64>>,
-    mut cameras: Query<
-        (
-            &mut Transform,
-            &mut Camera,
-            Has<SkyCamera>,
-            Has<MirrorCamera>,
-        ),
-        With<WorldCamera>,
-    >,
+    mut cameras: Query<(&mut Transform, &mut Camera, Has<MirrorCamera>), With<WorldCamera>>,
     window: Single<&Window>,
     mut renderer: PacketRenderer,
 ) {
@@ -865,7 +796,7 @@ pub fn update(
     let rear_view =
         mirror.then(|| tm1_core::drive::SoundListener::rear_view(&drive.player, &drive.camera));
     let rear_pose = rear_view.map(camera_pose);
-    for (mut camera, mut settings, sky, rear) in &mut cameras {
+    for (mut camera, mut settings, rear) in &mut cameras {
         if rear {
             settings.is_active = mirror;
             let Some((rear_eye, rear_forward, rear_up)) = rear_pose else {
@@ -878,14 +809,6 @@ pub fn update(
             if !arena.overview {
                 camera.scale.x = VIEW_SCALE_X;
             }
-        }
-        if sky {
-            let origin = if rear {
-                world(drive.player.position().map(|v| v as f32))
-            } else {
-                drive.primary_cars[0].origin
-            };
-            camera.translation -= Vec3::new(origin.x, 0., origin.z);
         }
     }
 
@@ -1061,6 +984,34 @@ fn draw_view(
             }),
     );
     let mut hidden_geometry = vec![false; arena.scene.polygons.len()];
+    let sky_origin = poses[usize::from(split_screen && secondary)].origin * Vec3::new(1., 0., 1.);
+    let sky_frames = arena.sky.as_ref().and_then(|sky| {
+        let hidden = &mut hidden_geometry[sky.polygons.clone()];
+        // viewSetSky creates sky[1] only for split screen.
+        if mirror {
+            hidden.fill(true);
+            return None;
+        }
+        let origin = [sky_origin.x as i32, -sky_origin.z as i32, 0];
+        let frames = GeometryTransform::hierarchy(
+            root?.child(origin, None),
+            &sky.transforms,
+            wheel_rotation,
+        );
+        for bound in &sky.bounds {
+            if !frames[bound.transform].contains(bound, 1200) {
+                hidden[bound.polygons.clone()].fill(true);
+            }
+        }
+        for lod in &sky.lods {
+            lod.hide_other_branches(
+                [eye.x - sky_origin.x, sky_origin.z - eye.z, eye.y],
+                3,
+                hidden,
+            );
+        }
+        Some(frames)
+    });
     let mut car_depths = Vec::with_capacity(poses.len());
     for (stages, pose) in arena.body_ranges.iter().zip(poses) {
         let body = &stages[pose.body_stage];
@@ -1253,6 +1204,7 @@ fn draw_view(
             emit(corners, DrawPass::Hierarchy, false);
         }
     };
+    let mut objects = 0;
     for i in visible {
         if hidden_geometry[i] {
             continue;
@@ -1289,14 +1241,26 @@ fn draw_view(
         if p.pickup.is_some_and(|id| hidden & (1u64 << id) != 0) {
             continue;
         }
+        if view.is_some() && !admit_object_face(&mut objects, p) {
+            break;
+        }
         let slot = arena.tiles[&(p.texture, p.semi_transparent)];
         let car = (i >= arena.vehicle_start).then(|| {
             arena
                 .body_ranges
                 .partition_point(|ranges| ranges[2].polygons.end <= i)
         });
+        let sky = arena
+            .sky
+            .as_ref()
+            .is_some_and(|sky| sky.polygons.contains(&i));
+        let world_frames = if sky {
+            sky_frames.as_ref()
+        } else {
+            world_depths.as_ref()
+        };
         let node_depth = car
-            .map_or(world_depths.as_ref(), |slot| car_depths.get(slot))
+            .map_or(world_frames, |slot| car_depths.get(slot))
             .map(|table| table[p.transform_index]);
         let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
             let local = wheel_vertex(position, p.wheel);
@@ -1309,7 +1273,7 @@ fn draw_view(
                             .sum()
                     }))
             } else {
-                world(local)
+                world(local) + if sky { sky_origin } else { Vec3::ZERO }
             }
         }) else {
             continue;
@@ -1403,6 +1367,9 @@ fn draw_view(
                     .any(|a| a.selected(player.frame()) != a.child)
             {
                 continue;
+            }
+            if view.is_some() && !admit_object_face(&mut objects, p) {
+                break;
             }
             let node_depth = model_depth.as_ref().map(|t| t[p.transform_index]);
             let Some((points, depths, screen)) = face_points(p, node_depth, &|position| {
@@ -2051,6 +2018,17 @@ impl PacketCorner {
     }
 }
 
+// hierTraverse reserves an object slot before geomProc checks any of its faces.
+fn admit_object_face(count: &mut usize, polygon: &tm1_assets::scene::Polygon) -> bool {
+    if polygon.first_in_object {
+        if *count == 220 {
+            return false;
+        }
+        *count += 1;
+    }
+    true
+}
+
 fn queue_subdivision(count: &mut usize, marked: bool, bucket: u32) -> bool {
     if marked && bucket < 100 && *count < 200 {
         *count += 1;
@@ -2392,7 +2370,6 @@ pub fn duel_view(
             &mut Transform,
             &mut Camera,
             &mut Projection,
-            Has<SkyCamera>,
             Has<MirrorCamera>,
         ),
         With<WorldCamera>,
@@ -2491,7 +2468,7 @@ pub fn duel_view(
         let top = if slot == 0 { 0 } else { height / 2 };
         let h = if slot == 0 { height / 2 } else { height - top };
         let focal = window.height() * BATTLE_FOCAL / 240.;
-        for (mut transform, mut cam, mut projection, sky, second) in &mut cameras {
+        for (mut transform, mut cam, mut projection, second) in &mut cameras {
             if usize::from(second) != slot {
                 continue;
             }
@@ -2506,9 +2483,6 @@ pub fn duel_view(
             }
             *transform = Transform::from_translation(eye).looking_to(forward, up);
             transform.scale.x = VIEW_SCALE_X;
-            if sky {
-                transform.translation -= poses[slot].origin * Vec3::new(1., 0., 1.);
-            }
         }
         let packets = draw_view(
             &arena,
@@ -2713,6 +2687,30 @@ mod tests {
 
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
+    fn sky_allocation_matches_jp_view_modes() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let exe = disc.read("SIPS_600.07").unwrap();
+        for split in [false, true] {
+            let mut cpu = crate::reference_cpu::Cpu::new(&exe);
+            let sky = 0x80008000;
+            let node = 0x80009000u32;
+            cpu.put(sky + 0x104, &node.to_le_bytes());
+            cpu.call(0x800ffad8, &[u32::from(split)]);
+            cpu.call(0x8010ac38, &[sky]);
+            assert_eq!(cpu.call(0x8010aca0, &[0]), sky);
+            assert_eq!(cpu.word(sky), 0xffe);
+            let second = cpu.call(0x8010aca0, &[1]);
+            assert_eq!(second != 0, split);
+            if split {
+                assert_ne!(second, sky);
+                assert_eq!(cpu.word(second + 0x104), node);
+                assert_eq!(cpu.word(second), 0xffe);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
     fn fixed_bucket_skies_use_opaque_polygons() {
         let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
         for path in [
@@ -2735,9 +2733,19 @@ mod tests {
             let data = disc.read(&format!("{path}.DMD")).unwrap();
             let sky = tm1_assets::scene::Dmd::parse(&data)
                 .unwrap()
-                .extract_kind(2)
+                .battle_sky()
                 .unwrap();
             assert!(!sky.polygons.is_empty());
+            assert!(sky.visibility.is_empty(), "{path}");
+            assert_eq!(
+                sky.polygons
+                    .iter()
+                    .filter(|p| p.first_in_object)
+                    .map(|p| p.object_id)
+                    .collect::<Vec<_>>(),
+                sky.object_ids,
+                "{path}"
+            );
             assert!(
                 sky.polygons.iter().all(|p| p.fixed_ot == 0
                     && matches!(
@@ -3313,6 +3321,119 @@ mod tests {
             }
             assert!(total > 0, "{name} has no reference objects");
         }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn battle_geometry_has_a_first_face_for_each_object_occurrence() {
+        use tm1_core::drive::{Level::*, Vehicle};
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut paths = std::collections::BTreeSet::new();
+        for level in [
+            Arena, Warehouse, Freeway, CityPark, Cyburbia, Rooftops, Arena5,
+        ] {
+            if let Some(name) = level.duel_database() {
+                paths.insert(format!("UA2PLAY/{name}.DMD"));
+            }
+            for car in Vehicle::ROSTER {
+                paths.insert(format!("UADMD/{}.DMD", level.database(car)));
+            }
+        }
+        for path in paths {
+            let data = disc.read(&path).unwrap();
+            let db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+            let check = |model: tm1_assets::scene::Scene| {
+                assert_eq!(
+                    model
+                        .polygons
+                        .iter()
+                        .filter(|p| p.first_in_object)
+                        .map(|p| p.object_id)
+                        .collect::<Vec<_>>(),
+                    model.object_ids,
+                    "{path} root {:#x}",
+                    model.root_id
+                );
+            };
+            check(
+                db.battle_geometry(
+                    db.roots.iter().any(|r| r.1 == 3) && !db.roots.iter().any(|r| r.1 == 2),
+                )
+                .unwrap(),
+            );
+            for &(_, kind) in &db.roots {
+                if (10..=130).contains(&kind) && kind % 10 == 0 {
+                    for stage in db.vehicle_bodies_with_lights(kind, true).unwrap() {
+                        check(stage);
+                    }
+                } else if matches!(kind, 201 | 312) {
+                    check(db.extract_kind(kind).unwrap());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn shared_object_limit_matches_retail_traversal() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut data = disc.read("UADMD/WH1.DMD").unwrap();
+        let db = tm1_assets::scene::Dmd::parse(&data).unwrap();
+        let world = db.battle_world().unwrap();
+        let ids: Vec<_> = world
+            .polygons
+            .iter()
+            .filter(|p| p.first_in_object)
+            .map(|p| p.object_id)
+            .collect();
+        assert_eq!(ids, world.object_ids);
+        let base = u32::from_le_bytes(data[12..16].try_into().unwrap());
+        // A group of repeated Warehouse objects is traversed four times as separate CS roots.
+        // Bypass spatial rejection via the normal object and group flags.
+        let count = 79;
+        let offset = data.len().next_multiple_of(4);
+        let group = base + offset as u32;
+        data.resize(offset + 24 + 4 * count, 0);
+        data[24..28].copy_from_slice(&group.to_le_bytes());
+        data[offset] = 1;
+        data[offset + 2..offset + 4].copy_from_slice(&0xfffeu16.to_le_bytes());
+        data[offset + 20] = count as u8;
+        data[offset + 21] = 4;
+        for i in 0..count {
+            let id = ids[(i / 3) % ids.len()];
+            let obj = (id - base) as usize;
+            data[obj + 25] |= 0x20;
+            let child = offset + 24 + i * 4;
+            data[child..child + 4].copy_from_slice(&id.to_le_bytes());
+        }
+        let scene = tm1_assets::scene::Dmd::parse(&data)
+            .unwrap()
+            .extract_kind(0xfffe)
+            .unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        cpu.put(base, &data);
+        let mut admitted = 0;
+        let mut expected_ids = Vec::new();
+        for _ in 0..4 {
+            cpu.call(0x800fd914, &[0x80008000, group]);
+            for p in &scene.polygons {
+                if !admit_object_face(&mut admitted, p) {
+                    break;
+                }
+                if p.first_in_object {
+                    expected_ids.push(p.object_id);
+                }
+            }
+            let count = cpu.word(0x8018c484);
+            assert_eq!(admitted, count as usize);
+            assert_eq!(
+                expected_ids,
+                (0..count)
+                    .map(|j| cpu.word(0x801acfe8 + 32 * j))
+                    .collect::<Vec<_>>()
+            );
+        }
+        assert_eq!(admitted, 220);
     }
 
     #[test]
