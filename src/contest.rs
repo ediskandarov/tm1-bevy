@@ -749,11 +749,9 @@ impl Contest {
             Page::DuelJoin(Some(_)) if matches!(self.page, Page::DuelGarage { .. }) => 1,
             Page::DuelJoin(_) => return None,
             Page::DuelGarage { slot, bio, .. } => {
-                let (select, vertical, horizontal) = if slot == 0 {
-                    (Space, [KeyW, KeyS], [KeyA, KeyD])
-                } else {
-                    (Comma, [ArrowUp, ArrowDown], [ArrowLeft, ArrowRight])
-                };
+                let [up, down, left, right, select] = duel_garage_keys(slot);
+                let vertical = [up, down];
+                let horizontal = [left, right];
                 if !bio && keys.any_just_pressed(vertical) {
                     0
                 } else if !bio && horizontal.into_iter().all(|key| keys.pressed(key)) {
@@ -832,11 +830,7 @@ impl Contest {
             }
             Page::DuelGarage { slot, second, bio } => {
                 use KeyCode::*;
-                let [up, down, left, right, select] = if slot == 0 {
-                    [KeyW, KeyS, KeyA, KeyD, Space]
-                } else {
-                    [ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Comma]
-                };
+                let [up, down, left, right, select] = duel_garage_keys(slot);
                 if bio {
                     if key(select) || key(Escape) {
                         self.page = Page::DuelGarage {
@@ -1334,6 +1328,7 @@ pub fn update(world: &mut World) {
         let join_wait = join_held || matches!(menu.page, Page::DuelJoin(Some(_)));
         let reset_idle = match menu.page {
             Page::DuelJoin(_) => join_held,
+            Page::DuelGarage { slot, bio: false, .. } => keys.any_pressed(duel_garage_keys(slot)) || keys.pressed(KeyCode::Escape),
             Page::Contest => keys.any_pressed([KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ArrowLeft,
                 KeyCode::ArrowRight, KeyCode::Enter, KeyCode::KeyD, KeyCode::KeyP, KeyCode::Escape]),
             _ => controls.map_or(held, |input| input.reset_idle),
@@ -1508,6 +1503,15 @@ pub(crate) fn menu_world() -> World {
     update(&mut world);
     world.init_resource::<Time<Real>>();
     world
+}
+
+fn duel_garage_keys(slot: usize) -> [KeyCode; 5] {
+    use KeyCode::*;
+    if slot == 0 {
+        [KeyW, KeyS, KeyA, KeyD, Space]
+    } else {
+        [ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Comma]
+    }
 }
 
 #[cfg(test)]
@@ -2567,6 +2571,44 @@ mod tests {
         update(&mut world);
         assert_eq!(world.resource::<Contest>().page, Page::Title);
         assert_eq!(world.resource::<Contest>().garage.voices().count(), 0);
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn inactive_duel_player_cannot_extend_showroom_timer() {
+        use KeyCode::*;
+        for (slot, select, inactive) in [(0, Space, Comma), (1, Comma, Space)] {
+            for second in [false, true] {
+                let mut world = menu_world();
+                press(&mut world, ArrowDown);
+                press(&mut world, Enter);
+                if second {
+                    press(&mut world, inactive);
+                    press(&mut world, inactive);
+                } else {
+                    press(&mut world, select);
+                }
+                world.resource_mut::<ButtonInput<KeyCode>>().press(inactive);
+                world
+                    .resource_mut::<Time<Real>>()
+                    .advance_by(Duration::from_secs(300));
+                update(&mut world);
+                assert_eq!(
+                    world.resource::<Contest>().page,
+                    Page::DuelGarage {
+                        slot,
+                        second,
+                        bio: false
+                    }
+                );
+                world
+                    .resource_mut::<Time<Real>>()
+                    .advance_by(Duration::from_nanos(16_666_667));
+                update(&mut world);
+                assert_eq!(world.resource::<Contest>().page, Page::Title);
+                assert_eq!(world.resource::<Contest>().garage.voices().count(), 0);
+            }
+        }
     }
 
     #[test]
