@@ -341,7 +341,9 @@ impl Contest {
                                 .spawn((
                                     campaign::StageEntity,
                                     AudioPlayer::new(sound),
-                                    PlaybackSettings::ONCE,
+                                    PlaybackSettings::ONCE.with_volume(
+                                        bevy::audio::Volume::Linear(crate::music::serial_gain(127)),
+                                    ),
                                 ))
                                 .id(),
                         );

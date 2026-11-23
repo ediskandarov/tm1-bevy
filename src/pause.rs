@@ -28,7 +28,8 @@ impl Default for Settings {
             music: 7,
             effects: 7,
             layout: 1,
-            mix: 49,
+            // SHELL.c applies both sliders after the logos, effects last.
+            mix: 99 - Self::percent(7),
         }
     }
 }
@@ -36,14 +37,14 @@ impl Settings {
     fn percent(level: u8) -> u8 {
         if level == 14 { 99 } else { 7 * level }
     }
-    // UA_SOUND.c uasoundSetMusicVolume. Normalize to the initial stage mix.
+    // UA_SOUND.c supplies a seven-bit level to the SDK serial-input mixer.
     pub fn cd_gain(self) -> f32 {
-        (match self.mix {
+        let volume = match self.mix {
             0 => 0,
             99 => 127,
             v => 97 * u16::from(v) / 99 + 30,
-        }) as f32
-            * (0.35 / 78.)
+        };
+        crate::music::serial_gain(volume)
     }
     pub fn effects_volume(self) -> u8 {
         (match self.mix {
@@ -495,8 +496,41 @@ pub fn draw(
 }
 
 #[cfg(test)]
-mod abort_tests {
+mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn audio_balance_matches_retail_cd_registers() {
+        let disc = Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        let mut cpu = crate::reference_cpu::Cpu::new(&disc.read("SIPS_600.07").unwrap());
+        let spu = 0x80020000u32;
+        cpu.put(0x8018ba24, &spu.to_le_bytes());
+        // Reproduce the shell initialization order, starting from the disc slider defaults.
+        cpu.call(0x8013cb14, &[]);
+        cpu.call(0x8013cbd0, &[]);
+        let default_register = (Settings::default().cd_gain() * 32768.) as u32;
+        assert_eq!(cpu.word(spu + 0x1b0), default_register * 0x10001);
+        assert_eq!(
+            cpu.word(0x8016fed0),
+            u32::from(Settings::default().effects_volume())
+        );
+        for mix in 0..=99 {
+            let options = Settings {
+                mix,
+                ..Settings::default()
+            };
+            cpu.put(spu + 0x1b0, &u32::MAX.to_le_bytes());
+            cpu.call(0x8010888c, &[u32::from(mix)]);
+            let register = (options.cd_gain() * 32768.) as u32;
+            assert_eq!(
+                cpu.word(spu + 0x1b0),
+                register | (register << 16),
+                "mix {mix}"
+            );
+            assert_eq!(cpu.word(0x8016fed0), u32::from(options.effects_volume()));
+        }
+    }
+
     #[test]
     #[ignore = "requires the supported TM1_CUE"]
     fn abort_wait_matches_jp_field_poll() {

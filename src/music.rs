@@ -17,6 +17,11 @@ use tm1_assets::disc::Disc;
 const SECTOR_BYTES: usize = 2352;
 const CD_START: usize = 150 * SECTOR_BYTES;
 
+/// SsSetSerialVol writes a signed Q15 multiplier to each CD input register.
+pub fn serial_gain(volume: u16) -> f32 {
+    (u32::from(volume) * 32767 / 127) as f32 / 32768.
+}
+
 #[derive(Asset, TypePath, Clone)]
 pub struct CdTrack {
     pcm: Arc<[u8]>,

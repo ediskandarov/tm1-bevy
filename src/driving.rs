@@ -1613,7 +1613,10 @@ mod tests {
         let drive = app.world().resource::<Drive>();
         assert_eq!(drive.pause, Some(Page::Audio(0)));
         assert_eq!((drive.settings.music, drive.settings.effects), (8, 6));
-        assert!(drive.settings.cd_gain() > 0.35 && drive.settings.effects_volume() < 33);
+        assert!(
+            drive.settings.cd_gain() > crate::pause::Settings::default().cd_gain()
+                && drive.settings.effects_volume() < 33
+        );
         assert_eq!(drive.player.frame(), frame);
         for key in [ArrowUp, Enter, KeyP, ArrowUp, Enter] {
             tap(&mut app, key);
