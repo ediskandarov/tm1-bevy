@@ -8,7 +8,7 @@ use std::{
     io::Read,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::Duration,
 };
@@ -26,6 +26,8 @@ pub fn serial_gain(volume: u16) -> f32 {
 pub struct CdTrack {
     pcm: Arc<[u8]>,
     normal_end: usize,
+    first_lba: usize,
+    resume_count: Arc<AtomicU32>,
     extended: Arc<AtomicBool>,
 }
 
@@ -53,8 +55,14 @@ impl CdTrack {
         Ok(Self {
             pcm: pcm.into(),
             normal_end,
+            first_lba: next_bin_sector as usize - byte_count / SECTOR_BYTES,
+            resume_count: Arc::default(),
             extended: Arc::default(),
         })
+    }
+
+    pub fn resume_from_cd_report(&self) {
+        self.resume_count.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn extend_loop(&self, extended: bool) {
@@ -65,6 +73,7 @@ impl CdTrack {
 pub struct CdPlayback {
     track: CdTrack,
     cursor: usize,
+    resume_count: u32,
 }
 
 impl Decodable for CdTrack {
@@ -73,6 +82,7 @@ impl Decodable for CdTrack {
         CdPlayback {
             track: self.clone(),
             cursor: CD_START,
+            resume_count: self.resume_count.load(Ordering::Relaxed),
         }
     }
 }
@@ -80,8 +90,17 @@ impl Decodable for CdTrack {
 impl Iterator for CdPlayback {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
-        // screenAudioOptions changes EndPos while soundResumePlayDA resumes
-        // from cdInterruptLoc. Only the next loop boundary changes.
+        // The game stores the last absolute minute and second, with sector zero.
+        // A new decoder starts at StartPos. Only an interrupted decoder rewinds.
+        if self.cursor % 4 == 0 {
+            let count = self.track.resume_count.load(Ordering::Relaxed);
+            if count != self.resume_count {
+                self.resume_count = count;
+                let lba = self.track.first_lba + self.cursor / SECTOR_BYTES;
+                let reported = lba - lba % 75;
+                self.cursor = CD_START.max((reported - self.track.first_lba) * SECTOR_BYTES);
+            }
+        }
         if self.cursor == self.track.pcm.len()
             || (self.cursor == self.track.normal_end
                 && !self.track.extended.load(Ordering::Relaxed))
@@ -166,6 +185,7 @@ pub struct ArenaMusic {
     opening: Handle<CdTrack>,
     battle: Option<Handle<CdTrack>>,
     restart: u32,
+    interrupted: bool,
 }
 pub fn start(
     mut commands: Commands,
@@ -182,6 +202,7 @@ pub fn start(
                 opening,
                 battle: music.battle.take().map(|s| assets.add(s)),
                 restart: drive.audio_restart_count,
+                interrupted: false,
             },
             player,
             PlaybackSettings::ONCE.with_volume(Volume::Linear(drive.settings.cd_gain())),
@@ -205,12 +226,14 @@ pub fn control(
         return;
     };
     let volume = Volume::Linear(drive.settings.cd_gain());
-    let pause = (drive.pause.is_some()
+    let interrupted = (drive.pause.is_some()
         && !matches!(drive.pause, Some(crate::pause::Page::Audio(_))))
         || drive.showing_boss_intro()
         || drive.lost_life_elapsed().is_some()
-        || drive.lives == 0
-        || !window.focused;
+        || drive.lives == 0;
+    let resumed = tracks.interrupted && !interrupted;
+    tracks.interrupted = interrupted;
+    let pause = interrupted || !window.focused;
     let restart = tracks.restart != drive.audio_restart_count;
     tracks.restart = drive.audio_restart_count;
     let audio_options = matches!(drive.pause, Some(crate::pause::Page::Audio(_)));
@@ -232,8 +255,13 @@ pub fn control(
             .insert(AudioPlayer(desired.clone()));
         return;
     }
-    if audio_options && let Some(track) = assets.get(desired) {
-        track.extend_loop(true);
+    if let Some(track) = assets.get(desired) {
+        if resumed {
+            track.resume_from_cd_report();
+        }
+        if audio_options {
+            track.extend_loop(true);
+        }
     }
     let Some(mut sink) = sink else { return };
     sink.set_volume(volume);
@@ -266,7 +294,7 @@ mod tests {
             );
             sector += (track.size / SECTOR_BYTES as u64) as u32;
         }
-        for addr in [0x80156540, 0x801632b8] {
+        for addr in [0x80156540, 0x801632b8, 0x80156a4c, 0x80156a7c] {
             cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         for number in 2..=8 {
@@ -297,6 +325,40 @@ mod tests {
                 }
             }
 
+            // Follow an absolute position report through interrupt, save and resume.
+            // Only CD hardware calls are stubbed in the interrupt/resume routines.
+            for position in [start, start + 74, start + 75, start + 83, end - 1] {
+                cpu.put(0x8018c4e4, &start.to_le_bytes());
+                cpu.put(0x8018c4e8, &end.to_le_bytes());
+                cpu.put(0x8018bf68, &1u32.to_le_bytes());
+                let report = 0x80010000;
+                cpu.call(0x80156f80, &[position, report + 3]);
+                cpu.call(0x80105c78, &[1, report]);
+                cpu.call(0x8010597c, &[]);
+                let mut resumed_loc = None;
+                cpu.call_observed(0x80105a1c, &[], 0x80000080, |cpu| {
+                    if cpu.pc() == 0x80156a7c && cpu.r[4] == 3 {
+                        resumed_loc = Some(cpu.r[5]);
+                    }
+                });
+                let resumed = cpu.call(0x80157084, &[resumed_loc.unwrap()]);
+                let offset = (resumed - track_start) as usize * SECTOR_BYTES;
+                let mut playback = track.decoder();
+                playback.cursor = (position - track_start) as usize * SECTOR_BYTES + 168;
+                track.resume_from_cd_report();
+                for bytes in track.pcm[offset..offset + 256].chunks_exact(2) {
+                    assert_eq!(
+                        playback.next(),
+                        Some(f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.)
+                    );
+                }
+                assert_eq!(
+                    playback.cursor,
+                    offset + 256,
+                    "track {number} sector {position}"
+                );
+                assert_eq!(track.decoder().cursor, CD_START);
+            }
             let mut playback = track.decoder();
             playback.cursor = track.normal_end - 2;
             playback.next();

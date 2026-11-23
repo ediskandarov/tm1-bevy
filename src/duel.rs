@@ -453,10 +453,13 @@ pub fn pause_menu(
             } else {
                 1.
             });
-            if matches!(duel.pause, Some(Page::Audio(_)))
-                && let Some(track) = music.and_then(|p| tracks.get(&p.0))
-            {
-                track.extend_loop(true);
+            if let Some(track) = music.and_then(|p| tracks.get(&p.0)) {
+                if before.is_some() && !matches!(before, Some(Page::Audio(_))) && !playback.paused {
+                    track.resume_from_cd_report();
+                }
+                if matches!(duel.pause, Some(Page::Audio(_))) {
+                    track.extend_loop(true);
+                }
             }
             if let Some(mut sink) = sink {
                 sink.set_volume(playback.volume);
