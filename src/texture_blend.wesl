@@ -30,8 +30,12 @@ fn vertex(input: Vertex) -> PacketVertex {
 
 // Vertex alpha identifies the packet's PS1 blend mode. Atlas alpha encodes STP.
 @fragment
-fn fragment(in: PacketVertex) -> @location(0) vec4<f32> {
-    let mode = in.mode;
+fn fragment(in: PacketVertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    // Static sky faces use the same clockwise winding as the CPU geometry pass.
+    if (in.mode & 32u) != 0u && front {
+        discard;
+    }
+    let mode = in.mode & 15u;
     let texel = textureSample(atlas, nearest, in.uv);
     let ordinary = texel.a > 0.75;
     if texel.a == 0.0 || (mode == 2u && ordinary) || (mode == 5u && !ordinary) {

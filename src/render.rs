@@ -7,7 +7,6 @@ use bevy::{
     image::ImageSampler,
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
-    sprite_render::AlphaMode2d,
 };
 use std::collections::BTreeMap;
 use tm1_assets::{
@@ -275,7 +274,6 @@ pub fn setup(
     mut commands: Commands,
     mut arena: ResMut<Arena>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
     mut packet_materials: ResMut<Assets<crate::texture_blend::TextureBlend>>,
     mut images: ResMut<Assets<Image>>,
 ) {
@@ -354,11 +352,6 @@ pub fn setup(
     ));
     let texture = images.add(image);
     arena.atlas = texture.clone();
-    let masked = materials.add(ColorMaterial {
-        texture: Some(texture.clone()),
-        alpha_mode: AlphaMode2d::Mask(0.5),
-        ..default()
-    });
     let blend = packet_materials.add(crate::texture_blend::TextureBlend {
         atlas: texture,
         subtract: false,
@@ -368,17 +361,25 @@ pub fn setup(
     // player horizontally. A background camera gives it independent depth.
     if let Some(sky) = &arena.sky {
         let mut batch = Batch::default();
-        for polygon in &sky.polygons {
+        // viewSetSky fixes the bucket at 0xffe. AddPrim prepends each face.
+        for polygon in sky.polygons.iter().rev() {
+            let mode =
+                PacketMode::polygon(polygon) as u8 | if polygon.double_sided { 0 } else { 0x20 };
             let slot = arena.tiles[&(polygon.texture, polygon.semi_transparent)];
             for &i in indices(polygon.vertices.len()) {
                 let v = &polygon.vertices[i];
-                batch.push(world(v.position), arena.uv(slot, v.uv.into()), v.color);
+                let [r, g, b, _] = v.color;
+                batch.push(
+                    world(v.position),
+                    arena.uv(slot, v.uv.into()),
+                    [r, g, b, f32::from(mode)],
+                );
             }
         }
         commands.spawn((
             crate::campaign::StageEntity,
             Mesh2d(meshes.add(batch.mesh())),
-            MeshMaterial2d(masked.clone()),
+            MeshMaterial2d(blend.clone()),
             RenderLayers::layer(2),
             NoFrustumCulling,
         ));
@@ -2390,6 +2391,44 @@ mod tests {
                     sprite.texture.page
                 );
             }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires the supported TM1_CUE"]
+    fn fixed_bucket_skies_use_opaque_polygons() {
+        let disc = tm1_assets::disc::Disc::open(std::env::var_os("TM1_CUE").unwrap()).unwrap();
+        for path in [
+            "UADMD/WH1",
+            "UADMD/WH2",
+            "UADMD/XFWY1",
+            "UADMD/XFWY2",
+            "UADMD/PARK1",
+            "UADMD/PARK2",
+            "UADMD/SUBURB1",
+            "UADMD/SUBURB2",
+            "UADMD/ROOF1",
+            "UADMD/ROOF2",
+            "UA2PLAY/2PWH",
+            "UA2PLAY/2PFWY",
+            "UA2PLAY/2PPARK",
+            "UA2PLAY/2PCANALS",
+            "UA2PLAY/2PROOF",
+        ] {
+            let data = disc.read(&format!("{path}.DMD")).unwrap();
+            let sky = tm1_assets::scene::Dmd::parse(&data)
+                .unwrap()
+                .extract_kind(2)
+                .unwrap();
+            assert!(!sky.polygons.is_empty());
+            assert!(
+                sky.polygons.iter().all(|p| p.fixed_ot == 0
+                    && matches!(
+                        PacketMode::polygon(p),
+                        PacketMode::Opaque | PacketMode::UntexturedOpaque
+                    )),
+                "{path}"
+            );
         }
     }
 
