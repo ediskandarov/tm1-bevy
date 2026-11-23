@@ -209,7 +209,7 @@ mod tests {
             cpu.put(addr, &[8, 0, 224, 3, 0, 0, 0, 0]);
         }
         cpu.call(0x80103f0c, &[]);
-        let matrix = |address| -> [[i16; 3]; 3] {
+        let matrix = |cpu: &Cpu, address| -> [[i16; 3]; 3] {
             std::array::from_fn(|i| {
                 std::array::from_fn(|j| {
                     let a = address + 2 * (3 * i + j) as u32;
@@ -221,16 +221,23 @@ mod tests {
         let db = Dmd::parse(&data).unwrap();
         let bodies = db.vehicle_bodies_with_lights(20, true).unwrap();
         let mut samples = 0;
-        for environment in 0..4 {
-            let addr = 0x801960b8 + 0x4c * environment;
-            let light = matrix(addr + 0x2c);
-            let colors = matrix(addr + 0x0c);
+        let battle = (0..4).map(|id| (id, super::super::LightEnvironment::battle(id as u8), false));
+        for (id, environment, garage) in
+            battle.chain([(0, super::super::LightEnvironment::GARAGE, true)])
+        {
+            if garage {
+                cpu.call_until(0x8013aa50, &[], 0x8013aa6c);
+            }
+            let addr = 0x801960b8 + 0x4c * id;
+            let light = matrix(&cpu, addr + 0x2c);
+            let colors = matrix(&cpu, addr + 0x0c);
             assert_eq!(light, super::super::WORLD_LIGHT);
             for p in bodies.iter().flat_map(|s| &s.polygons) {
                 for v in &p.vertices {
                     let Some(normal) = v.normal else { continue };
                     let scale = if p.texture.is_some() { 128. } else { 255. };
-                    let rgb = std::array::from_fn(|i| (scale * v.color[i]).round() as i32);
+                    let rgb: [i32; 3] =
+                        std::array::from_fn(|i| (scale * v.color[i]).round() as i32);
                     let ir = light.map(|row| {
                         ((0..3)
                             .map(|j| i64::from(row[j]) * i64::from(normal[j]))
@@ -245,10 +252,7 @@ mod tests {
                         let mac = ((sum >> 12).clamp(0, 32767) * (i64::from(rgb[i]) << 4)) >> 12;
                         (mac >> 4).clamp(0, 255) as i32
                     });
-                    assert_eq!(
-                        super::super::lit_rgb(rgb, normal, light, environment as u8),
-                        expected
-                    );
+                    assert_eq!(environment.vertex_rgb(v, scale, light), expected);
                     samples += 1;
                 }
             }

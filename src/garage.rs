@@ -220,6 +220,7 @@ impl Garage {
                 &self.textures,
                 self.field,
                 crate::ending::model_transform(&camera, &model, relative),
+                crate::render::lighting::LightEnvironment::GARAGE,
                 8,
             );
         }

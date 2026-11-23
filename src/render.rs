@@ -1,5 +1,6 @@
 //! Arena presentation in PlayStation ordering-table traversal order.
 mod hierarchy;
+pub(crate) mod lighting;
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
@@ -10,6 +11,7 @@ use bevy::{
     prelude::*,
     render::render_resource::{Extent3d, PrimitiveTopology, TextureDimension, TextureFormat},
 };
+use lighting::{LightEnvironment, LightMatrix, WORLD_LIGHT, rotate_light};
 use std::collections::BTreeMap;
 use tm1_assets::{
     scene::{Scene, SpriteFrame, TextureKey, Wheel},
@@ -931,41 +933,6 @@ pub fn mirror_display(
     .extend(0.75);
 }
 
-type LightMatrix = [[i16; 3]; 3];
-const WORLD_LIGHT: LightMatrix = [[617, -3494, 2046], [-3425, 1982, 1056], [3332, 1928, 1398]];
-
-fn rotate_light(light: LightMatrix, rotation: LightMatrix) -> LightMatrix {
-    light.map(|row| {
-        rotation.map(|axis| {
-            let dot = (0..3)
-                .map(|i| i64::from(axis[i]) * i64::from(row[i]))
-                .sum::<i64>();
-            (dot >> 12).clamp(-32768, 32767) as i16
-        })
-    })
-}
-
-fn lit_rgb(rgb: [i32; 3], normal: [i16; 3], light: LightMatrix, env: u8) -> [i32; 3] {
-    // NCCS clamps IR after both matrix products, then modulates the source RGB.
-    let incidence = light.map(|row| {
-        let dot = (0..3)
-            .map(|i| i32::from(row[i]) * i32::from(normal[i]))
-            .sum::<i32>();
-        (dot >> 12).clamp(0, 32767)
-    });
-    let (ambient, colors) = match env {
-        1 => (32, [[255; 3], [0; 3], [0; 3]]),
-        2 => (32, [[60; 3], [140; 3], [170; 3]]),
-        3 => (256, [[256, 0, 0]; 3]),
-        _ => (32, [[200, 128, 60], [200, 75, 128], [200, 75, 60]]),
-    };
-    std::array::from_fn(|k| {
-        let sum = (0..3).map(|i| colors[k][i] * incidence[i]).sum::<i32>();
-        let intensity = (ambient * 16 + (sum >> 8)).clamp(0, 32767);
-        (rgb[k] * intensity >> 12).min(255)
-    })
-}
-
 fn packet_rgb([r, g, b]: [u8; 3]) -> [f32; 4] {
     [
         f32::from(r) / 255.,
@@ -1364,13 +1331,10 @@ fn draw_view(
         let scale = if p.texture.is_some() { 128. } else { 255. };
         let corners: [PacketCorner; 4] = std::array::from_fn(|i| {
             let v = &p.vertices[i.min(n - 1)];
-            let base = std::array::from_fn(|k| (v.color[k] * scale).round() as i32);
             PacketCorner {
                 xy: screen[i],
                 uv: v.uv.map(|u| u as i32),
-                rgb: v
-                    .normal
-                    .map_or(base, |normal| lit_rgb(base, normal, light, env)),
+                rgb: LightEnvironment::battle(env).vertex_rgb(v, scale, light),
             }
         });
         let subdivide =

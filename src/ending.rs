@@ -1,5 +1,6 @@
 //! Single-player JP SCREEN.c reward and scrolling credits.
 use crate::campaign::{Campaign, StageEntity};
+use crate::render::lighting::{LightEnvironment, LightMatrix, WORLD_LIGHT, rotate_light};
 use anyhow::{Result, ensure};
 use bevy::{
     asset::RenderAssetUsages,
@@ -156,7 +157,7 @@ impl Ending {
         self.draw_car(out, player);
         self.credits.draw(out, &self.fonts);
     }
-    fn car_transform(&self, player: &PlayerVehicle) -> (tm1_core::math::Matrix, [i32; 3]) {
+    fn car_transform(&self, player: &PlayerVehicle) -> ModelTransform {
         // screenCarEndingDrawCar advances the CS before the first submission.
         let draw = self.frame as i32 + 1;
         let (eye, angles, spin, y) = match self.vehicle {
@@ -176,16 +177,23 @@ impl Ending {
             &self.textures,
             self.frame,
             self.car_transform(player),
+            LightEnvironment::WORLD,
             3,
         );
     }
+}
+
+pub(crate) struct ModelTransform {
+    geometry: tm1_core::math::Matrix,
+    local_eye: [i32; 3],
+    light: LightMatrix,
 }
 
 pub(crate) fn model_transform(
     view: &tm1_core::math::Matrix,
     model: &tm1_core::math::Matrix,
     relative: [i32; 3],
-) -> (tm1_core::math::Matrix, [i32; 3]) {
+) -> ModelTransform {
     use tm1_core::math::{Matrix, multiply, multiply_long};
     let world_pos = multiply(model, relative, false);
     // csUpdMat composes the view with the transposed CS matrix.
@@ -201,7 +209,11 @@ pub(crate) fn model_transform(
         ..Default::default()
     };
     combined.translation = multiply_long(&combined, world_pos);
-    (combined, world_pos.map(|v| -v))
+    ModelTransform {
+        geometry: combined,
+        local_eye: world_pos.map(|v| -v),
+        light: rotate_light(WORLD_LIGHT, model.rotation),
+    }
 }
 
 pub(crate) fn draw_model(
@@ -209,9 +221,21 @@ pub(crate) fn draw_model(
     scene: &Scene,
     textures: &Vram,
     frame: u32,
-    (combined, local_eye): (tm1_core::math::Matrix, [i32; 3]),
+    pose: ModelTransform,
+    environment: LightEnvironment,
     lod_scale: u32,
 ) {
+    let combined = pose.geometry;
+    let local_eye = pose.local_eye;
+    let mut lights = Vec::with_capacity(scene.transforms.len() + 1);
+    lights.push(pose.light);
+    for node in &scene.transforms {
+        let parent = lights[node.parent];
+        lights.push(
+            node.rotation
+                .map_or(parent, |rotation| rotate_light(parent, rotation)),
+        );
+    }
     let mut depth = vec![f32::INFINITY; WIDTH * HEIGHT];
     let mut hidden = vec![false; scene.polygons.len()];
     for lod in scene.lods.iter().flatten() {
@@ -228,10 +252,15 @@ pub(crate) fn draw_model(
         }
         let mut screen = [Vec2::ZERO; 4];
         let mut z = [0.; 4];
+        let mut colors = [[0.; 3]; 4];
+        let scale = if poly.texture.is_some() { 128. } else { 255. };
         if poly.vertices.len() > 4 {
             continue;
         }
         for (i, v) in poly.vertices.iter().enumerate() {
+            colors[i] = environment
+                .vertex_rgb(v, scale, lights[poly.transform_index])
+                .map(|channel| channel as f32 / scale);
             let p = Vec3::from_array(std::array::from_fn(|axis| {
                 let row = Vec3::from_array(combined.rotation[axis].map(f32::from));
                 combined.translation[axis] as f32 + row.dot(Vec3::from(v.position)) / 4096.
@@ -284,7 +313,7 @@ pub(crate) fn draw_model(
                     }
                     for i in 0..3 {
                         pixel[i] = (f32::from(pixel[i])
-                            * (va.color[i] * w + vb.color[i] * u + vc.color[i] * v))
+                            * (colors[a][i] * w + colors[b][i] * u + colors[c][i] * v))
                             as u8;
                     }
                     out[at * 4..at * 4 + 4].copy_from_slice(&pixel);
@@ -498,6 +527,19 @@ mod tests {
         let state = 0x80010000;
         let cs = 0x80010200;
         let view = 0x80010400;
+        let parent = 0x80010600u32;
+        let environment = 0x80010800u32;
+        let light = 0x80010900;
+        cpu.put(cs + 0x10, &parent.to_le_bytes());
+        cpu.put(parent + 4, &environment.to_le_bytes());
+        cpu.put(
+            environment + 0x2c,
+            &WORLD_LIGHT
+                .as_flattened()
+                .iter()
+                .flat_map(|n| n.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
         cpu.put(state + 0x12c, &u32::to_le_bytes(cs));
         let matrix = |cpu: &crate::reference_cpu::Cpu, base: u32| -> [[i32; 3]; 3] {
             std::array::from_fn(|i| {
@@ -521,9 +563,13 @@ mod tests {
             for frame in 0..1600 {
                 cpu.call_until(0x8013fce0, &[state], 0x8010a774);
                 ending.frame = frame;
-                let (actual, eye) = ending.car_transform(&player);
+                let pose = ending.car_transform(&player);
+                let actual = pose.geometry;
+                let eye = pose.local_eye;
                 let rotation = matrix(&cpu, cs + 0x14);
                 let position = [0, cpu.word(cs + 0x60) as i32, 32];
+                cpu.call(0x800ff070, &[cs, light]);
+                assert_eq!(pose.light.map(|r| r.map(i32::from)), matrix(&cpu, light));
                 for i in 0..3 {
                     let local = (0..3)
                         .map(|k| {
